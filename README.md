@@ -23,7 +23,7 @@ v1 = the **minimal live-play core**:
 | Controller over named pipe | `Melee.Controller` | done |
 | Pad/ini setup helper | `Melee.DolphinConfig` | done |
 | ENet transport (Rust NIF) | `Melee.Transport.EnetNif` | done |
-| ENet transport (BEAM-native) | `Melee.Transport.EnetBeam` | in progress |
+| ENet transport (BEAM-native) | `Melee.Transport.EnetBeam` | done |
 
 Out of scope for v1 (drive from your app): Dolphin process management,
 menu navigation (`MenuHelper`), replay-file streaming. For `.slp` replay
