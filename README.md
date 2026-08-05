@@ -24,11 +24,17 @@ v1 = the **minimal live-play core**:
 | Pad/ini setup helper | `Melee.DolphinConfig` | done |
 | ENet transport (Rust NIF) | `Melee.Transport.EnetNif` | done |
 | ENet transport (BEAM-native) | `Melee.Transport.EnetBeam` | done |
+| Dolphin process management | `Melee.Dolphin` | done |
+| Menu navigation | `Melee.MenuHelper` | done |
 
-Out of scope for v1 (drive from your app): Dolphin process management,
-menu navigation (`MenuHelper`), replay-file streaming. For `.slp` replay
-*parsing* at scale, use a [peppi](https://github.com/hohav/peppi)-based
-parser instead — the live event decoder here is for the spectator stream.
+Validated end-to-end: a full headless game (menus → character/stage
+select → live frames with inputs) driven entirely from Elixir, and
+[exphil](https://github.com/blasphemetheus/exphil)'s bridge runs on this
+library with its Python bridge deleted from the loop.
+
+Out of scope: replay-file streaming — for `.slp` replay *parsing* at
+scale, use a [peppi](https://github.com/hohav/peppi)-based parser
+instead; the live event decoder here is for the spectator stream.
 
 ## Usage
 
