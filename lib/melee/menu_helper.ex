@@ -98,7 +98,10 @@ defmodule Melee.MenuHelper do
 
     * `:character` (required) — internal character id (e.g. Fox `0x01`)
     * `:stage` (required) — internal stage id (e.g. FD `0x19`)
-    * `:connect_code` — Slippi connect code; `""` (default) for local play
+    * `:connect_code` — Slippi connect code; `nil` (default) for local
+      play. With `nil`, the name-entry screen is left alone (a human can
+      use it); an explicit `""` still drives the direct-code keyboard —
+      the nil/"" distinction matches upstream v0.47 semantics.
     * `:cpu_level` — CPU level to configure, `0` (default) for human/bot
     * `:costume` — costume index (default `0`)
     * `:autostart` — press START when the match is ready (default `false`)
@@ -113,7 +116,7 @@ defmodule Melee.MenuHelper do
   def step(%__MODULE__{} = state, %GameState{} = gamestate, controller, opts) do
     character = Keyword.fetch!(opts, :character)
     stage = Keyword.fetch!(opts, :stage)
-    connect_code = Keyword.get(opts, :connect_code, "")
+    connect_code = Keyword.get(opts, :connect_code, nil)
     cpu_level = Keyword.get(opts, :cpu_level, 0)
     costume = Keyword.get(opts, :costume, 0)
     autostart = Keyword.get(opts, :autostart, false)
@@ -124,7 +127,13 @@ defmodule Melee.MenuHelper do
     cond do
       gamestate.menu_state in [@character_select, @slippi_online_css] ->
         if name_entry?(gamestate) do
-          enter_direct_code(state, gamestate, controller, connect_code)
+          # v0.47 semantics: nil = leave name entry alone (local play);
+          # any string (even "") drives the direct-code keyboard.
+          if connect_code != nil do
+            enter_direct_code(state, gamestate, controller, connect_code)
+          else
+            state
+          end
         else
           # We've exited the name entry screen, so reset the state in case
           # we go back
@@ -155,7 +164,7 @@ defmodule Melee.MenuHelper do
       # (spamming START); routing PRESS_START through them preserves that
       # behavior for callers using this single entry point.
       gamestate.menu_state in [@main_menu, @press_start] ->
-        if connect_code != "" do
+        if connect_code not in [nil, ""] do
           choose_direct_online(gamestate, controller)
         else
           choose_versus_mode(gamestate, controller)
