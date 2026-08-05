@@ -490,6 +490,323 @@ defmodule Melee.MenuHelperTest do
     end
   end
 
+  describe "in-game nametag: option parsing" do
+    test "no :nametag leaves the flow untouched and picks a character", ctx do
+      {pid, path} = file_controller(ctx)
+
+      gamestate =
+        gs(
+          menu_state: @character_select,
+          frame: 1,
+          players: %{1 => player(character: @fox, cursor: cursor(0, 0), coin_down: true)}
+        )
+
+      {state, wrote} = step_frame(MenuHelper.new(), gamestate, pid, path, base_opts())
+
+      assert state.nametag_phase == :waiting
+      assert state.nametag_done == false
+      # character selection, not the name box (which is far below at y ~ -18)
+      refute wrote == ""
+      assert state == MenuHelper.new()
+    end
+
+    test "an already-done flow falls through to character selection", ctx do
+      {pid, path} = file_controller(ctx)
+      state = %{MenuHelper.new() | nametag_done: true, nametag_phase: :done}
+
+      gamestate =
+        gs(
+          menu_state: @character_select,
+          frame: 1,
+          players: %{1 => player(character: @fox, cursor: cursor(0, 0), coin_down: true)}
+        )
+
+      {new_state, _wrote} =
+        step_frame(state, gamestate, pid, path, base_opts(nametag: "EXPH"))
+
+      assert new_state.nametag_phase == :done
+    end
+
+    test "waits for a character on our panel before opening the name box", ctx do
+      {pid, path} = file_controller(ctx)
+
+      # 0xFF is an empty CSS panel: there is no name box to press A on.
+      gamestate =
+        gs(
+          menu_state: @character_select,
+          frame: 1,
+          players: %{1 => player(character: 0xFF, cursor: cursor(0, 0), coin_down: false)}
+        )
+
+      {state, _wrote} =
+        step_frame(MenuHelper.new(), gamestate, pid, path, base_opts(nametag: "EXPH"))
+
+      # still :waiting, and nametag_frames never started counting
+      assert state.nametag_phase == :waiting
+      assert state.nametag_frames == 0
+    end
+  end
+
+  describe "in-game nametag: phase transitions" do
+    # The measured port-1 targets (see MenuHelper source).
+    @name_box {-23.7, -18.62}
+    # x is irrelevant for list rows: the open list pins the hand there.
+    # Row 2 is NAME ENTRY when no tag is saved, the saved tag once one is.
+    @row2_y -8.7
+
+    defp css(cursor, extra \\ []) do
+      gs(
+        Keyword.merge(
+          [
+            menu_state: @character_select,
+            frame: 1,
+            players: %{1 => player(character: @fox, cursor: cursor, coin_down: true)}
+          ],
+          extra
+        )
+      )
+    end
+
+    test "moves down toward the name box when the cursor is above it", ctx do
+      {pid, path} = file_controller(ctx)
+
+      {state, wrote} =
+        step_frame(MenuHelper.new(), css(cursor(-23, 0)), pid, path, base_opts(nametag: "EXPH"))
+
+      # far away on y -> full downward tilt
+      assert wrote =~ set_main(0.5, 0.0)
+      assert state.nametag_phase == :name_box
+      assert state.nametag_frames == 0
+    end
+
+    test "eases off the stick when it is close to the target", ctx do
+      {pid, path} = file_controller(ctx)
+      {_x, y} = @name_box
+
+      {_state, wrote} =
+        step_frame(
+          MenuHelper.new(),
+          css(cursor(-23.22, y + 2.0)),
+          pid,
+          path,
+          base_opts(nametag: "EXPH")
+        )
+
+      assert wrote =~ set_main(0.5, 0.28)
+    end
+
+    test "on the name box, pulses A then advances to the list phase", ctx do
+      {pid, path} = file_controller(ctx)
+      {x, y} = @name_box
+      on_box = css(cursor(x, y))
+      state = MenuHelper.new()
+
+      # first frames: A held
+      {state, wrote} = step_frame(state, on_box, pid, path, base_opts(nametag: "EXPH"))
+      assert wrote == set_main(0.5, 0.5) <> "PRESS A\n"
+      assert state.nametag_frames == 1
+
+      state =
+        Enum.reduce(1..23, state, fn _i, state ->
+          {state, _} = step_frame(state, on_box, pid, path, base_opts(nametag: "EXPH"))
+          assert state.nametag_phase == :name_box
+          state
+        end)
+
+      # frame 25: settle window is over, so we move on to the list
+      {state, _wrote} = step_frame(state, on_box, pid, path, base_opts(nametag: "EXPH"))
+      assert state.nametag_phase == :list
+      assert state.nametag_frames == 0
+    end
+
+    test ":select presses A on the list's second row and finishes", ctx do
+      {pid, path} = file_controller(ctx)
+      # Row 2 holds the saved tag once one exists (NAME ENTRY is always
+      # last), so both modes aim at the same y.
+      on_row = css(cursor(-25.2, @row2_y))
+      state = %{MenuHelper.new() | nametag_phase: :list}
+
+      state =
+        Enum.reduce(1..24, state, fn _i, state ->
+          {state, _} = step_frame(state, on_row, pid, path, base_opts(nametag: "EXPH"))
+          state
+        end)
+
+      assert state.nametag_phase == :list
+
+      {state, _} = step_frame(state, on_row, pid, path, base_opts(nametag: "EXPH"))
+      assert state.nametag_phase == :done
+      assert state.nametag_done == true
+    end
+
+    test "the list is steered by y alone, never by x", ctx do
+      {pid, path} = file_controller(ctx)
+      state = %{MenuHelper.new() | nametag_phase: :list}
+
+      # Wildly wrong x, correct y: the open list pins x, so we must not
+      # try to steer it — we press A instead.
+      {state, wrote} =
+        step_frame(state, css(cursor(5.0, @row2_y)), pid, path, base_opts(nametag: "EXPH"))
+
+      assert wrote == set_main(0.5, 0.5) <> "PRESS A\n"
+      assert state.nametag_frames == 1
+    end
+
+    test "a row that is too low is approached with an eased upward tilt", ctx do
+      {pid, path} = file_controller(ctx)
+      state = %{MenuHelper.new() | nametag_phase: :list}
+
+      {_state, wrote} =
+        step_frame(
+          state,
+          css(cursor(-25.2, @row2_y - 2.4)),
+          pid,
+          path,
+          base_opts(nametag: "EXPH", nametag_mode: :create)
+        )
+
+      assert wrote =~ set_main(0.5, 0.72)
+    end
+
+    test ":create types the tag on the keyboard and finishes when it closes", ctx do
+      {pid, path} = file_controller(ctx)
+      opts = base_opts(nametag: "EX", nametag_mode: :create)
+
+      # submenu 18 / selection 45 is the name-entry keyboard
+      keyboard = fn selection, frame ->
+        gs(
+          menu_state: @character_select,
+          submenu: 18,
+          menu_selection: selection,
+          frame: frame,
+          players: %{1 => player(character: @fox, cursor: cursor(0, 0), coin_down: false)}
+        )
+      end
+
+      state = %{MenuHelper.new() | nametag_phase: :list}
+
+      # frame 1 on selection 45: inputs are not live yet, so we nudge right
+      {state, wrote} = step_frame(state, keyboard.(45, 1), pid, path, opts)
+      assert state.nametag_phase == :typing
+      assert wrote =~ set_main(1.0, 0.5)
+
+      # 'E' lives at code 45 - 4*5 = 25; land on it and A is pressed
+      {state, wrote} = step_frame(state, keyboard.(25, 1), pid, path, opts)
+      assert wrote == "PRESS A\n"
+      assert state.name_tag_index == 1
+
+      # 'X' lives at 47 - 3*5 = 32
+      {state, wrote} = step_frame(state, keyboard.(32, 3), pid, path, opts)
+      assert wrote == "PRESS A\n"
+      assert state.name_tag_index == 2
+
+      # tag complete -> START confirms
+      {state, wrote} = step_frame(state, keyboard.(32, 5), pid, path, opts)
+      assert wrote == "PRESS START\n"
+      refute state.nametag_done
+
+      # keyboard gone -> the flow is finished
+      {state, _wrote} = step_frame(state, css(cursor(0, 0)), pid, path, opts)
+      assert state.nametag_phase == :done
+      assert state.nametag_done == true
+    end
+
+    test "stays latched when the hovered character flickers back to 0xFF", ctx do
+      {pid, path} = file_controller(ctx)
+      opts = base_opts(nametag: "EXPH")
+
+      # `character` at the CSS is whatever portrait the hand hovers, so it
+      # drops back to 0xFF the moment the cursor leaves the grid. Once the
+      # flow has started it must keep steering, not hand control back to
+      # choose_character (which would fight it at the grid boundary).
+      {state, _wrote} = step_frame(MenuHelper.new(), css(cursor(-23, 0)), pid, path, opts)
+      assert state.nametag_phase == :name_box
+
+      off_grid =
+        css(cursor(-23, -5))
+        |> Map.put(:players, %{
+          1 => player(character: 0xFF, cursor: cursor(-23, -5), coin_down: false)
+        })
+
+      {state, wrote} = step_frame(state, off_grid, pid, path, opts)
+
+      assert state.nametag_phase == :name_box
+      # still heading down to the name box at y ~ -18.6
+      assert wrote =~ set_main(0.5, 0.0)
+    end
+
+    test "a cursor that never arrives keeps the flow in its first phase", ctx do
+      {pid, path} = file_controller(ctx)
+      opts = base_opts(nametag: "EXPH")
+      # The CSS start position, frozen: we must keep steering, never press.
+      start = css(cursor(-31.0, -2.5))
+
+      final =
+        Enum.reduce(1..30, MenuHelper.new(), fn _i, state ->
+          {state, _wrote} = step_frame(state, start, pid, path, opts)
+          state
+        end)
+
+      assert final.nametag_phase == :name_box
+      assert final.nametag_frames == 0
+      refute final.nametag_done
+    end
+  end
+
+  describe "in-game nametag: per-port coordinate math" do
+    test "port 2's name box is one panel width to the right of port 1's", ctx do
+      {pid, path} = file_controller(ctx)
+      spacing = 15.82
+      port2_box_x = -23.7 + spacing
+
+      # Sitting exactly on PORT 1's box while driving port 2: we must
+      # still be moving right, toward port 2's panel.
+      gamestate =
+        gs(
+          menu_state: @character_select,
+          frame: 1,
+          players: %{
+            2 => player(character: @fox, cursor: cursor(-23.7, -18.62), coin_down: true)
+          }
+        )
+
+      {state, wrote} =
+        step_frame(MenuHelper.new(), gamestate, pid, path, base_opts(nametag: "EXPH", port: 2))
+
+      assert wrote =~ set_main(1.0, 0.5)
+      assert state.nametag_frames == 0
+
+      # ... and on port 2's box we press A instead
+      gamestate2 =
+        gs(
+          menu_state: @character_select,
+          frame: 1,
+          players: %{
+            2 => player(character: @fox, cursor: cursor(port2_box_x, -18.62), coin_down: true)
+          }
+        )
+
+      {_state, wrote} =
+        step_frame(MenuHelper.new(), gamestate2, pid, path, base_opts(nametag: "EXPH", port: 2))
+
+      assert wrote == set_main(0.5, 0.5) <> "PRESS A\n"
+    end
+
+    test "a missing port releases everything and does nothing", ctx do
+      {pid, path} = file_controller(ctx)
+      state = %{MenuHelper.new() | nametag_phase: :list}
+
+      gamestate =
+        gs(menu_state: @character_select, frame: 1, players: %{1 => player(character: @fox)})
+
+      {new_state, wrote} =
+        step_frame(state, gamestate, pid, path, base_opts(nametag: "EXPH", port: 3))
+
+      assert wrote == @release_all
+      assert new_state == state
+    end
+  end
+
   describe "in game" do
     test "writes nothing and returns the state unchanged", ctx do
       {pid, path} = file_controller(ctx)

@@ -50,24 +50,46 @@ defmodule Melee.MenuHelper do
   @controller_cpu 1
 
   @typedoc """
+  Which step of the in-game nametag flow we are on.
+
+    * `:waiting` — the starting phase: holding off until our port has
+      locked a character in, because an empty CSS panel has no name box
+    * `:name_box` — walking to the name box under our portrait, to open
+      the tag list
+    * `:list` — walking to a row of the open tag list (`NAME ENTRY` when
+      creating, the saved-tag row when selecting)
+    * `:typing` — the name-entry keyboard is up and we are spelling the
+      tag out
+    * `:done` — the tag is set; the flow will not run again this session
+  """
+  @type nametag_phase :: :waiting | :name_box | :list | :typing | :done
+
+  @typedoc """
   Menu-navigation state. Mirrors the Python instance attributes:
   connect-code entry progress (`name_tag_index`, `inputs_live`) and
   stage-select progress (`frames_on_stage`, `frozen_stadium_selected`,
-  `stage_selected`).
+  `stage_selected`), plus the in-game nametag flow (`nametag_phase`,
+  `nametag_frames`, `nametag_done`) which has no Python counterpart.
   """
   @type t :: %__MODULE__{
           name_tag_index: non_neg_integer(),
           inputs_live: boolean(),
           frames_on_stage: non_neg_integer(),
           frozen_stadium_selected: boolean(),
-          stage_selected: boolean()
+          stage_selected: boolean(),
+          nametag_phase: nametag_phase(),
+          nametag_frames: non_neg_integer(),
+          nametag_done: boolean()
         }
 
   defstruct name_tag_index: 0,
             inputs_live: false,
             frames_on_stage: 0,
             frozen_stadium_selected: false,
-            stage_selected: false
+            stage_selected: false,
+            nametag_phase: :waiting,
+            nametag_frames: 0,
+            nametag_done: false
 
   @doc """
   Fresh menu-navigation state.
@@ -80,7 +102,10 @@ defmodule Melee.MenuHelper do
         inputs_live: false,
         frames_on_stage: 0,
         frozen_stadium_selected: false,
-        stage_selected: false
+        stage_selected: false,
+        nametag_phase: :waiting,
+        nametag_frames: 0,
+        nametag_done: false
       }
   """
   @spec new() :: t()
@@ -111,6 +136,20 @@ defmodule Melee.MenuHelper do
     * `:port` — the controller port we are driving (default `1`).
       Python reads this off the `Controller` object; ours doesn't carry
       a port, so pass it here when not on port 1.
+    * `:nametag` — in-game Melee nametag (max 4 characters, e.g.
+      `"EXPH"`) to put on our port, or `nil` (default) to leave the
+      nametag alone. When set, the helper drives the nametag flow at the
+      CSS *before* picking a character, once per helper (tracked by
+      `nametag_done`). Recorded in the replay's GAME_START event, so a
+      bot's games are identifiable — see `Melee.PlayerState.nametag`.
+    * `:nametag_mode` — `:select` (default) picks an already-saved tag
+      out of the tag list; `:create` drives NAME ENTRY and spells the
+      tag out on the keyboard. Creating needs a writable memory card and
+      would pile up duplicate tags if it ran every game, so the intended
+      workflow is `:create` once, `:select` from then on.
+
+  This nametag support has no Python libmelee counterpart; the cursor
+  coordinates it uses were measured empirically (see the module source).
   """
   @spec step(t(), GameState.t(), GenServer.server(), keyword()) :: t()
   def step(%__MODULE__{} = state, %GameState{} = gamestate, controller, opts) do
@@ -123,33 +162,40 @@ defmodule Melee.MenuHelper do
     swag = Keyword.get(opts, :swag, false)
     frozen_stadium = Keyword.get(opts, :frozen_stadium, true)
     port = Keyword.get(opts, :port, 1)
+    nametag = Keyword.get(opts, :nametag, nil)
+    nametag_mode = Keyword.get(opts, :nametag_mode, :select)
 
     cond do
       gamestate.menu_state in [@character_select, @slippi_online_css] ->
-        if name_entry?(gamestate) do
-          # v0.47 semantics: nil = leave name entry alone (local play);
-          # any string (even "") drives the direct-code keyboard.
-          if connect_code != nil do
-            enter_direct_code(state, gamestate, controller, connect_code)
-          else
-            state
-          end
-        else
-          # We've exited the name entry screen, so reset the state in case
-          # we go back
-          state = %{state | name_tag_index: 0, inputs_live: false}
+        cond do
+          nametag_pending?(state, gamestate, nametag, port) ->
+            set_nametag(state, gamestate, controller, nametag, nametag_mode, port)
 
-          choose_character(
-            state,
-            gamestate,
-            controller,
-            character,
-            port,
-            cpu_level,
-            costume,
-            swag,
-            autostart
-          )
+          name_entry?(gamestate) ->
+            # v0.47 semantics: nil = leave name entry alone (local play);
+            # any string (even "") drives the direct-code keyboard.
+            if connect_code != nil do
+              enter_direct_code(state, gamestate, controller, connect_code)
+            else
+              state
+            end
+
+          true ->
+            # We've exited the name entry screen, so reset the state in case
+            # we go back
+            state = %{state | name_tag_index: 0, inputs_live: false}
+
+            choose_character(
+              state,
+              gamestate,
+              controller,
+              character,
+              port,
+              cpu_level,
+              costume,
+              swag,
+              autostart
+            )
         end
 
       # If we're at the postgame scores screen, spam START
@@ -184,6 +230,326 @@ defmodule Melee.MenuHelper do
       # In-game (or unknown scene): do nothing
       true ->
         state
+    end
+  end
+
+  ## In-game nametag (Melee save data)
+
+  # Cursor coordinates below were MEASURED EMPIRICALLY against a real
+  # Dolphin (netplay-stable Slippi build, VS-mode CSS, port 1). None of
+  # this is readable from the gamestate, so the flow is coordinate- and
+  # frame-count-driven rather than feedback-driven.
+
+  # The name box under our character portrait; pressing A here opens the
+  # port's tag list. Measured for port 1; panels are @panel_spacing apart
+  # in x, the same spacing the CPU/HMN box uses in configure_cpu.
+  # Presses at x = -23.56, -23.22 and -22.94 all opened the list; ones at
+  # -22.73 and -22.32 did not. The hand arrives from the character
+  # portrait on the right, so we aim left of centre to land safely.
+  @nametag_box_x -23.7
+  @nametag_box_y -18.62
+  @panel_spacing 15.82
+
+  # y of the SECOND row of the open tag list. Only y matters: the open
+  # list pins the hand's x wherever the list was opened from, so we never
+  # steer x here.
+  #
+  # The list reads: row 1 = the current name, then one row per saved tag,
+  # and "NAME ENTRY" always LAST. So row 2 is exactly the row each mode
+  # wants — NAME ENTRY when no tag is saved yet (`:create`), and the one
+  # saved tag once there is one (`:select`). This is why the create-once,
+  # select-thereafter workflow needs a single coordinate.
+  #
+  # Measured: with no saved tags, presses at y = -9.66, -9.04, -8.58 and
+  # -7.78 all landed on NAME ENTRY (x ranging from -29.5 to -25.2). After
+  # saving one tag, NAME ENTRY had moved down to y = -11.1, which puts
+  # the row pitch at about 2.4.
+  @nametag_row2_y -8.7
+
+  # Tolerance for "the hand is on this row/box". Narrower than the
+  # character-portrait wiggleroom of 1.5, because a list row is small.
+  @nametag_tolerance 0.6
+
+  # The name box needs its own: it is the one target we approach in x, so
+  # the band must be tight enough to actually pull the hand left off the
+  # portrait, and narrow enough to stay inside the box.
+  @nametag_box_tolerance 0.4
+
+  # menu_selection of the keyboard's CONFIRM button ("Register this
+  # name."), which START jumps to and A activates.
+  @confirm_selection 57
+
+  # A is pulsed by holding it for @nametag_press_frames and then letting
+  # go for the rest of @nametag_settle_frames, so the menu sees exactly
+  # one press and has time to open before we look again.
+  @nametag_press_frames 4
+  @nametag_settle_frames 24
+
+  # An empty CSS panel has no name box to open, so the flow can only
+  # start once our port has actually locked a character in.
+  @no_character 0xFF
+
+  # Is there a nametag left to set? Nil opts and a finished flow both
+  # mean "no", which keeps every existing caller on the old code path.
+  # We also hold off in the `:waiting` phase until choose_character/9 has
+  # locked a character onto our panel — the name box (and hence the tag
+  # list) does not exist before then. Leaving `:waiting` latches the flow
+  # on, so it cannot hand control back mid-walk.
+  defp nametag_pending?(state, gamestate, nametag, port) do
+    nametag != nil and not state.nametag_done and
+      (state.nametag_phase != :waiting or character_locked_in?(gamestate, port))
+  end
+
+  # `character` alone is NOT enough: at the CSS it reports whichever
+  # portrait the hand is *hovering*, so it flickers between a real id and
+  # 0xFF as the cursor crosses the grid. `coin_down` — the port's token
+  # actually sitting on a portrait — is what says the pick is locked in.
+  defp character_locked_in?(gamestate, port) do
+    case Map.fetch(gamestate.players, port) do
+      {:ok, player} -> player.coin_down and player.character != @no_character
+      :error -> false
+    end
+  end
+
+  # One frame of the nametag flow: walk to the name box, open the tag
+  # list, then either pick the saved tag (`:select`) or walk to NAME
+  # ENTRY and spell the tag out on the keyboard (`:create`).
+  defp set_nametag(state, gamestate, controller, nametag, mode, port) do
+    # First frame we get control: latch the flow on, so a `character`
+    # that flickers back to 0xFF cannot hand us back to choose_character.
+    state =
+      if state.nametag_phase == :waiting,
+        do: %{state | nametag_phase: :name_box},
+        else: state
+
+    cond do
+      # The keyboard is up: same screen enter_direct_code/4 drives.
+      name_entry?(gamestate) ->
+        state =
+          if state.nametag_phase == :typing,
+            do: state,
+            else: %{state | nametag_phase: :typing, nametag_frames: 0}
+
+        type_nametag(state, gamestate, controller, nametag)
+
+      # We were typing and the keyboard is gone, so the tag was
+      # confirmed and is now selected on our port.
+      state.nametag_phase == :typing ->
+        Controller.release_all(controller)
+        %{state | nametag_phase: :done, nametag_done: true}
+
+      state.nametag_phase == :name_box ->
+        open_tag_list(state, gamestate, controller, port)
+
+      state.nametag_phase == :list ->
+        pick_tag_row(state, gamestate, controller, mode, port)
+
+      true ->
+        Controller.release_all(controller)
+        %{state | nametag_done: true}
+    end
+  end
+
+  # Walk the hand onto the name box and press A to open the tag list.
+  defp open_tag_list(state, gamestate, controller, port) do
+    target_x = @nametag_box_x + @panel_spacing * (port - 1)
+
+    press_at(
+      state,
+      gamestate,
+      controller,
+      port,
+      target_x,
+      @nametag_box_y,
+      @nametag_box_tolerance,
+      fn state -> %{state | nametag_phase: :list, nametag_frames: 0} end
+    )
+  end
+
+  # Walk the hand onto the open tag list's second row and press A: NAME
+  # ENTRY when creating (no tags saved yet), the saved tag when selecting
+  # (see @nametag_row2_y). `nil` for x because the open list pins it —
+  # only y chooses the row.
+  defp pick_tag_row(state, gamestate, controller, mode, port) do
+    press_at(
+      state,
+      gamestate,
+      controller,
+      port,
+      nil,
+      @nametag_row2_y,
+      @nametag_tolerance,
+      fn state ->
+        case mode do
+          # Creating: if that A opened the keyboard, set_nametag/6 notices
+          # on the very next frame via name_entry?/1 and we never come back
+          # here. If it did not, the list must not have been open, so start
+          # the whole flow over rather than jabbing A at a dead row — there
+          # is no gamestate field that tells us the list is up.
+          :create -> %{state | nametag_phase: :name_box, nametag_frames: 0}
+          :select -> %{state | nametag_phase: :done, nametag_done: true}
+        end
+      end
+    )
+  end
+
+  # Shared "get the hand to (target_x, target_y), pulse A once, then run
+  # `on_pressed`" step. Returns the updated state.
+  defp press_at(state, gamestate, controller, port, target_x, target_y, tolerance, on_pressed) do
+    cond do
+      # Once the press has started we stop steering and just run the
+      # counter out. Opening the tag list yanks the hand off the name box
+      # (Melee pins it to the list's own column), so re-checking arrival
+      # here would see `:moving`, zero the counter, and never finish.
+      state.nametag_frames > 0 ->
+        run_out_press(state, controller, on_pressed)
+
+      true ->
+        case Map.fetch(gamestate.players, port) do
+          {:ok, player} ->
+            case move_toward(controller, player.cursor, target_x, target_y, tolerance) do
+              :moving ->
+                Controller.release_button(controller, :a)
+                state
+
+              :arrived ->
+                Controller.press_button(controller, :a)
+                %{state | nametag_frames: 1}
+            end
+
+          :error ->
+            Controller.release_all(controller)
+            state
+        end
+    end
+  end
+
+  # Hold A for @nametag_press_frames, let go for the rest of
+  # @nametag_settle_frames so the menu has time to react, then hand off.
+  defp run_out_press(state, controller, on_pressed) do
+    frames = state.nametag_frames
+
+    cond do
+      frames < @nametag_press_frames ->
+        Controller.press_button(controller, :a)
+        %{state | nametag_frames: frames + 1}
+
+      frames < @nametag_settle_frames ->
+        Controller.release_button(controller, :a)
+        %{state | nametag_frames: frames + 1}
+
+      true ->
+        Controller.release_button(controller, :a)
+        on_pressed.(state)
+    end
+  end
+
+  # Distance at which we ease off the stick. The CSS cursor accelerates
+  # while the stick is pinned, so a full tilt aimed at a target barely
+  # two units across sails straight past it; a gentle tilt inside
+  # @nametag_fine units creeps onto it at roughly 0.2 units a frame,
+  # which lands inside the tolerances below. Measured against Dolphin.
+  @nametag_fine 3.0
+  @nametag_fine_tilt 0.22
+
+  # Tilt the main stick toward (target_x, target_y), one axis at a time,
+  # exactly the way choose_character/select_character home in on a
+  # portrait. Returns `:moving` while outside `tolerance` and `:arrived`
+  # (stick centered) once inside it.
+  #
+  # `target_x` may be `nil` for "don't steer x at all": while the tag
+  # list is open Melee pins the hand to the list's column, so x cannot be
+  # moved (measured: even a full tilt leaves it put) and only y picks the
+  # row.
+  @spec move_toward(
+          GenServer.server(),
+          Melee.Position.t(),
+          number() | nil,
+          number(),
+          number()
+        ) :: :moving | :arrived
+  defp move_toward(controller, %{x: cursor_x, y: cursor_y}, target_x, target_y, tolerance) do
+    cond do
+      # Move up if we're too low
+      cursor_y < target_y - tolerance ->
+        Controller.tilt_analog(controller, :main, 0.5, 0.5 + tilt(target_y - cursor_y))
+        :moving
+
+      # Move down if we're too high
+      cursor_y > target_y + tolerance ->
+        Controller.tilt_analog(controller, :main, 0.5, 0.5 - tilt(cursor_y - target_y))
+        :moving
+
+      target_x == nil ->
+        Controller.tilt_analog(controller, :main, 0.5, 0.5)
+        :arrived
+
+      # Move right if we're too left
+      cursor_x < target_x - tolerance ->
+        Controller.tilt_analog(controller, :main, 0.5 + tilt(target_x - cursor_x), 0.5)
+        :moving
+
+      # Move left if we're too right
+      cursor_x > target_x + tolerance ->
+        Controller.tilt_analog(controller, :main, 0.5 - tilt(cursor_x - target_x), 0.5)
+        :moving
+
+      true ->
+        Controller.tilt_analog(controller, :main, 0.5, 0.5)
+        :arrived
+    end
+  end
+
+  # How far off center to push the stick vertically, given how far we
+  # still have to travel.
+  defp tilt(distance) when distance > @nametag_fine, do: 0.5
+  defp tilt(_distance), do: @nametag_fine_tilt
+
+  # Spell the nametag out on the name-entry keyboard. Reuses
+  # enter_direct_code/4's letter grid (it is the same screen), but
+  # finishes differently: START then A on CONFIRM registers the tag,
+  # where a connect code is submitted by START alone.
+  defp type_nametag(state, gamestate, controller, nametag) do
+    # The name entry screen is dead for the first few frames, so make
+    # sure we can move off the starting letter before trusting inputs.
+    state =
+      if gamestate.menu_selection != 45, do: %{state | inputs_live: true}, else: state
+
+    complete? = String.length(nametag) == state.name_tag_index
+
+    cond do
+      # The tag is spelled out and the selection is on CONFIRM: A is what
+      # registers it. Melee leaves `submenu` reading @name_entry_submenu
+      # even after the keyboard closes, so there is no screen change to
+      # wait on — we count the press out and call the flow finished.
+      complete? and gamestate.menu_selection == @confirm_selection ->
+        run_out_press(state, controller, fn state ->
+          %{state | nametag_phase: :done, nametag_done: true}
+        end)
+
+      not state.inputs_live ->
+        Controller.tilt_analog(controller, :main, 1.0, 0.5)
+        state
+
+      # Let the controller go every other frame, as elsewhere.
+      Integer.mod(gamestate.frame, 2) == 0 ->
+        Controller.release_all(controller)
+        state
+
+      # Unlike a Slippi connect code, START does NOT submit here: it
+      # jumps the selection to the CONFIRM button ("Register this
+      # name."), handled above. Measured against Dolphin.
+      complete? ->
+        Controller.press_button(controller, :start)
+        state
+
+      true ->
+        target_code =
+          nametag
+          |> String.at(state.name_tag_index)
+          |> name_entry_target_code()
+
+        do_enter_code_char(state, gamestate, controller, target_code)
     end
   end
 
