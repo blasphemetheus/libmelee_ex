@@ -19,8 +19,22 @@ defmodule Melee.Integration.DolphinTest do
   @moduletag :dolphin
   @moduletag timeout: 120_000
 
+  # MELEE_SPECTATOR_PORT overrides the default 51441; MELEE_TRANSPORT=beam
+  # exercises the pure-Elixir ENet client instead of the Rust NIF.
+  defp console_opts do
+    port = String.to_integer(System.get_env("MELEE_SPECTATOR_PORT", "51441"))
+
+    transport =
+      case System.get_env("MELEE_TRANSPORT", "nif") do
+        "beam" -> Melee.Transport.EnetBeam
+        _ -> Melee.Transport.EnetNif
+      end
+
+    [port: port, transport: transport]
+  end
+
   test "connects, receives connect_reply, and steps live frames at ~60Hz" do
-    {:ok, console} = Console.start_link([])
+    {:ok, console} = Console.start_link(console_opts())
     assert :ok = Console.connect(console, 10_000)
 
     # First step also processes the connect_reply.
@@ -30,7 +44,7 @@ defmodule Melee.Integration.DolphinTest do
     info = Console.info(console)
     assert info.nick != "" or info.version != ""
 
-    {frames, elapsed_us} =
+    {elapsed_us, frames} =
       :timer.tc(fn ->
         for _ <- 1..120, do: Console.step(console, 5_000)
       end)
@@ -64,7 +78,7 @@ defmodule Melee.Integration.DolphinTest do
     else
       {:ok, pipe} = DolphinConfig.setup_controller(dolphin_home, 1)
 
-      {:ok, console} = Console.start_link([])
+      {:ok, console} = Console.start_link(console_opts())
       {:ok, controller} = Controller.start_link(pipe_path: pipe)
 
       assert :ok = Console.connect(console, 10_000)
