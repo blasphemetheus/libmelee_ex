@@ -26,6 +26,7 @@ defmodule Melee.MixProject do
   defp deps do
     [
       {:jason, "~> 1.4"},
+      {:rustler, "~> 0.36", runtime: false},
       {:stream_data, "~> 1.1", only: [:dev, :test]},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false}
     ]
