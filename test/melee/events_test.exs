@@ -193,14 +193,26 @@ defmodule Melee.EventsTest do
       refute cs.button.b
     end
 
-    test "rollback frames are skipped when skip_rollback_frames" do
+    test "rollback frames are skipped (with a :rollback signal) when skip_rollback_frames" do
       parser = connected_parser()
       assert {:frame_complete, _, parser} = full_frame(parser, 100)
-      # Same frame again (rollback re-simulation): skipped.
-      assert {:continue, parser} = full_frame(parser, 100)
+      # Same frame again (rollback re-simulation): skipped, tagged so the
+      # console can flush controllers in blocking-input mode.
+      assert {:rollback, parser} = full_frame(parser, 100)
       # Next frame comes through.
       assert {:frame_complete, gs, _} = full_frame(parser, 101)
       assert gs.frame == 101
+    end
+
+    test "game start sets the game_started flag until cleared" do
+      parser = Events.new()
+      {:continue, parser} = Events.handle_game_event(parser, payloads(@sizes))
+      refute parser.game_started
+      {:continue, parser} = Events.handle_game_event(parser, game_start())
+      assert parser.game_started
+
+      parser = Events.clear_game_started(parser)
+      refute parser.game_started
     end
 
     test "rollback frames are kept when skip_rollback_frames: false" do
@@ -279,7 +291,7 @@ defmodule Melee.EventsTest do
       check all bin <- StreamData.binary(max_length: 200) do
         result = Events.handle_game_event(parser, bin)
 
-        assert elem(result, 0) in [:frame_complete, :continue, :game_end, :error]
+        assert elem(result, 0) in [:frame_complete, :continue, :rollback, :game_end, :error]
       end
     end
   end

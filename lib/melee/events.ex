@@ -74,6 +74,7 @@ defmodule Melee.Events do
 
     @type t :: %__MODULE__{
             pending: binary(),
+            game_started: boolean(),
             payload_sizes: %{non_neg_integer() => pos_integer()},
             slp_version: {integer(), integer(), integer()},
             current_stage: integer(),
@@ -94,6 +95,7 @@ defmodule Melee.Events do
           }
 
     defstruct pending: <<>>,
+              game_started: false,
               payload_sizes: %{},
               slp_version: {0, 0, 0},
               current_stage: 0,
@@ -116,6 +118,7 @@ defmodule Melee.Events do
   @type result ::
           {:frame_complete, GameState.t(), Parser.t()}
           | {:continue, Parser.t()}
+          | {:rollback, Parser.t()}
           | {:game_end, Parser.t()}
           | {:error, term(), Parser.t()}
 
@@ -124,6 +127,17 @@ defmodule Melee.Events do
   def new(opts \\ []) do
     %Parser{skip_rollback_frames: Keyword.get(opts, :skip_rollback_frames, true)}
   end
+
+  @doc """
+  Clear the `game_started` flag.
+
+  The flag is set when a GAME_START event is parsed; libmelee reacts to
+  it by flushing empty controller input (characters aren't actionable on
+  frame one, but the game needs *something* pressed). `Melee.Console`
+  reads and clears it via this function.
+  """
+  @spec clear_game_started(Parser.t()) :: Parser.t()
+  def clear_game_started(%Parser{} = parser), do: %{parser | game_started: false}
 
   @doc """
   Process one decoded `game_event` payload (a run of binary Slippi events).
@@ -200,8 +214,8 @@ defmodule Melee.Events do
           {:halt, {:frame_complete, gamestate, parser}} ->
             {:frame_complete, gamestate, %{parser | pending: rest}}
 
-          {:halt, {:continue, parser}} ->
-            {:continue, %{parser | pending: rest}}
+          {:halt, {:rollback, parser}} ->
+            {:rollback, %{parser | pending: rest}}
 
           {:halt, result} ->
             result
@@ -293,7 +307,8 @@ defmodule Melee.Events do
         is_frozen_ps: is_frozen_ps,
         display_names: display_names,
         connect_codes: connect_codes,
-        frame: -10_000
+        frame: -10_000,
+        game_started: true
     }
     |> Map.merge(stage_state)
   end
@@ -490,10 +505,9 @@ defmodule Melee.Events do
     parser = %{parser | prev_players: gamestate.players}
 
     if gamestate.frame <= parser.frame and parser.skip_rollback_frames do
-      # Old (rollback re-simulated) frame: discard and keep reading.
-      # Callers in blocking-input mode must flush controllers here —
-      # Melee.Console handles that on this return.
-      {:halt, {:continue, %{parser | gamestate: %GameState{}}}}
+      # Old (rollback re-simulated) frame: discard. Tagged :rollback so
+      # Melee.Console can flush controllers in blocking-input mode.
+      {:halt, {:rollback, %{parser | gamestate: %GameState{}}}}
     else
       parser = %{parser | frame: gamestate.frame}
       gamestate = finalize(parser, gamestate)

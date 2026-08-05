@@ -30,6 +30,7 @@ defmodule Melee.EventsGoldenTest do
       {:frame_complete, gs, parser} -> collect_frames(parser, [<<>> | rest], [gs | acc])
       {:continue, %{pending: <<>>} = parser} -> collect_frames(parser, rest, acc)
       {:continue, parser} -> collect_frames(parser, rest, acc)
+      {:rollback, parser} -> collect_frames(parser, [<<>> | rest], acc)
       {:game_end, _parser} -> {Enum.reverse(acc), :game_end}
       {:error, reason, _parser} -> {Enum.reverse(acc), {:error, reason}}
     end
