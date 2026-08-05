@@ -250,7 +250,12 @@ defmodule Melee.MenuHelperTest do
     # gamestate changes each press would cause.
     defp cpu_gs(frame, player_attrs) do
       base = [character: @fox, coin_down: true]
-      gs(menu_state: @character_select, frame: frame, players: %{1 => player(Keyword.merge(base, player_attrs))})
+
+      gs(
+        menu_state: @character_select,
+        frame: frame,
+        players: %{1 => player(Keyword.merge(base, player_attrs))}
+      )
     end
 
     test "full flip-to-CPU and slider-drag sequence", ctx do
@@ -331,7 +336,10 @@ defmodule Melee.MenuHelperTest do
         )
 
       gamestate = %{gamestate | ready_to_start: true}
-      {_state, wrote} = step_frame(state, gamestate, pid, path, base_opts(cpu_level: 3, autostart: true))
+
+      {_state, wrote} =
+        step_frame(state, gamestate, pid, path, base_opts(cpu_level: 3, autostart: true))
+
       assert wrote == "PRESS START\n"
     end
 
@@ -407,7 +415,8 @@ defmodule Melee.MenuHelperTest do
       state = %{MenuHelper.new() | name_tag_index: 7, inputs_live: true}
       gamestate = name_entry_gs(frame: 1, menu_selection: 20)
 
-      {_state, wrote} = step_frame(state, gamestate, pid, path, base_opts(connect_code: "FOX#123"))
+      {_state, wrote} =
+        step_frame(state, gamestate, pid, path, base_opts(connect_code: "FOX#123"))
 
       assert wrote == "PRESS START\n"
     end

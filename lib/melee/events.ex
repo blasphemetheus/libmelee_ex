@@ -260,7 +260,8 @@ defmodule Melee.Events do
        when command in [@frame_start, @gecko_codes, @gecko_list, @bones],
        do: {:cont, parser}
 
-  defp dispatch(parser, command, _event), do: {:halt, {:error, {:unhandled_event, command}, parser}}
+  defp dispatch(parser, command, _event),
+    do: {:halt, {:error, {:unhandled_event, command}, parser}}
 
   ## GAME_START (0x36)
 
@@ -311,10 +312,17 @@ defmodule Melee.Events do
 
     stage_state =
       case current_stage do
-        @stage_fountain -> %{fod_platforms: %FoDPlatforms{}, whispy: nil, stadium_transformation: nil}
-        @stage_dreamland -> %{fod_platforms: nil, whispy: 0, stadium_transformation: nil}
-        @stage_stadium -> %{fod_platforms: nil, whispy: nil, stadium_transformation: %StadiumTransformation{}}
-        _ -> %{fod_platforms: nil, whispy: nil, stadium_transformation: nil}
+        @stage_fountain ->
+          %{fod_platforms: %FoDPlatforms{}, whispy: nil, stadium_transformation: nil}
+
+        @stage_dreamland ->
+          %{fod_platforms: nil, whispy: 0, stadium_transformation: nil}
+
+        @stage_stadium ->
+          %{fod_platforms: nil, whispy: nil, stadium_transformation: %StadiumTransformation{}}
+
+        _ ->
+          %{fod_platforms: nil, whispy: nil, stadium_transformation: nil}
       end
 
     %{

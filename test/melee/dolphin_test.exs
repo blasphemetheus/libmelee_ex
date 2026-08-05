@@ -75,7 +75,7 @@ defmodule Melee.DolphinTest do
                  path: exe,
                  iso_path: "/isos/melee.iso",
                  home: home,
-                 slippi_port: 12345,
+                 slippi_port: 12_345,
                  headless: true
                )
 
@@ -161,7 +161,7 @@ defmodule Melee.DolphinTest do
                  iso_path: "/isos/melee.iso",
                  home: home,
                  flavor: :mainline,
-                 slippi_port: 55555,
+                 slippi_port: 55_555,
                  headless: true
                )
 

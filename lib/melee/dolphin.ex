@@ -80,7 +80,7 @@ defmodule Melee.Dolphin do
           | {:gecko_extra_codes, [String.t()]}
           | {:extra_args, [String.t()]}
 
-  @default_slippi_port 51441
+  @default_slippi_port 51_441
 
   # Linux executable names inside a Slippi Launcher install dir
   # (console.py get_exe_path).

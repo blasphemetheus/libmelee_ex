@@ -67,13 +67,11 @@ defmodule Melee.Transport.EnetBeam.Channel do
     group =
       Map.get(chan.frags, start, %{count: frag.count, total: frag.total, parts: %{}})
 
-    cond do
-      old?(chan, start) or Map.has_key?(group.parts, number) ->
-        {[], chan}
-
-      true ->
-        parts = Map.put(group.parts, number, {frag.offset, frag.data})
-        drain(%{chan | frags: Map.put(chan.frags, start, %{group | parts: parts})})
+    if old?(chan, start) or Map.has_key?(group.parts, number) do
+      {[], chan}
+    else
+      parts = Map.put(group.parts, number, {frag.offset, frag.data})
+      drain(%{chan | frags: Map.put(chan.frags, start, %{group | parts: parts})})
     end
   end
 

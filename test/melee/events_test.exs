@@ -302,7 +302,7 @@ defmodule Melee.EventsTest do
     property "garbage after a valid size table returns a tagged result" do
       parser = connected_parser()
 
-      check all bin <- StreamData.binary(max_length: 200) do
+      check all(bin <- StreamData.binary(max_length: 200)) do
         result = Events.handle_game_event(parser, bin)
 
         assert elem(result, 0) in [:frame_complete, :continue, :rollback, :game_end, :error]

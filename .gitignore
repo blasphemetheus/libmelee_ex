@@ -21,3 +21,6 @@ libmelee_ex-*.tar
 
 # Temporary files, for example, from tests.
 /tmp/
+
+# Dialyzer PLTs (built locally / cached in CI, never committed).
+/priv/plts/

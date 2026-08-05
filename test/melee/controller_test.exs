@@ -45,8 +45,10 @@ defmodule Melee.ControllerTest do
     end
 
     property "fix_analog_stick maps [0,1] into a bounded band, monotonically" do
-      check all x <- StreamData.float(min: 0.0, max: 1.0),
-                y <- StreamData.float(min: 0.0, max: 1.0) do
+      check all(
+              x <- StreamData.float(min: 0.0, max: 1.0),
+              y <- StreamData.float(min: 0.0, max: 1.0)
+            ) do
         fixed_x = Controller.fix_analog_stick(x)
         assert fixed_x >= 0.18 and fixed_x <= 0.82
 
@@ -57,7 +59,7 @@ defmodule Melee.ControllerTest do
     end
 
     property "fix_analog_trigger stays within [0, 0.55]" do
-      check all x <- StreamData.float(min: 0.0, max: 1.0) do
+      check all(x <- StreamData.float(min: 0.0, max: 1.0)) do
         fixed = Controller.fix_analog_trigger(x)
         assert fixed >= 0.0 and fixed <= 0.55
       end

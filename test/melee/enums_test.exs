@@ -25,7 +25,16 @@ defmodule Melee.EnumsTest do
   doctest Melee.Enums.Action
   doctest Melee.Enums.ProjectileType
 
-  @int_enums [Stage, Menu, SubMenu, ControllerStatus, AttackState, Character, Action, ProjectileType]
+  @int_enums [
+    Stage,
+    Menu,
+    SubMenu,
+    ControllerStatus,
+    AttackState,
+    Character,
+    Action,
+    ProjectileType
+  ]
 
   describe "roundtrip from_id/to_id" do
     for mod <- @int_enums do

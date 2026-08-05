@@ -134,8 +134,14 @@ defmodule Melee.Transport.EnetBeam.Protocol do
 
   defp decode_commands(_short, acc), do: Enum.reverse(acc)
 
-  defp decode_command(@cmd_ack, channel, _seq, _ack?, <<recv_seq::16, recv_time::16, rest::binary>>),
-    do: {{:ack, channel, recv_seq, recv_time}, rest}
+  defp decode_command(
+         @cmd_ack,
+         channel,
+         _seq,
+         _ack?,
+         <<recv_seq::16, recv_time::16, rest::binary>>
+       ),
+       do: {{:ack, channel, recv_seq, recv_time}, rest}
 
   defp decode_command(@cmd_verify_connect, _channel, seq, _ack?, <<
          peer_id::16,

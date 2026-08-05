@@ -118,7 +118,8 @@ defmodule Melee.Transport.EnetBeam do
         out_seq: %{},
         unacked: %{},
         channels: %{},
-        connect_deadline: now_ms() + Keyword.get(opts, :connect_timeout, @default_connect_timeout_ms),
+        connect_deadline:
+          now_ms() + Keyword.get(opts, :connect_timeout, @default_connect_timeout_ms),
         recv_timeout: Keyword.get(opts, :recv_timeout, @default_recv_timeout_ms),
         ping_interval: Keyword.get(opts, :ping_interval, @default_ping_interval_ms),
         last_recv: now_ms(),
@@ -147,7 +148,7 @@ defmodule Melee.Transport.EnetBeam do
         {:reply, {:error, :too_large}, state}
 
       true ->
-        seq = (Map.get(state.out_seq, channel, 0) + 1) &&& 0xFFFF
+        seq = Map.get(state.out_seq, channel, 0) + 1 &&& 0xFFFF
         command = Protocol.send_reliable_command(channel, seq, data)
         transmit(state, command)
 

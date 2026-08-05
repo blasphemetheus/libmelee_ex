@@ -157,17 +157,26 @@ defmodule Melee.MenuHelper do
         skip_postgame(state, controller)
 
       gamestate.menu_state == @stage_select ->
-        choose_stage(state, gamestate, controller, stage, character, frozen_stadium, autostart, port)
+        choose_stage(
+          state,
+          gamestate,
+          controller,
+          stage,
+          character,
+          frozen_stadium,
+          autostart,
+          port
+        )
 
       # Python's menu_helper_simple only routes MAIN_MENU here, but both
       # choose_versus_mode and choose_direct_online handle PRESS_START
       # (spamming START); routing PRESS_START through them preserves that
       # behavior for callers using this single entry point.
       gamestate.menu_state in [@main_menu, @press_start] ->
-        if connect_code not in [nil, ""] do
-          choose_direct_online(gamestate, controller)
-        else
+        if connect_code in [nil, ""] do
           choose_versus_mode(gamestate, controller)
+        else
+          choose_direct_online(gamestate, controller)
         end
 
         state
@@ -272,13 +281,20 @@ defmodule Melee.MenuHelper do
   ## Character select
 
   # Port of MenuHelper.choose_character. Never mutates the helper state.
-  defp choose_character(state, gamestate, controller, character_id, port, cpu_level, costume, swag, start) do
+  defp choose_character(
+         state,
+         gamestate,
+         controller,
+         character_id,
+         port,
+         cpu_level,
+         costume,
+         swag,
+         start
+       ) do
     # Figure out where the character is on the select screen
     # NOTE: This assumes you have all characters unlocked
-    if not Map.has_key?(gamestate.players, port) do
-      Controller.release_all(controller)
-      state
-    else
+    if Map.has_key?(gamestate.players, port) do
       do_choose_character(
         state,
         gamestate,
@@ -290,10 +306,23 @@ defmodule Melee.MenuHelper do
         swag,
         start
       )
+    else
+      Controller.release_all(controller)
+      state
     end
   end
 
-  defp do_choose_character(state, gamestate, controller, character_id, port, cpu_level, costume, swag, start) do
+  defp do_choose_character(
+         state,
+         gamestate,
+         controller,
+         character_id,
+         port,
+         cpu_level,
+         costume,
+         swag,
+         start
+       ) do
     # Discover who is the opponent: the first controller port that isn't us
     opponent_state =
       gamestate.players
@@ -505,7 +534,16 @@ defmodule Melee.MenuHelper do
   end
 
   # The core "move to the portrait and press A" flow.
-  defp select_character(state, gamestate, controller, ai_state, {target_x, target_y, wiggleroom}, correct_character, slippi_css?, start) do
+  defp select_character(
+         state,
+         gamestate,
+         controller,
+         ai_state,
+         {target_x, target_y, wiggleroom},
+         correct_character,
+         slippi_css?,
+         start
+       ) do
     %{x: cursor_x, y: cursor_y} = ai_state.cursor
     coin_down = ai_state.coin_down
     prev = Controller.prev(controller)
@@ -614,7 +652,16 @@ defmodule Melee.MenuHelper do
   }
 
   # Port of MenuHelper.choose_stage.
-  defp choose_stage(state, gamestate, controller, stage_id, character_id, frozen_stadium, autostart, port) do
+  defp choose_stage(
+         state,
+         gamestate,
+         controller,
+         stage_id,
+         character_id,
+         frozen_stadium,
+         autostart,
+         port
+       ) do
     state = if gamestate.frame == 0, do: %{state | stage_selected: false}, else: state
 
     cond do

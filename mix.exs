@@ -11,6 +11,11 @@ defmodule Melee.MixProject do
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
+      dialyzer: [
+        plt_add_apps: [:mix, :jason],
+        plt_file: {:no_warn, "priv/plts/dialyzer.plt"},
+        ignore_warnings: ".dialyzer_ignore.exs"
+      ],
       description: description(),
       package: package(),
       docs: docs()
@@ -28,7 +33,9 @@ defmodule Melee.MixProject do
       {:jason, "~> 1.4"},
       {:rustler, "~> 0.36", runtime: false},
       {:stream_data, "~> 1.1", only: [:dev, :test]},
-      {:ex_doc, "~> 0.34", only: :dev, runtime: false}
+      {:ex_doc, "~> 0.34", only: :dev, runtime: false},
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
     ]
   end
 

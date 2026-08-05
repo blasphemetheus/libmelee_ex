@@ -85,8 +85,7 @@ defmodule Melee.Transport.EnetNif do
            res: res,
            owner: owner,
            owner_ref: owner_ref,
-           service_timeout:
-             Keyword.get(opts, :service_timeout, @default_service_timeout_ms)
+           service_timeout: Keyword.get(opts, :service_timeout, @default_service_timeout_ms)
          }}
 
       {:error, reason} ->
