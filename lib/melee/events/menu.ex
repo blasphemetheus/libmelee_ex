@@ -95,7 +95,9 @@ defmodule Melee.Events.Menu do
         {port, player}
       end)
 
-    %{gamestate | players: players, ready_to_start: read_u8(bin, 0x23, 0) != 0}
+    # Wire semantics: raw byte 0 at 0x23 means the "ready to fight" banner
+    # is up (Python's menuhelper presses START on == 0). Default 1 = not ready.
+    %{gamestate | players: players, ready_to_start: read_u8(bin, 0x23, 1) == 0}
   end
 
   defp css_fields(gamestate, _bin), do: gamestate
