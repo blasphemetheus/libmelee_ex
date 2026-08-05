@@ -1,0 +1,126 @@
+defmodule Melee.Enums.ProjectileType do
+  @moduledoc """
+  Primary type of projectile or item.
+
+  Complete list at:
+  https://docs.google.com/spreadsheets/d/1JX2w-r2fuvWuNgGb6D3Cs4wHQKLFegZe2jhbBuIhCG8/edit?gid=20#gid=20
+
+  ## Examples
+
+      iex> Melee.Enums.ProjectileType.from_id(0x36)
+      :fox_laser
+
+      iex> Melee.Enums.ProjectileType.to_id(:turnip)
+      0x63
+
+      iex> Melee.Enums.ProjectileType.from_id(0x01)
+      {:unknown, 0x01}
+  """
+  require Melee.Enums.Builder
+
+  Melee.Enums.Builder.int_enum(
+    bob_omb: 0x06,
+    mr_saturn: 0x07,
+    beamsword: 0x0C,
+    mario_fireball: 0x30,
+    dr_mario_capsule: 0x31,
+    kirby_cutter: 0x32,
+    kirby_hammer: 0x33,
+    fox_laser: 0x36,
+    falco_laser: 0x37,
+    fox_shadow: 0x38,
+    falco_shadow: 0x39,
+    link_bomb: 0x3A,
+    ylink_bomb: 0x3B,
+    link_boomerang: 0x3C,
+    ylink_boomerang: 0x3D,
+    link_hookshot: 0x3E,
+    ylink_hookshot: 0x3F,
+    arrow: 0x40,
+    fire_arrow: 0x41,
+    pk_fire: 0x42,
+    pk_flash_1: 0x43,
+    pk_flash_2: 0x44,
+    pk_thunder_head: 0x45,
+    pk_thunder_tail_1: 0x46,
+    pk_thunder_tail_2: 0x47,
+    pk_thunder_tail_3: 0x48,
+    pk_thunder_tail_4: 0x49,
+    fox_blaster: 0x4A,
+    falco_blaster: 0x4B,
+    link_arrow: 0x4C,
+    ylink_arrow: 0x4D,
+    pk_flash_explosion: 0x4E,
+    needle_thrown: 0x4F,
+    needle: 0x50,
+    pikachu_thunder: 0x51,
+    pichu_thunder: 0x52,
+    mario_cape: 0x53,
+    dr_mario_cape: 0x54,
+    sheik_smoke: 0x55,
+    yoshi_egg_thrown: 0x56,
+    yoshi_tongue: 0x57,
+    yoshi_star: 0x58,
+    pikachu_thunderjolt_1: 0x59,
+    pikachu_thunderjolt_2: 0x5A,
+    pichu_thunderjolt_1: 0x5B,
+    pichu_thunderjolt_2: 0x5C,
+    samus_bomb: 0x5D,
+    samus_charge_beam: 0x5E,
+    samus_missle: 0x5F,
+    samus_grapple_beam: 0x60,
+    sheik_chain: 0x61,
+    peach_bomber: 0x62,
+    turnip: 0x63,
+    bowser_flame: 0x64,
+    ness_batt: 0x65,
+    ness_yoyo: 0x66,
+    peach_parasol: 0x67,
+    peach_toad: 0x68,
+    luigi_fire: 0x69,
+    ice_block: 0x6A,
+    ic_blizzard: 0x6B,
+    zelda_fire: 0x6C,
+    zelda_fire_explosion: 0x6D,
+    mewto_disable: 0x6E,
+    toad_spore: 0x6F,
+    shadowball: 0x70,
+    ic_up_b: 0x71,
+    pesticide: 0x72,
+    manhole: 0x73,
+    gw_fire: 0x74,
+    parachute: 0x75,
+    turtle: 0x76,
+    sperky: 0x77,
+    judge: 0x78,
+    sausage: 0x7A,
+    ylink_milk: 0x7B,
+    firefighter: 0x7C,
+    kirby_mario_fire: 0x82,
+    kirby_dr_mario_fire: 0x83,
+    kirby_luigi_fire: 0x84,
+    kirby_ic_block: 0x85,
+    kirby_toad_spore: 0x87,
+    kirby_fox_laser: 0x88,
+    kirby_falco_laser: 0x89,
+    kirby_link_arrow: 0x8C,
+    kirby_ylink_arrow: 0x8D,
+    kirby_link_arrow_2: 0x8E,
+    kirby_ylink_arrow_2: 0x8F,
+    kirby_shadowball: 0x90,
+    kirby_pk_flash: 0x91,
+    kirby_pk_flash_explosion: 0x92,
+    kirby_pikachu_thunderjolt_1: 0x93,
+    kirby_pikachu_thunderjolt_2: 0x94,
+    kirby_pichu_thunderjolt_1: 0x95,
+    kirby_pichu_thunderjolt_2: 0x96,
+    kirby_samus_chargeshot: 0x97,
+    kirby_sheik_needle_thrown: 0x98,
+    kirby_sheik_needle_ground: 0x99,
+    kirby_bowser_flame: 0x9A,
+    kirby_sausage: 0x9B,
+    kirby_yoshi_tongue: 0x9D,
+    shy_guy: 0xD2,
+    unknown_projectile: 0xFF
+  )
+end
