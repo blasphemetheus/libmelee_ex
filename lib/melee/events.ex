@@ -83,6 +83,7 @@ defmodule Melee.Events do
             costumes: tuple(),
             cpu_levels: tuple(),
             team_ids: tuple(),
+            nametags: tuple(),
             display_names: tuple(),
             connect_codes: tuple(),
             frame: integer(),
@@ -104,6 +105,7 @@ defmodule Melee.Events do
               costumes: {0, 0, 0, 0},
               cpu_levels: {0, 0, 0, 0},
               team_ids: {0, 0, 0, 0},
+              nametags: {"", "", "", ""},
               display_names: {"", "", "", ""},
               connect_codes: {"", "", "", ""},
               frame: -10_000,
@@ -300,6 +302,17 @@ defmodule Melee.Events do
 
     is_frozen_ps = version >= {2, 0, 0} and read_u8(event, 0x1A2, 0) != 0
 
+    # In-game Melee nametags (the 4-character tag picked at the character
+    # select screen; requires save data on a memory card). Recorded since
+    # SLP 1.3.0 — this is how a bot's games can be identified in a replay
+    # corpus without relying on directory conventions.
+    nametags =
+      if version >= {1, 3, 0} do
+        List.to_tuple(for i <- 0..3, do: Melee.ShiftJIS.read(event, 0x161 + 0x10 * i))
+      else
+        parser.nametags
+      end
+
     {display_names, connect_codes} =
       if version >= {3, 9, 0} do
         {
@@ -334,6 +347,7 @@ defmodule Melee.Events do
         cpu_levels: cpu_levels,
         team_ids: team_ids,
         is_frozen_ps: is_frozen_ps,
+        nametags: nametags,
         display_names: display_names,
         connect_codes: connect_codes,
         frame: -10_000,
@@ -566,6 +580,7 @@ defmodule Melee.Events do
           player
           |> fix_frame_indexing()
           |> fix_iasa()
+          |> Map.put(:nametag, elem(parser.nametags, i))
           |> Map.put(:displayName, elem(parser.display_names, i))
           |> then(fn p ->
             case elem(parser.connect_codes, i) do
