@@ -222,6 +222,20 @@ defmodule Melee.EventsTest do
       assert gs.frame == 100
     end
 
+    test "gecko list with trailing zero padding resyncs (Direct replays)" do
+      sizes = Map.put(@sizes, 0x3D, 64)
+      parser = Events.new()
+      {:continue, parser} = Events.handle_game_event(parser, payloads(sizes))
+      {:continue, parser} = Events.handle_game_event(parser, game_start())
+
+      # Declared size 64, but the real blob ran 12 bytes longer (zeros).
+      gecko = event(0x3D, 64, []) <> :binary.copy(<<0>>, 12)
+      stream = gecko <> pre_frame(1, 1) <> post_frame(1, 1) <> bookend(1)
+
+      assert {:frame_complete, gs, _} = Events.handle_game_event(parser, stream)
+      assert gs.frame == 1
+    end
+
     test "game end halts the stream" do
       parser = connected_parser()
       game_end = event(0x39, @sizes[0x39], [])

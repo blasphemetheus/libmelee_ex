@@ -153,6 +153,15 @@ defmodule Melee.Events do
   new data.
   """
   @spec handle_game_event(Parser.t(), binary()) :: result()
+  def handle_game_event(%Parser{} = parser, <<>>) do
+    # Drain call: walk the pending buffer directly. Concatenating with the
+    # empty binary would copy the (potentially large) pending sub-binary on
+    # every frame — O(n^2) over a replay-sized stream.
+    parser = put_in_menu_state(parser, @menu_in_game)
+    pending = parser.pending
+    walk(%{parser | pending: <<>>}, pending)
+  end
+
   def handle_game_event(%Parser{} = parser, bin) when is_binary(bin) do
     parser = put_in_menu_state(parser, @menu_in_game)
     bin = parser.pending <> bin
@@ -194,6 +203,13 @@ defmodule Melee.Events do
     handle_menu_event(parser, bin)
   end
 
+  # Zero bytes can never start a valid event (no event type is 0x00).
+  # Slippi Direct replays contain occasional zero-fill runs (rollback-era
+  # write artifacts, oversized gecko lists); resync past them.
+  defp walk(parser, <<0, _::binary>> = bin) do
+    walk(parser, skip_zero_padding(bin))
+  end
+
   defp walk(parser, <<command, _::binary>> = bin) do
     case Map.fetch(parser.payload_sizes, command) do
       :error ->
@@ -206,6 +222,11 @@ defmodule Melee.Events do
       {:ok, size} ->
         event = binary_part(bin, 0, size)
         rest = binary_part(bin, size, byte_size(bin) - size)
+
+        # GECKO_LIST's size-table entry is unreliable (per the Slippi spec —
+        # oversized code lists overflow it; Direct replays pad past it).
+        # No event type is 0x00, so resync by skipping zero padding.
+        rest = if command == @gecko_list, do: skip_zero_padding(rest), else: rest
 
         case dispatch(parser, command, event) do
           {:cont, parser} ->
@@ -601,6 +622,9 @@ defmodule Melee.Events do
 
   defp put_in_menu_state(parser, menu_state),
     do: %{parser | gamestate: %{parser.gamestate | menu_state: menu_state}}
+
+  defp skip_zero_padding(<<0, rest::binary>>), do: skip_zero_padding(rest)
+  defp skip_zero_padding(bin), do: bin
 
   ## Binary readers — return `default` when the field is beyond the event
   ## (older SLP versions), mirroring Python's except-TypeError fallbacks.
