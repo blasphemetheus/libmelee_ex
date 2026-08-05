@@ -72,6 +72,7 @@ defmodule Melee.Dolphin do
           | {:headless, boolean()}
           | {:gfx_backend, String.t()}
           | {:emulation_speed, number()}
+          | {:memory_card, boolean()}
           | {:blocking_input, boolean()}
           | {:online_delay, non_neg_integer()}
           | {:save_replays, boolean()}
@@ -378,10 +379,23 @@ defmodule Melee.Dolphin do
     update_ini(ini_path, slippi_section, slippi_kvs)
     update_ini(ini_path, "Input", [{"backgroundinput", "True"}])
 
-    core_kvs = [
-      {"GFXBackend", gfx_backend},
-      {"EmulationSpeed", to_string(emulation_speed)}
-    ]
+    # Memory cards are DISABLED by default. With a card in slot A whose
+    # data Melee doesn't recognize, the game opens a "create game data?"
+    # dialog at boot that no menu-navigation code answers — the session
+    # hangs forever on a scene the spectator stream reports as
+    # UNKNOWN_MENU. A bot needs no save data, so unplug the card
+    # (EXIDevice 255 = none). Pass `memory_card: true` to keep whatever
+    # the copied/base config specifies.
+    memory_card_kvs =
+      if Keyword.get(opts, :memory_card, false),
+        do: [],
+        else: [{"SlotA", "255"}, {"SlotB", "255"}]
+
+    core_kvs =
+      [
+        {"GFXBackend", gfx_backend},
+        {"EmulationSpeed", to_string(emulation_speed)}
+      ] ++ memory_card_kvs
 
     update_ini(ini_path, "Core", core_kvs)
     update_ini(ini_path, "Display", [{"Fullscreen", "False"}])
