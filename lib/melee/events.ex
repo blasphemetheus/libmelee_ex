@@ -171,6 +171,32 @@ defmodule Melee.Events do
   end
 
   @doc """
+  Complete the frame currently being accumulated, without a
+  FRAME_BOOKEND event.
+
+  Slippi only added FRAME_BOOKEND (`0x3C`) in replay version 2.2.0, so
+  older recordings never signal a frame boundary. libmelee handles this
+  with "manual bookends": the reader watches the frame number on
+  PRE/POST_FRAME events and declares the previous frame finished when it
+  advances. `Melee.SlpFile` uses this function for exactly that, and it
+  is also the right handler for a `frame_end` slippstream message.
+
+  Returns `{:continue, parser}` when no frame is in progress, and
+  otherwise the same results FRAME_BOOKEND produces — including
+  `{:rollback, parser}` for a re-simulated frame.
+  """
+  @spec complete_frame(Parser.t()) :: result()
+  def complete_frame(%Parser{} = parser) do
+    if parser.gamestate.players == %{} do
+      {:continue, parser}
+    else
+      case frame_bookend(parser, <<>>) do
+        {:halt, result} -> result
+      end
+    end
+  end
+
+  @doc """
   Process one decoded `menu_event` payload.
 
   Always completes a frame: returns `{:frame_complete, gamestate, parser}`.
