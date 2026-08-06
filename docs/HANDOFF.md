@@ -130,14 +130,14 @@ Docs: `docs/melee-menus.md` (measured menu mechanics), `README.md`.
 
 ## Next work (task list, in the user's chosen order)
 
-1. **Netplay Direct as a repeatable tagged test** — `examples/netplay_direct.exs`
-   works but is not a test. Use `Melee.Probe`, netplay-stable build, two
-   account homes via `copy_home_from`; assert both sides reach in-game and
-   own_port resolves asymmetrically. Guard with `elapsed_ms`.
+1. ~~**Netplay Direct as a repeatable tagged test**~~ — DONE
+   (`test/melee/integration/netplay_direct_test.exs`, `--only
+   netplay_direct`). Passed live: A=EXPH#288 own_port=2, B=DBTD#411
+   own_port=1, 23.9s.
 2. **Differential property test vs peppi** — parse the same replays with
    `Melee.Events` and the peppi NIF, diff field-by-field across thousands
    of files (the corpus sweep only asserted no-crash/monotonic). Report
-   first divergence as file+frame+field.
+   first divergence as file+frame+field. *(in progress)*
 3. **Console robustness** — reconnect-on-disconnect, plus a supervised
    `Melee.Session` owning Dolphin + console + controllers with restart
    semantics (exphil's `MeleePort` is this, hand-wired).
