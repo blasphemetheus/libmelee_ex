@@ -389,6 +389,10 @@ defmodule Melee.Events do
     port = read_u8(event, 0x5, 0) + 1
     is_nana = read_u8(event, 0x6, 0) == 1
 
+    if valid_port?(port), do: pre_frame(parser, event, frame, port, is_nana), else: parser
+  end
+
+  defp pre_frame(parser, event, frame, port, is_nana) do
     gamestate = %{parser.gamestate | frame: frame}
     {player, gamestate} = fetch_player(gamestate, port)
 
@@ -438,6 +442,10 @@ defmodule Melee.Events do
     port = read_u8(event, 0x5, 0) + 1
     is_nana = read_u8(event, 0x6, 0) == 1
 
+    if valid_port?(port), do: post_frame(parser, event, port, is_nana), else: parser
+  end
+
+  defp post_frame(parser, event, port, is_nana) do
     gamestate = %{
       parser.gamestate
       | stage: parser.current_stage,
@@ -668,6 +676,13 @@ defmodule Melee.Events do
 
   defp merge_nana(player, true, nana), do: %{player | nana: nana}
   defp merge_nana(_player, false, updated), do: updated
+
+  # A GameCube has four controller ports, but the port byte is read from
+  # the wire: a corrupt or truncated stream can carry anything, and the
+  # per-port metadata tuples only have four slots. Drop such an event
+  # rather than crashing the decoder — malformed input must degrade, not
+  # take the console down mid-game.
+  defp valid_port?(port), do: port in 1..4
 
   defp put_in_menu_state(parser, menu_state),
     do: %{parser | gamestate: %{parser.gamestate | menu_state: menu_state}}

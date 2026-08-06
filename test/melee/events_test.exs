@@ -222,6 +222,26 @@ defmodule Melee.EventsTest do
       assert gs.frame == 100
     end
 
+    test "an out-of-range port byte is dropped, not crashed on" do
+      # A GameCube has four ports, but the port byte comes off the wire —
+      # a corrupt stream can carry anything, and the per-port metadata
+      # tuples only have four slots. Found by the fuzz property at seed
+      # 777, which crashed with :erlang.element(186, {1, 2, 0, 0}).
+      parser = connected_parser()
+
+      bogus =
+        pre_frame(5, 1, %{0x5 => u8(185)}) <>
+          post_frame(5, 1, %{0x5 => u8(185)})
+
+      assert {:continue, parser} = Events.handle_game_event(parser, bogus)
+
+      # ...and a well-formed frame still decodes right afterwards.
+      stream = pre_frame(6, 1) <> post_frame(6, 1) <> bookend(6)
+      assert {:frame_complete, gs, _} = Events.handle_game_event(parser, stream)
+      assert gs.frame == 6
+      assert map_size(gs.players) == 1
+    end
+
     test "gecko list with trailing zero padding resyncs (Direct replays)" do
       sizes = Map.put(@sizes, 0x3D, 64)
       parser = Events.new()
