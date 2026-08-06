@@ -1,7 +1,11 @@
 defmodule Melee.ConsoleTest do
   use ExUnit.Case, async: true
 
+  @moduletag :capture_log
+
   alias Melee.{Console, Slippstream}
+
+  doctest Melee.Console
 
   # A Melee.Transport that hands control to the test process: connect and
   # send are relayed back to the test, and the test injects inbound events
@@ -211,6 +215,139 @@ defmodule Melee.ConsoleTest do
     end
   end
 
+  describe "reconnect" do
+    # A fresh payload table with DIFFERENT sizes than `payloads/0`: if a
+    # reconnect kept the old parser, the new stream would misparse.
+    @alt_sizes %{
+      0x36 => 0x2ED,
+      0x37 => 0x41,
+      0x38 => 0x85,
+      0x39 => 0x2,
+      0x3B => 0x2C,
+      0x3C => 0x9,
+      0x10 => 0x20
+    }
+
+    defp alt_payloads do
+      table = for {cmd, size} <- @alt_sizes, into: <<>>, do: <<cmd, size - 1::big-unsigned-16>>
+      <<0x35, byte_size(table) + 1>> <> table
+    end
+
+    defp disconnect(owner), do: send(owner, {:enet_disconnected, {:relay, self()}, :peer_reset})
+
+    # Answer the transport connect the console issues on a reconnect
+    # attempt, driving it back to a live stream.
+    defp accept_reconnect(owner) do
+      assert_receive {:transport_connect, ^owner}, 2_000
+      send(owner, {:enet_connected, {:relay, self()}})
+      assert_receive {:transport_send, 0, handshake}, 2_000
+      assert handshake == Slippstream.connect_request()
+      :ok
+    end
+
+    test "is off by default: a disconnect latches forever", ctx do
+      {console, owner} = connected_console(ctx)
+      disconnect(owner)
+
+      assert {:error, :enet_disconnected} = Console.step(console, 5_000)
+      refute_receive {:transport_connect, _}, 200
+      assert {:error, :enet_disconnected} = Console.step(console, 5_000)
+    end
+
+    test "retries, re-handshakes, and resets the parser for the new stream", ctx do
+      {console, owner} =
+        connected_console(ctx, reconnect: [attempts: 3, backoff_ms: 10, max_backoff_ms: 20])
+
+      inject(owner, game_event_packet(payloads() <> game_start() <> frame(1)))
+      assert {:ok, %{frame: 1}} = Console.step(console, 5_000)
+
+      disconnect(owner)
+      assert :ok = accept_reconnect(owner)
+
+      # The new stream carries its own payload table; a stale parser
+      # would reject it (and stale queued frames would surface first).
+      inject(owner, game_event_packet(alt_payloads() <> game_start() <> frame(7)))
+      assert {:ok, gs} = Console.step(console, 5_000)
+      assert gs.frame == 7
+      assert gs.players[1].position.x == 7.0
+    end
+
+    test "drops frames queued before the disconnect", ctx do
+      {console, owner} =
+        connected_console(ctx, reconnect: [attempts: 3, backoff_ms: 10, max_backoff_ms: 20])
+
+      inject(owner, game_event_packet(payloads() <> game_start() <> frame(1) <> frame(2)))
+      assert {:ok, %{frame: 1}} = Console.step(console, 5_000)
+
+      # frame 2 is still queued; the disconnect must discard it.
+      disconnect(owner)
+      assert :ok = accept_reconnect(owner)
+      assert Console.connected?(console) == false
+
+      inject(owner, game_event_packet(alt_payloads() <> game_start() <> frame(9)))
+      assert {:ok, %{frame: 9}} = Console.step(console, 5_000)
+    end
+
+    test "a step in flight during a reconnect is answered, not dropped", ctx do
+      {console, owner} =
+        connected_console(ctx, reconnect: [attempts: 3, backoff_ms: 10, max_backoff_ms: 20])
+
+      inject(owner, game_event_packet(payloads() <> game_start()))
+
+      task = Task.async(fn -> Console.step(console, 5_000) end)
+      # Let the step block on an empty queue before pulling the plug.
+      refute_receive {:transport_connect, _}, 50
+      disconnect(owner)
+
+      assert :ok = accept_reconnect(owner)
+      inject(owner, game_event_packet(alt_payloads() <> game_start() <> frame(3)))
+
+      assert {:ok, %{frame: 3}} = Task.await(task, 5_000)
+    end
+
+    test "gives up after :attempts and latches", ctx do
+      {console, owner} =
+        connected_console(ctx, reconnect: [attempts: 2, backoff_ms: 10, max_backoff_ms: 20])
+
+      task = Task.async(fn -> Console.step(console, 5_000) end)
+      disconnect(owner)
+
+      # Each attempt connects; we answer with another disconnect.
+      for _ <- 1..2 do
+        assert_receive {:transport_connect, ^owner}, 2_000
+        disconnect(owner)
+      end
+
+      assert {:error, :enet_disconnected} = Task.await(task, 5_000)
+      assert {:error, :enet_disconnected} = Console.step(console, 5_000)
+      refute_receive {:transport_connect, _}, 200
+    end
+
+    test "a failed initial connect is never retried", _ctx do
+      {:ok, console} =
+        Console.start_link(
+          transport: RelayTransport,
+          transport_opts: [test_pid: self()],
+          reconnect: [attempts: 3, backoff_ms: 10]
+        )
+
+      task = Task.async(fn -> Console.connect(console, 5_000) end)
+      assert_receive {:transport_connect, owner}
+      disconnect(owner)
+
+      assert {:error, {:enet_disconnected, :peer_reset}} = Task.await(task, 5_000)
+      refute_receive {:transport_connect, _}, 200
+      assert {:error, :enet_disconnected} = Console.step(console, 5_000)
+    end
+  end
+
+  describe "backoff_ms/2" do
+    test "grows exponentially up to the cap" do
+      policy = %Console.Reconnect{backoff_ms: 500, max_backoff_ms: 2_000}
+      assert Enum.map(1..5, &Console.backoff_ms(policy, &1)) == [500, 1_000, 2_000, 2_000, 2_000]
+    end
+  end
+
   describe "controllers" do
     defp file_controller(ctx) do
       path = Path.join(System.tmp_dir!(), "melee_console_ctl_#{:erlang.phash2(ctx.test)}")
@@ -233,6 +370,32 @@ defmodule Melee.ConsoleTest do
       # game_start also releases all inputs so frame one has neutral input.
       assert content =~ "RELEASE A\n"
       assert content =~ "SET MAIN .5 .5\n"
+    end
+
+    test "unregister_controller/2 stops flushing it", ctx do
+      {console, owner} = connected_console(ctx)
+      {controller, path} = file_controller(ctx)
+      :ok = Console.register_controller(console, controller)
+      :ok = Console.unregister_controller(console, controller)
+
+      inject(owner, game_event_packet(payloads() <> game_start() <> frame(1)))
+      assert {:ok, _} = Console.step(console, 5_000)
+
+      assert File.read!(path) == ""
+    end
+
+    test "a dead controller is dropped instead of killing the console", ctx do
+      {console, owner} = connected_console(ctx)
+      {controller, _path} = file_controller(ctx)
+      :ok = Console.register_controller(console, controller)
+
+      Process.unlink(controller)
+      Process.exit(controller, :kill)
+      refute Process.alive?(controller)
+
+      inject(owner, game_event_packet(payloads() <> game_start() <> frame(1)))
+      assert {:ok, %{frame: 1}} = Console.step(console, 5_000)
+      assert Process.alive?(console)
     end
   end
 end

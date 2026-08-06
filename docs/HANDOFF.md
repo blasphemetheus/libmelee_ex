@@ -103,7 +103,8 @@ netplay-stable with `gfx_backend: "Null"` (or `"OGL"` to watch).
 
 | Module | Role |
 |---|---|
-| `Melee.Console` | connect + `step/2`, frame queue, controller flush ordering |
+| `Melee.Console` | connect + `step/2`, frame queue, controller flush ordering, opt-in reconnect |
+| `Melee.Session` | supervised Dolphin + console + controllers, correct startup order |
 | `Melee.Events` (+ `.Menu`) | pure Slippi binary decoder — the heart |
 | `Melee.Slippstream` | spectator JSON message codec |
 | `Melee.Controller` | named-pipe protocol + analog quantization |
@@ -142,6 +143,15 @@ peppi differential is the real correctness evidence.
 3. Live "it worked, I saw it" reports need independent reproduction
    before merging; unit-test claims do not.
 
+## Known flake (open)
+
+`mix test --seed 777` fails the `Melee.Events` "parser never crashes
+garbage" property: `pre_frame/2` reads the player index from a `u8` and
+calls `elem/2` on a 4-tuple, so fuzzed garbage with a port byte > 3
+raises `ArgumentError`. Reproduced on a clean worktree of `8054bb3`, so
+it predates the Session/reconnect work. Fix is a `port in 1..4` guard in
+`pre_frame` (and check `post_frame`/`item_update` for the same shape).
+
 ## Next work (task list, in the user's chosen order)
 
 1. ~~**Netplay Direct as a repeatable tagged test**~~ — DONE
@@ -149,9 +159,13 @@ peppi differential is the real correctness evidence.
    netplay_direct`). Passed live: A=EXPH#288 own_port=2, B=DBTD#411
    own_port=1, 23.9s.
 2. ~~**Differential property test vs peppi**~~ — DONE (exphil `test/exphil/data/events_peppi_parity_test.exs`, `ExPhil.Data.Parity`): 2,625 replays / 1.34B comparisons / zero divergences.
-3. **Console robustness** — reconnect-on-disconnect, plus a supervised
-   `Melee.Session` owning Dolphin + console + controllers with restart
-   semantics (exphil's `MeleePort` is this, hand-wired).
+3. ~~**Console robustness**~~ — DONE. `Melee.Console` takes an opt-in
+   `reconnect:` policy (default `false` keeps the terminal
+   `EnetDisconnected` behavior exphil depends on); a reconnect resets the
+   `Melee.Events` parser and drops queued frames because it is a NEW
+   stream. `Melee.Session` (`lib/melee/session.ex`) owns Dolphin +
+   console + controllers with the startup order that took live debugging
+   to find, restarts crashed controllers, and dies with Dolphin.
 4. **`Melee.SlpFile`** — feed a `.slp` through the same codec so bot code
    can be driven deterministically offline (libmelee's `slpfilestreamer`).
 5. **Remaining v0.47 PORT-LATER deltas** — launcher `Settings`

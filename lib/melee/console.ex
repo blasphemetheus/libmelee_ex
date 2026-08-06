@@ -19,6 +19,32 @@ defmodule Melee.Console do
       a blocking-input Dolphin doesn't hang; default `true`
     * `:polling_mode` — `step/2` returns `nil` when no frame arrives
       within `:polling_timeout` ms (default `0`) instead of waiting
+    * `:reconnect` — `false` (default) or a keyword list; see below
+
+  ## Reconnect (opt-in)
+
+  By default a transport disconnect is **terminal**: the console latches
+  and every later `step/2` returns `{:error, :enet_disconnected}`, which
+  is exactly what Python libmelee does (`EnetDisconnected`).
+
+  Passing `reconnect: [attempts: 5, backoff_ms: 1_000, max_backoff_ms:
+  10_000, connect_timeout: 10_000]` instead makes a mid-stream drop
+  recoverable: the console re-runs the transport connect and the
+  Slippstream handshake with capped exponential backoff
+  (`min(backoff_ms * 2 ** (attempt - 1), max_backoff_ms)`). A `step/2`
+  in flight waits for the outcome instead of erroring — subject to the
+  caller's own timeout, and to `:polling_timeout` in polling mode. If
+  every attempt fails the console latches exactly as it does today.
+
+  A reconnect is a **new game stream**, so the console resets its
+  `Melee.Events` parser (payload-size table, partial-frame buffer, frame
+  counter), drops queued frames, and clears the peer info until the new
+  `connect_reply` arrives. Registered controllers are *not* reset: they
+  are separate processes writing to Dolphin's fifos, they outlive the
+  ENet connection, and they stay registered across the reconnect.
+
+  Failures during the *initial* `connect/2` are never retried here —
+  `connect/2` reports them to its caller, which decides.
 
   ## Example
 
@@ -33,9 +59,18 @@ defmodule Melee.Console do
 
   use GenServer
 
+  require Logger
+
   alias Melee.{Controller, Events, GameState, Slippstream}
 
   @type step_result :: {:ok, GameState.t()} | nil | {:error, :enet_disconnected}
+
+  @typedoc """
+  Reconnect policy: `false` disables it (the default), a keyword list
+  enables it. Keys: `:attempts`, `:backoff_ms`, `:max_backoff_ms`,
+  `:connect_timeout`.
+  """
+  @type reconnect_opt :: false | keyword()
 
   ## Client API
 
@@ -71,6 +106,17 @@ defmodule Melee.Console do
   def register_controller(console, controller),
     do: GenServer.call(console, {:register_controller, controller})
 
+  @doc """
+  Stop flushing a previously registered `Melee.Controller`.
+
+  Useful when a controller process is replaced (see `Melee.Session`,
+  which restarts crashed controllers). Unregistering something that was
+  never registered is a no-op.
+  """
+  @spec unregister_controller(GenServer.server(), GenServer.server()) :: :ok
+  def unregister_controller(console, controller),
+    do: GenServer.call(console, {:unregister_controller, controller})
+
   @doc "Has the Slippstream `connect_reply` been received?"
   @spec connected?(GenServer.server()) :: boolean()
   def connected?(console), do: GenServer.call(console, :connected?)
@@ -87,6 +133,18 @@ defmodule Melee.Console do
   defp timeout_plus(ms), do: ms + 1_000
 
   ## GenServer implementation
+
+  defmodule Reconnect do
+    @moduledoc false
+    defstruct attempts: 5, backoff_ms: 1_000, max_backoff_ms: 10_000, connect_timeout: 10_000
+
+    @type t :: %__MODULE__{
+            attempts: non_neg_integer(),
+            backoff_ms: pos_integer(),
+            max_backoff_ms: pos_integer(),
+            connect_timeout: pos_integer()
+          }
+  end
 
   defmodule State do
     @moduledoc false
@@ -108,24 +166,41 @@ defmodule Melee.Console do
               disconnected: false,
               blocking_input: true,
               polling_mode: false,
-              polling_timeout: 0
+              polling_timeout: 0,
+              parser_opts: [],
+              reconnect: nil,
+              reconnecting?: false,
+              attempt: 0,
+              reconnect_timer: nil
+
+    @type t :: %__MODULE__{}
   end
 
   @impl true
   def init(opts) do
+    parser_opts = [skip_rollback_frames: Keyword.get(opts, :skip_rollback_frames, true)]
+
     state = %State{
       transport: Keyword.get(opts, :transport, Melee.Transport.EnetNif),
       transport_opts: Keyword.get(opts, :transport_opts, []),
       address: Keyword.get(opts, :address, "127.0.0.1"),
       port: Keyword.get(opts, :port, 51_441),
-      parser: Events.new(skip_rollback_frames: Keyword.get(opts, :skip_rollback_frames, true)),
+      parser_opts: parser_opts,
+      parser: Events.new(parser_opts),
       blocking_input: Keyword.get(opts, :blocking_input, true),
       polling_mode: Keyword.get(opts, :polling_mode, false),
-      polling_timeout: Keyword.get(opts, :polling_timeout, 0)
+      polling_timeout: Keyword.get(opts, :polling_timeout, 0),
+      reconnect: normalize_reconnect(Keyword.get(opts, :reconnect, false))
     }
 
     {:ok, state}
   end
+
+  # Data definition: the reconnect option is `false | keyword()`, and the
+  # internal representation is `nil | %Reconnect{}`.
+  @spec normalize_reconnect(reconnect_opt() | nil) :: Reconnect.t() | nil
+  defp normalize_reconnect(falsy) when falsy in [false, nil], do: nil
+  defp normalize_reconnect(opts) when is_list(opts), do: struct!(Reconnect, opts)
 
   @impl true
   def handle_call({:connect, _timeout}, from, state) do
@@ -157,6 +232,9 @@ defmodule Melee.Console do
   def handle_call({:register_controller, controller}, _from, state),
     do: {:reply, :ok, %{state | controllers: state.controllers ++ [controller]}}
 
+  def handle_call({:unregister_controller, controller}, _from, state),
+    do: {:reply, :ok, %{state | controllers: state.controllers -- [controller]}}
+
   def handle_call(:connected?, _from, state), do: {:reply, state.connected, state}
 
   def handle_call(:info, _from, state),
@@ -170,7 +248,18 @@ defmodule Melee.Console do
       GenServer.reply(state.connect_from, :ok)
     end
 
-    {:noreply, %{state | connect_from: nil}}
+    if state.reconnecting? do
+      Logger.warning("Melee.Console reconnected after #{state.attempt} attempt(s)")
+    end
+
+    {:noreply,
+     %{
+       state
+       | connect_from: nil,
+         reconnecting?: false,
+         attempt: 0,
+         reconnect_timer: cancel_timer(state.reconnect_timer)
+     }}
   end
 
   def handle_info({:enet_packet, conn, _channel, data}, %{conn: conn} = state) do
@@ -185,16 +274,37 @@ defmodule Melee.Console do
   end
 
   def handle_info({:enet_disconnected, conn, reason}, %{conn: conn} = state) do
-    state = %{state | disconnected: true}
-
-    if state.connect_from,
-      do: GenServer.reply(state.connect_from, {:error, {:enet_disconnected, reason}})
-
-    if state.step_from, do: GenServer.reply(state.step_from, {:error, :enet_disconnected})
-
-    {:noreply,
-     %{state | connect_from: nil, step_from: nil, poll_timer: cancel_timer(state.poll_timer)}}
+    # Reconnect never covers a failed *initial* connect: `connect/2` owns
+    # that outcome and reports it to its caller.
+    if state.reconnect == nil or state.connect_from != nil do
+      {:noreply, latch(state, reason)}
+    else
+      {:noreply, state |> reset_stream() |> schedule_reconnect(reason)}
+    end
   end
+
+  def handle_info({:reconnect, attempt}, %{attempt: attempt, reconnecting?: true} = state) do
+    case state.transport.connect(state.address, state.port, self(), state.transport_opts) do
+      {:ok, conn} ->
+        timer =
+          Process.send_after(
+            self(),
+            {:reconnect_timeout, attempt},
+            state.reconnect.connect_timeout
+          )
+
+        {:noreply, %{state | conn: conn, reconnect_timer: timer}}
+
+      {:error, reason} ->
+        {:noreply, schedule_reconnect(state, reason)}
+    end
+  end
+
+  def handle_info(
+        {:reconnect_timeout, attempt},
+        %{attempt: attempt, reconnecting?: true} = state
+      ),
+      do: {:noreply, schedule_reconnect(state, :connect_timeout)}
 
   def handle_info(:poll_timeout, %{step_from: from} = state) when from != nil do
     GenServer.reply(from, nil)
@@ -204,6 +314,79 @@ defmodule Melee.Console do
   def handle_info(:poll_timeout, state), do: {:noreply, state}
 
   def handle_info(_other, state), do: {:noreply, state}
+
+  ## Disconnect / reconnect
+
+  # Terminal disconnect: libmelee's `EnetDisconnected`. Every later step
+  # answers `{:error, :enet_disconnected}`.
+  @spec latch(State.t(), term()) :: State.t()
+  defp latch(state, reason) do
+    if state.connect_from,
+      do: GenServer.reply(state.connect_from, {:error, {:enet_disconnected, reason}})
+
+    if state.step_from, do: GenServer.reply(state.step_from, {:error, :enet_disconnected})
+
+    %{
+      state
+      | disconnected: true,
+        reconnecting?: false,
+        connect_from: nil,
+        step_from: nil,
+        poll_timer: cancel_timer(state.poll_timer),
+        reconnect_timer: cancel_timer(state.reconnect_timer)
+    }
+  end
+
+  # A reconnect yields a NEW game stream: a parser carrying the old
+  # payload-size table, a half-read frame or a stale frame number would
+  # misparse it. Queued frames belong to the dead stream too.
+  @spec reset_stream(State.t()) :: State.t()
+  defp reset_stream(state) do
+    %{
+      state
+      | conn: nil,
+        parser: Events.new(state.parser_opts),
+        frames: :queue.new(),
+        connected: false,
+        nick: "",
+        version: "",
+        cursor: 0
+    }
+  end
+
+  @spec schedule_reconnect(State.t(), term()) :: State.t()
+  defp schedule_reconnect(state, reason) do
+    state = %{state | reconnect_timer: cancel_timer(state.reconnect_timer)}
+    attempt = state.attempt + 1
+
+    if attempt > state.reconnect.attempts do
+      Logger.warning("Melee.Console giving up after #{state.attempt} reconnect attempt(s)")
+      latch(state, reason)
+    else
+      delay = backoff_ms(state.reconnect, attempt)
+
+      Logger.warning(
+        "Melee.Console disconnected (#{inspect(reason)}); reconnect attempt " <>
+          "#{attempt}/#{state.reconnect.attempts} in #{delay}ms"
+      )
+
+      timer = Process.send_after(self(), {:reconnect, attempt}, delay)
+      %{state | reconnecting?: true, attempt: attempt, reconnect_timer: timer}
+    end
+  end
+
+  @doc """
+  Capped exponential backoff for reconnect attempt `n` (1-based).
+
+  ## Examples
+
+      iex> policy = %Melee.Console.Reconnect{backoff_ms: 1_000, max_backoff_ms: 5_000}
+      iex> Enum.map(1..5, &Melee.Console.backoff_ms(policy, &1))
+      [1000, 2000, 4000, 5000, 5000]
+  """
+  @spec backoff_ms(Reconnect.t(), pos_integer()) :: pos_integer()
+  def backoff_ms(%Reconnect{} = policy, attempt) when attempt >= 1,
+    do: min(policy.backoff_ms * 2 ** (attempt - 1), policy.max_backoff_ms)
 
   ## Message handling
 
@@ -255,10 +438,11 @@ defmodule Melee.Console do
   # GAME_START: give the game empty input for frame one (characters are
   # not actionable anyway) — mirrors libmelee's release_all + flush.
   defp after_parse(%{parser: %{game_started: true} = parser} = state) do
-    Enum.each(state.controllers, fn controller ->
-      Controller.release_all(controller)
-      Controller.flush(controller)
-    end)
+    state =
+      drop_dead_controllers(state, fn controller ->
+        Controller.release_all(controller)
+        Controller.flush(controller)
+      end)
 
     %{state | parser: Events.clear_game_started(parser)}
   end
@@ -290,9 +474,25 @@ defmodule Melee.Console do
     end
   end
 
-  defp flush_controllers(state) do
-    Enum.each(state.controllers, &Controller.flush/1)
-    state
+  defp flush_controllers(state), do: drop_dead_controllers(state, &Controller.flush/1)
+
+  # A controller is a separate process; if it died (a supervisor such as
+  # `Melee.Session` will restart and re-register it) the console must not
+  # die with it, so a `:noproc`/`:normal` exit just drops it from the list.
+  @spec drop_dead_controllers(State.t(), (GenServer.server() -> any())) :: State.t()
+  defp drop_dead_controllers(state, fun) do
+    dead =
+      Enum.reject(state.controllers, fn controller ->
+        try do
+          fun.(controller)
+          true
+        catch
+          :exit, {reason, _call} when reason in [:noproc, :normal] -> false
+          :exit, :noproc -> false
+        end
+      end)
+
+    if dead == [], do: state, else: %{state | controllers: state.controllers -- dead}
   end
 
   defp cancel_timer(nil), do: nil
