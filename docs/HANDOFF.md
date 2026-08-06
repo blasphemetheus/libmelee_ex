@@ -19,7 +19,7 @@ construction.
 
 ## State
 
-- `mix test`: 81 doctests, 3 properties, 234 tests, 0 failures
+- `mix test`: 81 doctests, 3 properties, 242 tests, 0 failures
   (6 excluded: `:dolphin` integration tags).
 - `mix credo --strict`, `mix dialyzer` (0 errors), `mix format --check`
   all clean. CI at `.github/workflows/ci.yml`.
@@ -173,9 +173,7 @@ a regression test. A good advertisement for keeping the fuzz property.
    autodetection (`DolphinInfo`, ISO autodetect, `useNetplayBeta`
    tolerance), `replay_monthly_folders`, `log_types: ALL`,
    `has_user_json` guard, ExiAI detection in the version probe.
-6. **Rollback semantics tests** — `skip_rollback_frames: false` must
-   deliver re-simulated frames (slippi-ai depends on it); `:rollback`
-   signal + blocking-input flush ordering; frame regression across games.
+6. ~~**Rollback semantics tests**~~ — DONE (`test/melee/rollback_test.exs`): both modes, multi-frame rollback windows, the blocking-input flush obligation, and the new-game frame-clock reset.
 
 ## exphil side (for the other session)
 
