@@ -14,6 +14,10 @@ defmodule Melee.DolphinTest do
 
   defp read_ini(home), do: File.read!(Path.join([home, "Config", "Dolphin.ini"]))
 
+  defp logger_ini(home), do: Path.join([home, "Config", "Logger.ini"])
+
+  defp user_json(home), do: Path.join([home, "Slippi", "user.json"])
+
   describe "resolve_exe/2" do
     test "accepts a direct file path as-is", %{tmp_dir: tmp} do
       exe = fake_exe(tmp)
@@ -327,8 +331,13 @@ defmodule Melee.DolphinTest do
   describe "option validation" do
     test "missing required options", %{tmp_dir: tmp} do
       exe = fake_exe(tmp)
-      assert {:error, {:missing_option, :path}} = Dolphin.prepare_home(iso_path: "/x.iso")
-      assert {:error, {:missing_option, :iso_path}} = Dolphin.prepare_home(path: exe)
+      # autodetect: false — otherwise a machine with a Slippi Launcher
+      # installed would fill these in (see the autodetection tests).
+      assert {:error, {:missing_option, :path}} =
+               Dolphin.prepare_home(iso_path: "/x.iso", autodetect: false)
+
+      assert {:error, {:missing_option, :iso_path}} =
+               Dolphin.prepare_home(path: exe, autodetect: false)
     end
   end
 
@@ -370,6 +379,188 @@ defmodule Melee.DolphinTest do
       assert {:ok, pipe} = Dolphin.setup_controller(dolphin, 2)
       assert pipe == Path.join([home, "Pipes", "slippibot2"])
       assert File.exists?(pipe)
+    end
+  end
+
+  describe "replay_monthly_folders" do
+    test "is absent by default", %{tmp_dir: tmp} do
+      exe = fake_exe(tmp)
+      home = Path.join(tmp, "home")
+
+      assert {:ok, _} = Dolphin.prepare_home(path: exe, iso_path: "/x.iso", home: home)
+      refute read_ini(home) =~ "MonthlyFolders"
+    end
+
+    test "writes SlippiReplayMonthlyFolders under [Core] for ishiiruka", %{tmp_dir: tmp} do
+      exe = fake_exe(tmp)
+      home = Path.join(tmp, "home")
+
+      assert {:ok, _} =
+               Dolphin.prepare_home(
+                 path: exe,
+                 iso_path: "/x.iso",
+                 home: home,
+                 replay_monthly_folders: true
+               )
+
+      assert read_ini(home) =~ "SlippiReplayMonthlyFolders = True"
+    end
+
+    test "writes ReplayMonthlyFolders under [Slippi] for mainline", %{tmp_dir: tmp} do
+      dir = Path.join(tmp, "netplay-beta")
+      File.mkdir_p!(dir)
+      exe = fake_exe(dir, "Slippi_Netplay_Mainline-x86_64.AppImage")
+      home = Path.join(tmp, "home")
+
+      assert {:ok, _} =
+               Dolphin.prepare_home(
+                 path: exe,
+                 iso_path: "/x.iso",
+                 home: home,
+                 replay_monthly_folders: false
+               )
+
+      ini = read_ini(home)
+      assert ini =~ "ReplayMonthlyFolders = False"
+      refute ini =~ "SlippiReplayMonthlyFolders"
+    end
+  end
+
+  describe "log_types / Logger.ini" do
+    test "no Logger.ini is written unless :log_types is given", %{tmp_dir: tmp} do
+      exe = fake_exe(tmp)
+      home = Path.join(tmp, "home")
+
+      assert {:ok, _} = Dolphin.prepare_home(path: exe, iso_path: "/x.iso", home: home)
+      refute File.exists?(logger_ini(home))
+    end
+
+    test "an explicit list enables exactly those types", %{tmp_dir: tmp} do
+      exe = fake_exe(tmp)
+      home = Path.join(tmp, "home")
+
+      assert {:ok, _} =
+               Dolphin.prepare_home(
+                 path: exe,
+                 iso_path: "/x.iso",
+                 home: home,
+                 log_types: ["SLIPPI", "CORE"],
+                 log_level: 5
+               )
+
+      ini = File.read!(logger_ini(home))
+      assert ini =~ "WriteToFile = True"
+      assert ini =~ "Verbosity = 5"
+      assert ini =~ "SLIPPI = True"
+      assert ini =~ "CORE = True"
+      refute ini =~ "NETPLAY = True"
+    end
+
+    test "ALL enables every Dolphin log type", %{tmp_dir: tmp} do
+      exe = fake_exe(tmp)
+      home = Path.join(tmp, "home")
+
+      assert {:ok, _} =
+               Dolphin.prepare_home(
+                 path: exe,
+                 iso_path: "/x.iso",
+                 home: home,
+                 log_types: ["ALL"]
+               )
+
+      ini = File.read!(logger_ini(home))
+      assert ini =~ "Verbosity = 3"
+
+      for type <- Dolphin.all_log_types() do
+        assert ini =~ "#{type} = True", "missing log type #{type}"
+      end
+    end
+  end
+
+  describe "user.json (has_user_json)" do
+    test "false when there is nothing to copy", %{tmp_dir: tmp} do
+      exe = fake_exe(tmp)
+      home = Path.join(tmp, "home")
+
+      assert {:ok, prep} =
+               Dolphin.prepare_home(
+                 path: exe,
+                 iso_path: "/x.iso",
+                 home: home,
+                 autodetect: false
+               )
+
+      refute prep.user_json?
+      refute File.exists?(user_json(home))
+      # the Slippi dir is still created, as upstream does
+      assert File.dir?(Path.join(home, "Slippi"))
+    end
+
+    test "an explicit :user_json_path is copied in", %{tmp_dir: tmp} do
+      exe = fake_exe(tmp)
+      home = Path.join(tmp, "home")
+      src = Path.join(tmp, "mine.json")
+      File.write!(src, ~s({"uid":"abc"}))
+
+      assert {:ok, prep} =
+               Dolphin.prepare_home(
+                 path: exe,
+                 iso_path: "/x.iso",
+                 home: home,
+                 user_json_path: src,
+                 autodetect: false
+               )
+
+      assert prep.user_json?
+      assert File.read!(user_json(home)) == ~s({"uid":"abc"})
+    end
+
+    test "an existing user.json in the home is kept as-is", %{tmp_dir: tmp} do
+      exe = fake_exe(tmp)
+      home = Path.join(tmp, "home")
+      File.mkdir_p!(Path.join(home, "Slippi"))
+      File.write!(user_json(home), ~s({"uid":"already here"}))
+
+      assert {:ok, prep} =
+               Dolphin.prepare_home(
+                 path: exe,
+                 iso_path: "/x.iso",
+                 home: home,
+                 autodetect: false
+               )
+
+      assert prep.user_json?
+      assert File.read!(user_json(home)) == ~s({"uid":"already here"})
+    end
+
+    test "setup_user_json/3 copies from a detected launcher home", %{tmp_dir: tmp} do
+      launcher_home = Path.join(tmp, "launcher-home")
+      File.mkdir_p!(Path.join(launcher_home, "Slippi"))
+      File.write!(Path.join([launcher_home, "Slippi", "user.json"]), ~s({"uid":"launcher"}))
+
+      info = %Melee.Dolphin.Info{
+        install_dir: Path.join(tmp, "netplay"),
+        mainline?: false,
+        home_path: launcher_home,
+        iso_path: nil,
+        settings: %{}
+      }
+
+      home = Path.join(tmp, "home")
+      assert Dolphin.setup_user_json(home, nil, info)
+      assert File.read!(user_json(home)) == ~s({"uid":"launcher"})
+    end
+
+    test "setup_user_json/3 is false when the launcher home has none either", %{tmp_dir: tmp} do
+      info = %Melee.Dolphin.Info{
+        install_dir: Path.join(tmp, "netplay"),
+        mainline?: false,
+        home_path: Path.join(tmp, "empty-launcher-home"),
+        iso_path: nil,
+        settings: %{}
+      }
+
+      refute Dolphin.setup_user_json(Path.join(tmp, "home"), nil, info)
     end
   end
 end

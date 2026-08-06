@@ -14,6 +14,16 @@ defmodule Melee.Dolphin do
       (`EnableSpectator`, `SpectatorLocalPort`, ...) and additionally accepts
       `--platform headless` on the command line.
 
+  ## Slippi Launcher autodetection
+
+  `launch/1`/`prepare_home/1` consult the Slippi Launcher's `Settings`
+  file (see `Melee.Dolphin.Info`) when `:path`, `:iso_path` or
+  `:user_json_path` are not given, so on a machine with the launcher
+  installed `launch([])` is enough. Detection failures are never fatal:
+  they only mean `:path`/`:iso_path` go back to being required, and a
+  warning names the one that is missing. `autodetect: false` skips the
+  lookup entirely.
+
   ## Process ownership
 
   `launch/1` opens the Dolphin process as an Erlang `Port` owned by the
@@ -51,10 +61,23 @@ defmodule Melee.Dolphin do
   pick it up.
   """
 
+  alias Melee.Dolphin.Info
+  alias Melee.Dolphin.Version
   alias Melee.DolphinConfig
 
+  require Logger
+
   @enforce_keys [:exe, :home, :slippi_port, :flavor, :temp_home?]
-  defstruct [:port, :os_pid, :exe, :home, :slippi_port, :flavor, :temp_home?]
+  defstruct [
+    :port,
+    :os_pid,
+    :exe,
+    :home,
+    :slippi_port,
+    :flavor,
+    :temp_home?,
+    user_json?: false
+  ]
 
   @typedoc """
   A running (or launched-then-stopped) Dolphin instance.
@@ -66,6 +89,8 @@ defmodule Melee.Dolphin do
     * `:slippi_port` — spectator UDP port Slippi listens on
     * `:flavor` — `:ishiiruka` or `:mainline`
     * `:temp_home?` — whether we created `:home` and delete it on `stop/1`
+    * `:user_json?` — whether `<home>/Slippi/user.json` ended up in place
+      (netplay/connect-code play needs it; see `setup_user_json/2`)
   """
   @type t :: %__MODULE__{
           port: port() | nil,
@@ -74,13 +99,20 @@ defmodule Melee.Dolphin do
           home: Path.t(),
           slippi_port: pos_integer(),
           flavor: :ishiiruka | :mainline,
-          temp_home?: boolean()
+          temp_home?: boolean(),
+          user_json?: boolean()
         }
 
   @type flavor :: :ishiiruka | :mainline
   @type launch_opt ::
           {:path, Path.t()}
           | {:iso_path, Path.t()}
+          | {:autodetect, boolean()}
+          | {:launcher_path, Path.t()}
+          | {:user_json_path, Path.t()}
+          | {:replay_monthly_folders, boolean()}
+          | {:log_types, [String.t()]}
+          | {:log_level, 1..5}
           | {:home, Path.t()}
           | {:copy_home_from, Path.t()}
           | {:slippi_port, pos_integer()}
@@ -100,6 +132,71 @@ defmodule Melee.Dolphin do
 
   @default_slippi_port 51_441
 
+  # Every Dolphin log-type short name (console.py's ALL_LOG_TYPES, taken
+  # from the first string of each m_log entry in
+  # Source/Core/Common/Logging/LogManager.cpp). Order and spelling are
+  # upstream's, including the two names with spaces.
+  @all_log_types [
+    "Achievements",
+    "ActionReplay",
+    "Audio",
+    "AI",
+    "BOOT",
+    "CP",
+    "COMMON",
+    "CONSOLE",
+    "CI",
+    "CORE",
+    "DIO",
+    "DSPHLE",
+    "DSPLLE",
+    "DSPMails",
+    "DSP",
+    "DVD",
+    "JIT",
+    "EXI",
+    "FileMon",
+    "FRAMEDUMP",
+    "GDB_STUB",
+    "GP",
+    "Host GPU",
+    "HSP",
+    "IOS",
+    "IOS_DI",
+    "IOS_ES",
+    "IOS_FS",
+    "IOS_SD",
+    "IOS_SSL",
+    "IOS_STM",
+    "IOS_NET",
+    "IOS_USB",
+    "IOS_WC24",
+    "IOS_WFS",
+    "IOS_WIIMOTE",
+    "MASTER",
+    "MemCard Manager",
+    "MI",
+    "NETPLAY",
+    "HLE",
+    "OSREPORT",
+    "OSREPORT_HLE",
+    "PE",
+    "PI",
+    "PowerPC",
+    "SI",
+    "SLIPPI",
+    "SLIPPI_ONLINE",
+    "SLIPPI_RUST_DEPENDENCIES",
+    "SLIPPI_RUST_ONLINE",
+    "SLIPPI_RUST_JUKEBOX",
+    "SP1",
+    "SYMBOLS",
+    "Video",
+    "VI",
+    "Wiimote",
+    "WII_IPC"
+  ]
+
   # Linux executable names inside a Slippi Launcher install dir
   # (console.py get_exe_path).
   @ishiiruka_exe "Slippi_Online-x86_64.AppImage"
@@ -112,9 +209,12 @@ defmodule Melee.Dolphin do
   @doc """
   Set up a Dolphin user directory and start the Dolphin process.
 
-  See the module doc for option semantics; `:path` and `:iso_path` are
-  required. Returns `{:ok, t}` with the Port owned by the caller (the
-  caller receives `{port, {:exit_status, n}}` when Dolphin exits).
+  See the module doc for option semantics. `:path` and `:iso_path` are
+  required only when they cannot be autodetected from the Slippi
+  Launcher (see `default_info/1`); pass `autodetect: false` to skip
+  detection entirely. Returns `{:ok, t}` with the Port owned by the
+  caller (the caller receives `{port, {:exit_status, n}}` when Dolphin
+  exits).
   """
   @spec launch([launch_opt()]) :: {:ok, t()} | {:error, term()}
   def launch(opts) do
@@ -129,9 +229,10 @@ defmodule Melee.Dolphin do
   without starting any process.
 
   Returns `{:ok, prep}` where `prep` is a map with `:exe`, `:home`,
-  `:flavor`, `:temp_home?`, `:slippi_port`, and `:args` (full argv after
-  the executable). Useful for tests and for wiring controllers into the
-  home before launching.
+  `:flavor`, `:temp_home?`, `:slippi_port`, `:user_json?`, `:info` (the
+  autodetected `Melee.Dolphin.Info`, or `nil`) and `:args` (full argv
+  after the executable). Useful for tests and for wiring controllers
+  into the home before launching.
   """
   @spec prepare_home([launch_opt()]) ::
           {:ok,
@@ -141,18 +242,24 @@ defmodule Melee.Dolphin do
              flavor: flavor(),
              temp_home?: boolean(),
              slippi_port: pos_integer(),
+             user_json?: boolean(),
+             info: Info.t() | nil,
              args: [String.t()]
            }}
           | {:error, term()}
   def prepare_home(opts) do
-    with {:ok, path} <- require_opt(opts, :path),
-         {:ok, iso_path} <- require_opt(opts, :iso_path),
+    info = detect_info(opts)
+
+    with {:ok, path} <- resolve_path_opt(opts, :path, info && info.install_dir),
+         {:ok, iso_path} <- resolve_path_opt(opts, :iso_path, info && info.iso_path),
          {:ok, exe, flavor} <- resolve_exe(path, Keyword.get(opts, :flavor, :auto)),
          {:ok, home, temp_home?} <- setup_home_dir(opts) do
       headless = Keyword.get(opts, :headless, false)
       slippi_port = Keyword.get(opts, :slippi_port, @default_slippi_port)
 
       write_dolphin_ini(home, flavor, slippi_port, headless, opts)
+      write_logger_ini(home, opts)
+      user_json? = setup_user_json(home, Keyword.get(opts, :user_json_path), info)
 
       if Keyword.get(opts, :setup_gecko_codes, true) do
         write_gecko_codes(home, Keyword.get(opts, :gecko_extra_codes, []))
@@ -177,8 +284,84 @@ defmodule Melee.Dolphin do
          flavor: flavor,
          temp_home?: temp_home?,
          slippi_port: slippi_port,
+         user_json?: user_json?,
+         info: info,
          args: args
        }}
+    end
+  end
+
+  ## ------------------------------------------------------------------
+  ## Slippi Launcher autodetection (console.py default_dolphin_info)
+  ## ------------------------------------------------------------------
+
+  @doc """
+  Detect the Dolphin install the Slippi Launcher is configured to use.
+
+  Delegates to `Melee.Dolphin.Info.detect/1`; pass `:launcher_path` to
+  read a launcher directory other than the OS default. Returns
+  `{:error, reason}` — never raises — when the launcher is not
+  installed, so callers that supply `:path`/`:iso_path` themselves are
+  unaffected by its absence.
+  """
+  @spec default_info([{:launcher_path, Path.t()}]) :: {:ok, Info.t()} | {:error, term()}
+  def default_info(opts \\ []) do
+    Info.detect(Keyword.get(opts, :launcher_path))
+  end
+
+  @doc """
+  The autodetected install directory and whether it is mainline —
+  console.py's backwards-compatibility `default_dolphin_install_path`.
+  """
+  @spec default_install_path([{:launcher_path, Path.t()}]) ::
+          {:ok, Path.t(), boolean()} | {:error, term()}
+  def default_install_path(opts \\ []) do
+    with {:ok, info} <- default_info(opts), do: {:ok, info.install_dir, info.mainline?}
+  end
+
+  # Detection is IO, so only do it when something is actually missing.
+  # Upstream ties `dolphin_info` to `path is None` alone; we also detect
+  # for a missing `:iso_path`, but deliberately NOT for a missing
+  # `:user_json_path` — otherwise a fully-specified launch would start
+  # pulling the machine's launcher identity into its home.
+  defp detect_info(opts) do
+    needed? =
+      Keyword.get(opts, :autodetect, true) and
+        (is_nil(Keyword.get(opts, :path)) or is_nil(Keyword.get(opts, :iso_path)))
+
+    if needed? do
+      case default_info(opts) do
+        {:ok, info} ->
+          info
+
+        {:error, reason} ->
+          Logger.debug("Slippi Launcher autodetection unavailable: #{inspect(reason)}")
+          nil
+      end
+    end
+  end
+
+  # An explicit option always wins; otherwise fall back to what the
+  # launcher told us. Keeps the historical `{:missing_option, key}` error
+  # when neither is available, and warns first so the cause is visible.
+  defp resolve_path_opt(opts, key, detected) do
+    case Keyword.get(opts, key) do
+      value when is_binary(value) ->
+        {:ok, value}
+
+      nil when is_binary(detected) ->
+        {:ok, detected}
+
+      nil ->
+        Logger.warning(
+          "Melee.Dolphin: no #{key} given and none could be autodetected " <>
+            "from the Slippi Launcher"
+        )
+
+        {:error, {:missing_option, key}}
+
+      value ->
+        {:error, {:invalid_option, key, value}}
     end
   end
 
@@ -290,6 +473,151 @@ defmodule Melee.Dolphin do
   defp concrete_flavor(path, :auto), do: detect_flavor(path)
   defp concrete_flavor(_path, flavor) when flavor in [:ishiiruka, :mainline], do: flavor
 
+  @doc """
+  Run `<exe> --version` and report what build this Dolphin is.
+
+  Accepts an executable path or an install directory (resolved with
+  `resolve_exe/2`). Returns a `Melee.Dolphin.Version` carrying
+  `:version`, `:build` (`:netplay` | `:playback` | `:exi_ai`) and
+  `:mainline?` — see that module for how the three Linux builds are told
+  apart. Unlike `detect_flavor/1` this asks the binary itself, so it is
+  authoritative but costs a process spawn.
+  """
+  @spec version(Path.t()) :: {:ok, Version.t()} | {:error, term()}
+  def version(path) do
+    with {:ok, exe, _flavor} <- resolve_exe(path, :auto) do
+      {status, stdout, stderr} = run_version(exe)
+      Version.classify(status, stdout, stderr)
+    end
+  end
+
+  # System.cmd can only merge stderr into stdout, and the two builds put
+  # their version on *different* streams (with unrelated loader noise on
+  # stderr), so capture them separately via a temp file.
+  defp run_version(exe) do
+    err_path =
+      Path.join(System.tmp_dir!(), "melee_dolphin_version_#{System.unique_integer([:positive])}")
+
+    try do
+      {stdout, status} =
+        System.cmd("sh", ["-c", ~s(exec "$0" --version 2>"$1"), exe, err_path],
+          stderr_to_stdout: false
+        )
+
+      {status, stdout, err_path |> File.read() |> elem_or("")}
+    after
+      File.rm(err_path)
+    end
+  end
+
+  defp elem_or({:ok, value}, _default), do: value
+  defp elem_or(_error, default), do: default
+
+  ## ------------------------------------------------------------------
+  ## user.json (console.py _setup_home_directory)
+  ## ------------------------------------------------------------------
+
+  @doc """
+  Put a `user.json` into `<home>/Slippi` if one can be found, and say
+  whether the home ended up with one.
+
+  Ports the `has_user_json` block of console.py's
+  `_setup_home_directory`, in priority order:
+
+    1. `user_json_path` is given — copy it in (overwriting).
+    2. `<home>/Slippi/user.json` already exists — keep it.
+    3. an autodetected launcher install has one in its own home — copy
+       that in.
+    4. otherwise `false`.
+
+  Dolphin needs this file to know who you are; without it netplay and
+  connect codes are not available, which is why `Melee.MenuHelper`
+  accepts a `:user_json?` flag (see `step/4`).
+  """
+  @spec setup_user_json(Path.t(), Path.t() | nil, Info.t() | nil) :: boolean()
+  def setup_user_json(home, user_json_path, info) do
+    slippi_dir = Path.join(home, "Slippi")
+    File.mkdir_p!(slippi_dir)
+    dest = Path.join(slippi_dir, "user.json")
+
+    cond do
+      is_binary(user_json_path) -> copy_user_json(user_json_path, dest)
+      File.exists?(dest) -> true
+      is_nil(info) -> false
+      true -> copy_user_json(Path.join([info.home_path, "Slippi", "user.json"]), dest)
+    end
+  end
+
+  defp copy_user_json(src, dest) do
+    if File.regular?(src) do
+      File.cp(src, dest) == :ok
+    else
+      false
+    end
+  end
+
+  ## ------------------------------------------------------------------
+  ## Logger.ini (console.py _setup_dolphin_ini, logger section)
+  ## ------------------------------------------------------------------
+
+  @doc """
+  Every Dolphin log-type short name, from
+  `Source/Core/Common/Logging/LogManager.cpp` — the list upstream's
+  `log_types: ['ALL']` expands to.
+
+  ## Examples
+
+      iex> length(Melee.Dolphin.all_log_types())
+      58
+
+      iex> "SLIPPI" in Melee.Dolphin.all_log_types()
+      true
+  """
+  @spec all_log_types() :: [String.t()]
+  def all_log_types, do: @all_log_types
+
+  @doc """
+  Expand a `:log_types` list, turning the `"ALL"` wildcard into
+  `all_log_types/0`.
+
+  ## Examples
+
+      iex> Melee.Dolphin.expand_log_types(["SLIPPI", "CORE"])
+      ["SLIPPI", "CORE"]
+
+      iex> Melee.Dolphin.expand_log_types(["ALL"]) == Melee.Dolphin.all_log_types()
+      true
+  """
+  @spec expand_log_types([String.t()]) :: [String.t()]
+  def expand_log_types(log_types) do
+    if "ALL" in log_types, do: @all_log_types, else: log_types
+  end
+
+  # Upstream always writes Logger.ini (defaulting to ['SLIPPI']); this
+  # port writes it only when `:log_types` is given, so that existing
+  # callers' homes are byte-for-byte unchanged.
+  defp write_logger_ini(home, opts) do
+    case Keyword.get(opts, :log_types) do
+      nil ->
+        :ok
+
+      log_types when is_list(log_types) ->
+        path = Path.join([home, "Config", "Logger.ini"])
+        level = Keyword.get(opts, :log_level, 3)
+
+        update_ini(path, "Options", [
+          {"WriteToFile", "True"},
+          {"Verbosity", to_string(level)}
+        ])
+
+        update_ini(path, "Logs", Enum.map(expand_log_types(log_types), &{&1, "True"}))
+        :ok
+
+      other ->
+        raise ArgumentError, ":log_types must be a list of strings, got: #{inspect(other)}"
+    end
+  end
+
   ## ------------------------------------------------------------------
   ## Home directory setup
   ## ------------------------------------------------------------------
@@ -369,6 +697,8 @@ defmodule Melee.Dolphin do
           dir
       end
 
+    monthly = Keyword.get(opts, :replay_monthly_folders)
+
     slippi_entries =
       case flavor do
         :mainline ->
@@ -379,7 +709,12 @@ defmodule Melee.Dolphin do
              {"OnlineDelay", to_string(online_delay)},
              {"BlockingPipes", bool_str(blocking_input)},
              {"SaveReplays", bool_str(save_replays)}
-           ] ++ if(replay_dir, do: [{"ReplayDir", replay_dir}], else: [])}
+           ] ++
+             if(replay_dir, do: [{"ReplayDir", replay_dir}], else: []) ++
+             if(is_nil(monthly),
+               do: [],
+               else: [{"ReplayMonthlyFolders", bool_str(monthly)}]
+             )}
 
         :ishiiruka ->
           {"Core",
@@ -389,7 +724,12 @@ defmodule Melee.Dolphin do
              {"SlippiOnlineDelay", to_string(online_delay)},
              {"BlockingPipes", bool_str(blocking_input)},
              {"SlippiSaveReplays", bool_str(save_replays)}
-           ] ++ if(replay_dir, do: [{"SlippiReplayDir", replay_dir}], else: [])}
+           ] ++
+             if(replay_dir, do: [{"SlippiReplayDir", replay_dir}], else: []) ++
+             if(is_nil(monthly),
+               do: [],
+               else: [{"SlippiReplayMonthlyFolders", bool_str(monthly)}]
+             )}
       end
 
     {slippi_section, slippi_kvs} = slippi_entries
@@ -524,7 +864,8 @@ defmodule Melee.Dolphin do
          home: prep.home,
          slippi_port: prep.slippi_port,
          flavor: prep.flavor,
-         temp_home?: prep.temp_home?
+         temp_home?: prep.temp_home?,
+         user_json?: Map.get(prep, :user_json?, false)
        }}
     else
       {:error, {:exe_not_found, prep.exe}}
@@ -541,14 +882,6 @@ defmodule Melee.Dolphin do
       wait_for_exit(dolphin, timeout_ms - 100)
     else
       true
-    end
-  end
-
-  defp require_opt(opts, key) do
-    case Keyword.fetch(opts, key) do
-      {:ok, value} when is_binary(value) -> {:ok, value}
-      {:ok, value} -> {:error, {:invalid_option, key, value}}
-      :error -> {:error, {:missing_option, key}}
     end
   end
 

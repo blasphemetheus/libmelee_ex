@@ -164,16 +164,33 @@ defmodule Melee.MenuHelper do
       user directory boots straight into (backed out of with B). It
       tries A briefly, then falls back to B, and never presses A once a
       real menu has been seen. `:ignore` leaves such scenes alone.
+    * `:user_json?` — whether Dolphin's user directory has a
+      `user.json`. Defaults to `true` (assume it does), which keeps
+      every existing caller working. Pass
+      `user_json?: dolphin.user_json?` — `Melee.Dolphin` reports it —
+      and a `:connect_code` without one raises `ArgumentError` at the
+      call instead of silently sitting on the online menu, matching
+      upstream's `ValueError("Can't enter a connect code without a
+      user.json configured.")`. An empty connect code is exempt, as it
+      is in Python (`""` is falsey there).
 
   The nametag support and the unknown-scene recovery have no Python
   libmelee counterpart; the cursor coordinates they use were measured
   empirically (see the module source).
+
+  ## Examples
+
+      iex> Melee.MenuHelper.step(
+      ...>   Melee.MenuHelper.new(), %Melee.GameState{menu_state: 0}, self(),
+      ...>   character: 0x01, stage: 0x19, connect_code: "EXPH#288", user_json?: false)
+      ** (ArgumentError) can't enter a connect code without a user.json configured
   """
   @spec step(t(), GameState.t(), GenServer.server(), keyword()) :: t()
   def step(%__MODULE__{} = state, %GameState{} = gamestate, controller, opts) do
     character = Keyword.fetch!(opts, :character)
     stage = Keyword.fetch!(opts, :stage)
     connect_code = Keyword.get(opts, :connect_code, nil)
+    check_user_json!(connect_code, Keyword.get(opts, :user_json?, true))
     cpu_level = Keyword.get(opts, :cpu_level, 0)
     costume = Keyword.get(opts, :costume, 0)
     autostart = Keyword.get(opts, :autostart, false)
@@ -264,6 +281,19 @@ defmodule Melee.MenuHelper do
         state
     end
   end
+
+  # Upstream raises from menu_helper_simple when a connect code is asked
+  # for on a console with no user.json, because Dolphin simply cannot
+  # log in and the direct-match flow would never complete. We can't read
+  # that off a Controller (Python reaches through `controller._console`),
+  # so the caller passes it; defaulting to `true` keeps the check
+  # strictly opt-in and never crashes a session that didn't ask for it.
+  defp check_user_json!(connect_code, false)
+       when is_binary(connect_code) and connect_code != "" do
+    raise ArgumentError, "can't enter a connect code without a user.json configured"
+  end
+
+  defp check_user_json!(_connect_code, _user_json?), do: :ok
 
   ## Unknown scenes (boot dialogs, the Slippi log-in screen)
 

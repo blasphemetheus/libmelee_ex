@@ -434,6 +434,43 @@ defmodule Melee.MenuHelperTest do
       gs(Keyword.merge([menu_state: @slippi_online_css, submenu: 0x05], attrs))
     end
 
+    test "user_json?: false refuses a connect code", ctx do
+      {pid, _path} = file_controller(ctx)
+      gamestate = name_entry_gs(frame: 1, menu_selection: 45)
+
+      assert_raise ArgumentError, ~r/user\.json/, fn ->
+        MenuHelper.step(
+          MenuHelper.new(),
+          gamestate,
+          pid,
+          base_opts(connect_code: "FOX#123", user_json?: false)
+        )
+      end
+    end
+
+    test "user_json?: false is fine without a connect code (and for \"\")", ctx do
+      {pid, _path} = file_controller(ctx)
+      gamestate = name_entry_gs(frame: 1, menu_selection: 45)
+
+      assert %MenuHelper{} = MenuHelper.step(MenuHelper.new(), gamestate, pid, base_opts([]))
+
+      assert %MenuHelper{} =
+               MenuHelper.step(
+                 MenuHelper.new(),
+                 gamestate,
+                 pid,
+                 base_opts(connect_code: "", user_json?: false)
+               )
+    end
+
+    test "the guard is off by default, so existing callers are unaffected", ctx do
+      {pid, _path} = file_controller(ctx)
+      gamestate = name_entry_gs(frame: 1, menu_selection: 45)
+
+      assert %MenuHelper{} =
+               MenuHelper.step(MenuHelper.new(), gamestate, pid, base_opts(connect_code: "F#1"))
+    end
+
     test "holds right until inputs are live", ctx do
       {pid, path} = file_controller(ctx)
       gamestate = name_entry_gs(frame: 1, menu_selection: 45)

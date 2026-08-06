@@ -169,10 +169,17 @@ a regression test. A good advertisement for keeping the fuzz property.
    console + controllers with the startup order that took live debugging
    to find, restarts crashed controllers, and dies with Dolphin.
 4. ~~**`Melee.SlpFile`**~~ — DONE (`8054bb3`): streams replays through the live codec, and manual bookends unlock pre-2.2.0 files (400/400 old replays now parse).
-5. **Remaining v0.47 PORT-LATER deltas** — launcher `Settings`
-   autodetection (`DolphinInfo`, ISO autodetect, `useNetplayBeta`
-   tolerance), `replay_monthly_folders`, `log_types: ALL`,
-   `has_user_json` guard, ExiAI detection in the version probe.
+5. ~~**Remaining v0.47 PORT-LATER deltas**~~ — DONE. `Melee.Dolphin.Info`
+   reads `~/.config/Slippi Launcher/Settings` (tolerant `useNetplayBeta`,
+   ISO nulled when missing) and `prepare_home/1` falls back to it for
+   `:path`/`:iso_path` — never fatally, `autodetect: false` opts out.
+   `Melee.Dolphin.Version` + `Melee.Dolphin.version/1` shell out to
+   `<exe> --version` and tell netplay from ExiAI on both flavors (all
+   three local builds verified). Plus `:replay_monthly_folders`,
+   `:log_types`/`:log_level` (Logger.ini, `"ALL"` → all 58 types, written
+   only when asked for), `user.json` auto-copy with `dolphin.user_json?`,
+   and a `MenuHelper.step/4` `:user_json?` flag that refuses a connect
+   code without one (default `true`, so it is opt-in).
 6. ~~**Rollback semantics tests**~~ — DONE (`test/melee/rollback_test.exs`): both modes, multi-frame rollback windows, the blocking-input flush obligation, and the new-game frame-clock reset.
 
 ## exphil side (for the other session)
