@@ -19,8 +19,8 @@ construction.
 
 ## State
 
-- `mix test`: 80 doctests, 3 properties, 201 tests, 0 failures
-  (4 excluded: `:dolphin` integration tags).
+- `mix test`: 80 doctests, 3 properties, 202 tests, 0 failures
+  (5 excluded: `:dolphin` integration tags).
 - `mix credo --strict`, `mix dialyzer` (0 errors), `mix format --check`
   all clean. CI at `.github/workflows/ci.yml`.
 - exphil runs entirely on this library — **the Python `melee_bridge.py`
@@ -30,7 +30,7 @@ construction.
 
 | Claim | Evidence |
 |---|---|
-| Event codec is correct | 10,847 real replays / 12.3M frames parse (SLP 3.0.0–3.19.1); the only 2 failures are corrupt files peppi also rejects |
+| Event codec is correct | **Differential vs peppi**: 2,625 replays, 19.1M frames, ~1.34 **billion** field comparisons, zero divergences (34 fields/player-frame). Plus a no-crash sweep over 10,847 replays |
 | Bridge matches Python exactly | `exphil/scripts/parity_harness.exs`: same input schedule through both bridges, 1800 frames, **zero field mismatches** (max float delta 3e-8) |
 | Live play works | Production policy `ms_g10b_human` played a full 8-min game through the native bridge: 28,924 frames to GAME_END, 1080 shine entries (~134/min) |
 | Both transports work live | `mix test --only dolphin` passes over `EnetNif` and `EnetBeam` against real Dolphin |
@@ -116,6 +116,20 @@ netplay-stable with `gfx_backend: "Null"` (or `"OGL"` to watch).
 
 Docs: `docs/melee-menus.md` (measured menu mechanics), `README.md`.
 
+### Known boundary: replays older than v2.2.0
+
+`Melee.Events` completes a frame on FRAME_BOOKEND (`0x3C`), which Slippi
+added in replay **v2.2.0** — same as libmelee. Older replays parse to a
+clean `:game_end` with **zero frames**: silently empty, not an error.
+That is ~91% of the huggingface corpus (9,092 of 9,995). Irrelevant for
+live play (the spectator stream is always modern) but it means this
+codec is **not** a drop-in bulk-ingestion path for old replays — use
+peppi for those. `ExPhil.Data.Parity.comparable?/1` screens for it.
+
+Note this also means an early "10,847 replays parsed" sweep was weaker
+evidence than it looked: many of those files contributed no frames. The
+peppi differential is the real correctness evidence.
+
 ## Verification lessons (do not relearn these)
 
 1. **Verify a commit in a worktree, never a working tree an agent is
@@ -134,10 +148,7 @@ Docs: `docs/melee-menus.md` (measured menu mechanics), `README.md`.
    (`test/melee/integration/netplay_direct_test.exs`, `--only
    netplay_direct`). Passed live: A=EXPH#288 own_port=2, B=DBTD#411
    own_port=1, 23.9s.
-2. **Differential property test vs peppi** — parse the same replays with
-   `Melee.Events` and the peppi NIF, diff field-by-field across thousands
-   of files (the corpus sweep only asserted no-crash/monotonic). Report
-   first divergence as file+frame+field. *(in progress)*
+2. ~~**Differential property test vs peppi**~~ — DONE (exphil `test/exphil/data/events_peppi_parity_test.exs`, `ExPhil.Data.Parity`): 2,625 replays / 1.34B comparisons / zero divergences.
 3. **Console robustness** — reconnect-on-disconnect, plus a supervised
    `Melee.Session` owning Dolphin + console + controllers with restart
    semantics (exphil's `MeleePort` is this, hand-wired).
