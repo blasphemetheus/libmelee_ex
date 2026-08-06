@@ -19,8 +19,8 @@ construction.
 
 ## State
 
-- `mix test`: 80 doctests, 3 properties, 202 tests, 0 failures
-  (5 excluded: `:dolphin` integration tags).
+- `mix test`: 81 doctests, 3 properties, 234 tests, 0 failures
+  (6 excluded: `:dolphin` integration tags).
 - `mix credo --strict`, `mix dialyzer` (0 errors), `mix format --check`
   all clean. CI at `.github/workflows/ci.yml`.
 - exphil runs entirely on this library — **the Python `melee_bridge.py`
@@ -117,15 +117,17 @@ netplay-stable with `gfx_backend: "Null"` (or `"OGL"` to watch).
 
 Docs: `docs/melee-menus.md` (measured menu mechanics), `README.md`.
 
-### Known boundary: replays older than v2.2.0
+### Replays older than v2.2.0 (handled by Melee.SlpFile)
 
 `Melee.Events` completes a frame on FRAME_BOOKEND (`0x3C`), which Slippi
 added in replay **v2.2.0** — same as libmelee. Older replays parse to a
 clean `:game_end` with **zero frames**: silently empty, not an error.
 That is ~91% of the huggingface corpus (9,092 of 9,995). Irrelevant for
 live play (the spectator stream is always modern) but it means this
-codec is **not** a drop-in bulk-ingestion path for old replays — use
-peppi for those. `ExPhil.Data.Parity.comparable?/1` screens for it.
+codec alone is **not** a bulk-ingestion path for old replays — but
+`Melee.SlpFile` handles them via libmelee-style manual bookends (400/400
+ verified), and peppi remains the bulk parser. `ExPhil.Data.Parity.comparable?/1`
+ screens for the raw-codec case.
 
 Note this also means an early "10,847 replays parsed" sweep was weaker
 evidence than it looked: many of those files contributed no frames. The
@@ -143,14 +145,14 @@ peppi differential is the real correctness evidence.
 3. Live "it worked, I saw it" reports need independent reproduction
    before merging; unit-test claims do not.
 
-## Known flake (open)
+## Fixed: decoder crash on a bad port byte
 
-`mix test --seed 777` fails the `Melee.Events` "parser never crashes
-garbage" property: `pre_frame/2` reads the player index from a `u8` and
-calls `elem/2` on a 4-tuple, so fuzzed garbage with a port byte > 3
-raises `ArgumentError`. Reproduced on a clean worktree of `8054bb3`, so
-it predates the Session/reconnect work. Fix is a `port in 1..4` guard in
-`pre_frame` (and check `post_frame`/`item_update` for the same shape).
+`mix test --seed 777` used to fail the "parser never crashes garbage"
+property — `pre_frame`/`post_frame` read the port from a `u8` and index
+4-slot metadata tuples, so a corrupt stream raised
+`:erlang.element(186, {1, 2, 0, 0})` and would have taken a live console
+down mid-game. Fixed by dropping events with a port outside `1..4`, with
+a regression test. A good advertisement for keeping the fuzz property.
 
 ## Next work (task list, in the user's chosen order)
 
@@ -166,8 +168,7 @@ it predates the Session/reconnect work. Fix is a `port in 1..4` guard in
    stream. `Melee.Session` (`lib/melee/session.ex`) owns Dolphin +
    console + controllers with the startup order that took live debugging
    to find, restarts crashed controllers, and dies with Dolphin.
-4. **`Melee.SlpFile`** — feed a `.slp` through the same codec so bot code
-   can be driven deterministically offline (libmelee's `slpfilestreamer`).
+4. ~~**`Melee.SlpFile`**~~ — DONE (`8054bb3`): streams replays through the live codec, and manual bookends unlock pre-2.2.0 files (400/400 old replays now parse).
 5. **Remaining v0.47 PORT-LATER deltas** — launcher `Settings`
    autodetection (`DolphinInfo`, ISO autodetect, `useNetplayBeta`
    tolerance), `replay_monthly_folders`, `log_types: ALL`,
