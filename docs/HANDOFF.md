@@ -19,8 +19,8 @@ construction.
 
 ## State
 
-- `mix test`: 81 doctests, 3 properties, 242 tests, 0 failures
-  (6 excluded: `:dolphin` integration tags).
+- `mix test`: 94 doctests, 3 properties, 281 tests, 0 failures
+  (7 excluded: `:dolphin` integration tags).
 - `mix credo --strict`, `mix dialyzer` (0 errors), `mix format --check`
   all clean. CI at `.github/workflows/ci.yml`.
 - exphil runs entirely on this library — **the Python `melee_bridge.py`
@@ -154,7 +154,17 @@ property — `pre_frame`/`post_frame` read the port from a `u8` and index
 down mid-game. Fixed by dropping events with a port outside `1..4`, with
 a regression test. A good advertisement for keeping the fuzz property.
 
-## Next work (task list, in the user's chosen order)
+## Next work
+
+**All six queued items are done** (see below). Fresh ideas, roughly by
+value: publish to Hex + HexDocs; extend the peppi differential to
+pre-2.2.0 files now that `Melee.SlpFile` can read them; port `MenuHelper`
+coordinate measurement to ports 2-4 (only port 1 was measured live — see
+`docs/melee-menus.md`); a `Melee.Session`-based rewrite of exphil's
+`MeleePort` internals; and fixing the exphil peppi NIF character-id bug
+(Roy -> -1) once the rustc/ethnum build issue is resolved.
+
+### Completed queue (for history)
 
 1. ~~**Netplay Direct as a repeatable tagged test**~~ — DONE
    (`test/melee/integration/netplay_direct_test.exs`, `--only
