@@ -23,6 +23,22 @@ defmodule Melee.Dolphin do
   port closes and Dolphin's stdin is closed (though Dolphin may linger;
   use `stop/1` for a guaranteed kill).
 
+  ## Memory cards
+
+  `:memory_card` decides what is in the GameCube's card slots:
+
+    * `false` (default) — both slots empty. A bot needs no save data,
+      and an empty slot skips Melee's boot dialogs entirely.
+    * `true` — leave the slots as the copied/base config has them.
+      Note this only *preserves* config; it does not plug a card in, so
+      a home configured with `SlotA = 255` still boots without one and
+      nothing the game saves will persist.
+    * `:folder` — provision a GCI-folder card in slot A (creating
+      `gci_folder_path/2`) and select it. Use this when the game must
+      remember something between runs, such as an in-game nametag. On
+      the first boot with a fresh folder Melee asks to create game data;
+      `Melee.MenuHelper` answers that prompt by default.
+
   ## Controller setup ordering
 
   `setup_controller/3` (and any other config written into the home
@@ -72,7 +88,8 @@ defmodule Melee.Dolphin do
           | {:headless, boolean()}
           | {:gfx_backend, String.t()}
           | {:emulation_speed, number()}
-          | {:memory_card, boolean()}
+          | {:memory_card, boolean() | :folder}
+          | {:memory_card_region, String.t()}
           | {:blocking_input, boolean()}
           | {:online_delay, non_neg_integer()}
           | {:save_replays, boolean()}
@@ -379,17 +396,7 @@ defmodule Melee.Dolphin do
     update_ini(ini_path, slippi_section, slippi_kvs)
     update_ini(ini_path, "Input", [{"backgroundinput", "True"}])
 
-    # Memory cards are DISABLED by default. With a card in slot A whose
-    # data Melee doesn't recognize, the game opens a "create game data?"
-    # dialog at boot that no menu-navigation code answers — the session
-    # hangs forever on a scene the spectator stream reports as
-    # UNKNOWN_MENU. A bot needs no save data, so unplug the card
-    # (EXIDevice 255 = none). Pass `memory_card: true` to keep whatever
-    # the copied/base config specifies.
-    memory_card_kvs =
-      if Keyword.get(opts, :memory_card, false),
-        do: [],
-        else: [{"SlotA", "255"}, {"SlotB", "255"}]
+    memory_card_kvs = memory_card_kvs(home, opts)
 
     core_kvs =
       [
@@ -411,6 +418,66 @@ defmodule Melee.Dolphin do
 
   defp bool_str(true), do: "True"
   defp bool_str(false), do: "False"
+
+  ## ------------------------------------------------------------------
+  ## Memory card
+  ## ------------------------------------------------------------------
+
+  # EXI device ids Dolphin writes for the memory card slots.
+  @exi_device_none "255"
+  @exi_device_memory_card_folder "8"
+
+  # Memory cards are DISABLED by default. Without save data of its own,
+  # Melee opens a "Create Game Data?" dialog at boot; a bot that cannot
+  # answer it (see `Melee.MenuHelper`'s `:boot_dialog` option) hangs
+  # forever on a scene the spectator stream reports as UNKNOWN_MENU. A
+  # bot needs no save data, so the default unplugs both slots.
+  #
+  #   * `false` (default) — no card in either slot
+  #   * `true` — leave the slots exactly as the copied/base config has
+  #     them, and provision nothing. This does NOT plug a card in: a home
+  #     whose config says `SlotA = 255` still boots without one.
+  #   * `:folder` — plug a GCI-folder card into slot A, creating the
+  #     directory Dolphin expects. Persists nametags and unlocks across
+  #     runs, which `true` alone will not do.
+  defp memory_card_kvs(home, opts) do
+    case Keyword.get(opts, :memory_card, false) do
+      false ->
+        [{"SlotA", @exi_device_none}, {"SlotB", @exi_device_none}]
+
+      true ->
+        []
+
+      :folder ->
+        provision_gci_folder(home, Keyword.get(opts, :memory_card_region, "USA"))
+        [{"SlotA", @exi_device_memory_card_folder}]
+
+      other ->
+        raise ArgumentError,
+              ":memory_card must be false, true or :folder, got: #{inspect(other)}"
+    end
+  end
+
+  # Dolphin's folder-backed memory card reads GCI files out of
+  # `<home>/GC/<region>/Card A`, so the directory has to exist before
+  # boot. Melee writes its own save into it on first run.
+  defp provision_gci_folder(home, region) do
+    home |> gci_folder_path(region) |> File.mkdir_p!()
+  end
+
+  @doc """
+  Path of the GCI-folder memory card slot A directory for a user
+  directory — where `memory_card: :folder` keeps save files.
+
+  ## Examples
+
+      iex> Melee.Dolphin.gci_folder_path("/tmp/home", "USA")
+      "/tmp/home/GC/USA/Card A"
+  """
+  @spec gci_folder_path(Path.t(), String.t()) :: Path.t()
+  def gci_folder_path(home, region \\ "USA") do
+    Path.join([home, "GC", region, "Card A"])
+  end
 
   ## ------------------------------------------------------------------
   ## Gecko codes (console.py _setup_gecko_codes)

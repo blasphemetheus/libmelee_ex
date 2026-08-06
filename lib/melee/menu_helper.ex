@@ -35,6 +35,7 @@ defmodule Melee.MenuHelper do
   @main_menu 5
   @slippi_online_css 6
   @press_start 7
+  @unknown_menu 0xFF
 
   # SubMenu wire values (Melee.Enums.SubMenu)
   @main_menu_submenu 0
@@ -68,8 +69,11 @@ defmodule Melee.MenuHelper do
   Menu-navigation state. Mirrors the Python instance attributes:
   connect-code entry progress (`name_tag_index`, `inputs_live`) and
   stage-select progress (`frames_on_stage`, `frozen_stadium_selected`,
-  `stage_selected`), plus the in-game nametag flow (`nametag_phase`,
-  `nametag_frames`, `nametag_done`) which has no Python counterpart.
+  `stage_selected`), plus two things with no Python counterpart: the
+  in-game nametag flow (`nametag_phase`, `nametag_frames`,
+  `nametag_done`) and unknown-scene recovery (`seen_known_menu`, which
+  retires pressing A at nameless scenes once a real menu is reached, and
+  `unknown_frames`, how long the current nameless scene has persisted).
   """
   @type t :: %__MODULE__{
           name_tag_index: non_neg_integer(),
@@ -79,7 +83,9 @@ defmodule Melee.MenuHelper do
           stage_selected: boolean(),
           nametag_phase: nametag_phase(),
           nametag_frames: non_neg_integer(),
-          nametag_done: boolean()
+          nametag_done: boolean(),
+          seen_known_menu: boolean(),
+          unknown_frames: non_neg_integer()
         }
 
   defstruct name_tag_index: 0,
@@ -89,7 +95,9 @@ defmodule Melee.MenuHelper do
             stage_selected: false,
             nametag_phase: :waiting,
             nametag_frames: 0,
-            nametag_done: false
+            nametag_done: false,
+            seen_known_menu: false,
+            unknown_frames: 0
 
   @doc """
   Fresh menu-navigation state.
@@ -105,7 +113,9 @@ defmodule Melee.MenuHelper do
         stage_selected: false,
         nametag_phase: :waiting,
         nametag_frames: 0,
-        nametag_done: false
+        nametag_done: false,
+        seen_known_menu: false,
+        unknown_frames: 0
       }
   """
   @spec new() :: t()
@@ -147,9 +157,17 @@ defmodule Melee.MenuHelper do
       tag out on the keyboard. Creating needs a writable memory card and
       would pile up duplicate tags if it ran every game, so the intended
       workflow is `:create` once, `:select` from then on.
+    * `:unknown_scene` — `:recover` (default) gets us off scenes the
+      spectator stream cannot name, which otherwise hang a session
+      forever: Melee's "Create Game Data?" memory-card prompt at boot
+      (answered with A) and the Slippi log-in screen a never-logged-in
+      user directory boots straight into (backed out of with B). It
+      tries A briefly, then falls back to B, and never presses A once a
+      real menu has been seen. `:ignore` leaves such scenes alone.
 
-  This nametag support has no Python libmelee counterpart; the cursor
-  coordinates it uses were measured empirically (see the module source).
+  The nametag support and the unknown-scene recovery have no Python
+  libmelee counterpart; the cursor coordinates they use were measured
+  empirically (see the module source).
   """
   @spec step(t(), GameState.t(), GenServer.server(), keyword()) :: t()
   def step(%__MODULE__{} = state, %GameState{} = gamestate, controller, opts) do
@@ -164,6 +182,10 @@ defmodule Melee.MenuHelper do
     port = Keyword.get(opts, :port, 1)
     nametag = Keyword.get(opts, :nametag, nil)
     nametag_mode = Keyword.get(opts, :nametag_mode, :select)
+    unknown_scene = Keyword.get(opts, :unknown_scene, :recover)
+
+    # Reaching any menu we recognize retires boot-dialog handling.
+    state = note_known_menu(state, gamestate)
 
     cond do
       gamestate.menu_state in [@character_select, @slippi_online_css] ->
@@ -171,14 +193,19 @@ defmodule Melee.MenuHelper do
           nametag_pending?(state, gamestate, nametag, port) ->
             set_nametag(state, gamestate, controller, nametag, nametag_mode, port)
 
-          name_entry?(gamestate) ->
-            # v0.47 semantics: nil = leave name entry alone (local play);
-            # any string (even "") drives the direct-code keyboard.
-            if connect_code != nil do
-              enter_direct_code(state, gamestate, controller, connect_code)
-            else
-              state
-            end
+          # Only claim the name-entry screen when we actually mean to type
+          # a connect code (v0.47 semantics: nil = leave it to a human).
+          #
+          # The `connect_code != nil` half is load-bearing, not just an
+          # optimisation. Melee leaves `submenu` reading
+          # @name_entry_submenu after the keyboard closes — the nametag
+          # flow has to finish on a frame count for exactly this reason —
+          # so `name_entry?/1` keeps saying "yes" back at the CSS. Taking
+          # this branch on that stale value stranded the port: it never
+          # picked a character and never pressed START, leaving the match
+          # sat on READY TO FIGHT forever.
+          connect_code != nil and name_entry?(gamestate) ->
+            enter_direct_code(state, gamestate, controller, connect_code)
 
           true ->
             # We've exited the name entry screen, so reset the state in case
@@ -227,10 +254,62 @@ defmodule Melee.MenuHelper do
 
         state
 
-      # In-game (or unknown scene): do nothing
+      # A scene the spectator stream cannot name. Melee's boot-time
+      # memory-card prompt and the Slippi log-in screen both land here.
+      unknown_scene == :recover and gamestate.menu_state == @unknown_menu ->
+        recover_unknown_scene(state, gamestate, controller)
+
+      # In-game (or an unknown scene we've decided not to touch)
       true ->
         state
     end
+  end
+
+  ## Unknown scenes (boot dialogs, the Slippi log-in screen)
+
+  # Scenes the spectator stream has no name for all arrive as
+  # @unknown_menu with no players, and without help the session simply
+  # sits on them forever. Two show up in practice, and they want
+  # opposite answers:
+  #
+  #   * With a memory card plugged in but no Melee save on it, the game
+  #     opens "The Memory Card in Slot A has no saved Game Data. Create
+  #     Game Data?" (Yes preselected) and then an acknowledgement. Both
+  #     are dismissed with A.
+  #   * A Dolphin whose user directory has never logged in to Slippi
+  #     boots straight into Online Play's log-in screen. A does nothing
+  #     useful there; B backs out to a menu we understand.
+  #
+  # So: try A for a while, and if the scene is still unknown after
+  # @unknown_accept_frames, back out with B instead. A dialog answers
+  # within a frame or two and the scene changes; a screen that ignores A
+  # eventually gets the B it wanted. Once any real menu has been seen we
+  # never press A at an unknown scene again — mid-session, backing out is
+  # the only safe move.
+  @unknown_accept_frames 300
+
+  defp recover_unknown_scene(state, gamestate, controller) do
+    button =
+      if not state.seen_known_menu and state.unknown_frames < @unknown_accept_frames,
+        do: :a,
+        else: :b
+
+    # Pulse rather than hold: holding would answer only the first prompt.
+    if Integer.mod(gamestate.frame, 2) == 0 do
+      Controller.release_button(controller, button)
+    else
+      Controller.press_button(controller, button)
+    end
+
+    %{state | unknown_frames: state.unknown_frames + 1}
+  end
+
+  # Latch "we have seen a real menu", which retires pressing A at unknown
+  # scenes, and reset the stuck-scene counter.
+  defp note_known_menu(state, %GameState{menu_state: @unknown_menu}), do: state
+
+  defp note_known_menu(state, _gamestate) do
+    %{state | seen_known_menu: true, unknown_frames: 0}
   end
 
   ## In-game nametag (Melee save data)
@@ -396,31 +475,34 @@ defmodule Melee.MenuHelper do
   # Shared "get the hand to (target_x, target_y), pulse A once, then run
   # `on_pressed`" step. Returns the updated state.
   defp press_at(state, gamestate, controller, port, target_x, target_y, tolerance, on_pressed) do
-    cond do
-      # Once the press has started we stop steering and just run the
-      # counter out. Opening the tag list yanks the hand off the name box
-      # (Melee pins it to the list's own column), so re-checking arrival
-      # here would see `:moving`, zero the counter, and never finish.
-      state.nametag_frames > 0 ->
-        run_out_press(state, controller, on_pressed)
+    # Once the press has started we stop steering and just run the counter
+    # out. Opening the tag list yanks the hand off the name box (Melee
+    # pins it to the list's own column), so re-checking arrival here would
+    # see `:moving`, zero the counter, and never finish.
+    if state.nametag_frames > 0 do
+      run_out_press(state, controller, on_pressed)
+    else
+      steer_and_press(state, gamestate, controller, port, target_x, target_y, tolerance)
+    end
+  end
 
-      true ->
-        case Map.fetch(gamestate.players, port) do
-          {:ok, player} ->
-            case move_toward(controller, player.cursor, target_x, target_y, tolerance) do
-              :moving ->
-                Controller.release_button(controller, :a)
-                state
-
-              :arrived ->
-                Controller.press_button(controller, :a)
-                %{state | nametag_frames: 1}
-            end
-
-          :error ->
-            Controller.release_all(controller)
+  # Walk toward the target; the frame we arrive, start the A press.
+  defp steer_and_press(state, gamestate, controller, port, target_x, target_y, tolerance) do
+    case Map.fetch(gamestate.players, port) do
+      {:ok, player} ->
+        case move_toward(controller, player.cursor, target_x, target_y, tolerance) do
+          :moving ->
+            Controller.release_button(controller, :a)
             state
+
+          :arrived ->
+            Controller.press_button(controller, :a)
+            %{state | nametag_frames: 1}
         end
+
+      :error ->
+        Controller.release_all(controller)
+        state
     end
   end
 
@@ -750,10 +832,17 @@ defmodule Melee.MenuHelper do
     wiggleroom = 1.5
 
     cond do
-      # Set our CPU level correctly. Parenthesization matches Python's
-      # operator precedence: (... and ... and ...) or is_holding_cpu_slider
-      (use_cpu and correct_character and (coin_down or cursor_y < 0) and
-         cpu_level != ai_state.cpu_level) or ai_state.is_holding_cpu_slider ->
+      # Set our CPU level correctly. Python guards this with
+      # `(... and ... and ...) or is_holding_cpu_slider`, letting the
+      # slider flag alone pull ANY port into the CPU state machine. We
+      # additionally require `use_cpu`: on a port we are not making a CPU
+      # that flag has been seen reading true anyway, and acting on it
+      # strands the hand at the HMN box — the CPU machine has no idea
+      # where the character portrait is, so nothing ever walks back and
+      # the match can never be started.
+      use_cpu and
+          ((correct_character and (coin_down or cursor_y < 0) and
+              cpu_level != ai_state.cpu_level) or ai_state.is_holding_cpu_slider) ->
         if slippi_css?, do: raise(ArgumentError, "CPU slider state during netplay CSS")
         configure_cpu(gamestate, controller, ai_state, port, cpu_level, use_cpu)
         state
@@ -788,6 +877,34 @@ defmodule Melee.MenuHelper do
           start
         )
     end
+  end
+
+  # The CPU slider sits at this height on every port, and dragging it
+  # moves the cursor along x only — so a cursor that has drifted this far
+  # in y is not on the slider any more, whatever the gamestate claims.
+  @cpu_slider_y -15.12
+  @cpu_slider_grip_y 4.0
+
+  defp gripping_slider?(cursor_y), do: abs(cursor_y - @cpu_slider_y) <= @cpu_slider_grip_y
+
+  # How hard to shove the CPU-level slider. Python drags at a flat 0.15
+  # off centre the whole way. That is both slow — seconds to cross nine
+  # levels — and, once `Melee.Controller.fix_analog_stick/1` has scaled
+  # it, small enough to sit inside the stick deadzone and not move the
+  # slider at all; a drag that got within two levels of its target would
+  # simply stop there.
+  #
+  # So: slam it while there is ground to cover, and for the last couple
+  # of levels use a tilt that is definitely outside the deadzone but
+  # apply it every other frame. That is half speed without being
+  # ignored, which lands on the level we actually asked for.
+  @cpu_slider_near 2
+  @cpu_slider_fine_tilt 0.3
+
+  defp slider_tilt(levels_away, _frame) when levels_away > @cpu_slider_near, do: 0.5
+
+  defp slider_tilt(_levels_away, frame) do
+    if Integer.mod(frame, 2) == 0, do: @cpu_slider_fine_tilt, else: 0.0
   end
 
   # The CPU-configuration state machine: walk to the HMN/CPU box, press A,
@@ -829,14 +946,36 @@ defmodule Melee.MenuHelper do
             Controller.release_all(controller)
         end
 
+      # We think we're holding the slider, but the hand is nowhere near
+      # it. Melee moves a port's cursor back to the top of its panel when
+      # the CSS is interrupted — another port opening the name-entry
+      # keyboard does exactly that — and `is_holding_cpu_slider` can
+      # still read true afterwards. Dragging on that stale belief walks
+      # the cursor off across the screen forever while the level never
+      # changes, so let go and re-approach instead.
+      ai_state.is_holding_cpu_slider and not gripping_slider?(cursor_y) ->
+        Controller.release_all(controller)
+
       # Select the right CPU level on the slider
       ai_state.is_holding_cpu_slider ->
+        levels_away = abs(cpu_level - ai_state.cpu_level)
+
         cond do
           ai_state.cpu_level > cpu_level ->
-            Controller.tilt_analog(controller, :main, 0.35, 0.5)
+            Controller.tilt_analog(
+              controller,
+              :main,
+              0.5 - slider_tilt(levels_away, gamestate.frame),
+              0.5
+            )
 
           ai_state.cpu_level < cpu_level ->
-            Controller.tilt_analog(controller, :main, 0.65, 0.5)
+            Controller.tilt_analog(
+              controller,
+              :main,
+              0.5 + slider_tilt(levels_away, gamestate.frame),
+              0.5
+            )
 
           Integer.mod(gamestate.frame, 2) == 0 ->
             Controller.press_button(controller, :a)
@@ -848,7 +987,7 @@ defmodule Melee.MenuHelper do
       # Move over to and pick up the CPU slider
       ai_state.cpu_level != cpu_level ->
         wiggleroom = 1
-        target_y = -15.12
+        target_y = @cpu_slider_y
         target_x = -30.9 + 15.4 * (port - 1)
 
         cond do

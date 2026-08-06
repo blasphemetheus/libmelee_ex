@@ -242,6 +242,88 @@ defmodule Melee.DolphinTest do
     end
   end
 
+  describe "memory card" do
+    test "defaults to unplugging both slots", %{tmp_dir: tmp} do
+      exe = fake_exe(tmp)
+      home = Path.join(tmp, "home")
+
+      assert {:ok, _} =
+               Dolphin.prepare_home(path: exe, iso_path: "/isos/melee.iso", home: home)
+
+      ini = read_ini(home)
+      assert ini =~ "SlotA = 255"
+      assert ini =~ "SlotB = 255"
+      refute File.dir?(Dolphin.gci_folder_path(home))
+    end
+
+    test "true leaves the slots as the base config has them", %{tmp_dir: tmp} do
+      exe = fake_exe(tmp)
+      home = Path.join(tmp, "home")
+
+      assert {:ok, _} =
+               Dolphin.prepare_home(
+                 path: exe,
+                 iso_path: "/isos/melee.iso",
+                 home: home,
+                 memory_card: true
+               )
+
+      ini = read_ini(home)
+      refute ini =~ "SlotA ="
+      refute ini =~ "SlotB ="
+      refute File.dir?(Dolphin.gci_folder_path(home))
+    end
+
+    test ":folder selects the GCI folder device and creates the directory",
+         %{tmp_dir: tmp} do
+      exe = fake_exe(tmp)
+      home = Path.join(tmp, "home")
+
+      assert {:ok, _} =
+               Dolphin.prepare_home(
+                 path: exe,
+                 iso_path: "/isos/melee.iso",
+                 home: home,
+                 memory_card: :folder
+               )
+
+      # EXI device 8 is Dolphin's folder-backed memory card.
+      assert read_ini(home) =~ "SlotA = 8"
+      assert File.dir?(Dolphin.gci_folder_path(home))
+      assert Dolphin.gci_folder_path(home) == Path.join([home, "GC", "USA", "Card A"])
+    end
+
+    test ":folder honours :memory_card_region", %{tmp_dir: tmp} do
+      exe = fake_exe(tmp)
+      home = Path.join(tmp, "home")
+
+      assert {:ok, _} =
+               Dolphin.prepare_home(
+                 path: exe,
+                 iso_path: "/isos/melee.iso",
+                 home: home,
+                 memory_card: :folder,
+                 memory_card_region: "EUR"
+               )
+
+      assert File.dir?(Dolphin.gci_folder_path(home, "EUR"))
+      refute File.dir?(Dolphin.gci_folder_path(home, "USA"))
+    end
+
+    test "rejects a nonsense value", %{tmp_dir: tmp} do
+      exe = fake_exe(tmp)
+
+      assert_raise ArgumentError, ~r/:memory_card must be/, fn ->
+        Dolphin.prepare_home(
+          path: exe,
+          iso_path: "/isos/melee.iso",
+          home: Path.join(tmp, "home"),
+          memory_card: :raw
+        )
+      end
+    end
+  end
+
   describe "option validation" do
     test "missing required options", %{tmp_dir: tmp} do
       exe = fake_exe(tmp)

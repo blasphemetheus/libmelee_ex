@@ -298,7 +298,8 @@ defmodule Melee.MenuHelperTest do
         )
 
       {state, wrote} = step_frame(state, gamestate, pid, path, opts)
-      assert wrote == set_main(0.65, 0.5)
+      # two levels out on an even frame: the gentle, deadzone-safe nudge
+      assert wrote == set_main(0.8, 0.5)
 
       # 7. Holding at the right level, even frame: press A to release it
       gamestate =
@@ -343,13 +344,14 @@ defmodule Melee.MenuHelperTest do
       assert wrote == "PRESS START\n"
     end
 
-    test "dragging left when the slider level is too high", ctx do
+    test "dragging left when the slider level is a little too high", ctx do
       {pid, path} = file_controller(ctx)
 
+      # Two levels out: ease off so we land on the level we asked for.
       gamestate =
         cpu_gs(2,
           controller_status: 1,
-          cpu_level: 9,
+          cpu_level: 5,
           is_holding_cpu_slider: true,
           cursor: cursor(-30.9, -15.12)
         )
@@ -357,7 +359,73 @@ defmodule Melee.MenuHelperTest do
       {_state, wrote} =
         step_frame(MenuHelper.new(), gamestate, pid, path, base_opts(cpu_level: 3))
 
-      assert wrote == set_main(0.35, 0.5)
+      assert wrote == set_main(0.2, 0.5)
+    end
+
+    test "slams the slider at full tilt when several levels away", ctx do
+      {pid, path} = file_controller(ctx)
+
+      holding = fn level ->
+        cpu_gs(2,
+          controller_status: 1,
+          cpu_level: level,
+          is_holding_cpu_slider: true,
+          cursor: cursor(-30.9, -15.12)
+        )
+      end
+
+      {_state, wrote} =
+        step_frame(MenuHelper.new(), holding.(1), pid, path, base_opts(cpu_level: 9))
+
+      assert wrote == set_main(1.0, 0.5)
+
+      {_state, wrote} =
+        step_frame(MenuHelper.new(), holding.(9), pid, path, base_opts(cpu_level: 1))
+
+      assert wrote == set_main(0.0, 0.5)
+    end
+
+    test "a human port ignores the slider flag and keeps walking to its character", ctx do
+      {pid, path} = file_controller(ctx)
+
+      # is_holding_cpu_slider has been seen reading true on a port we are
+      # NOT making a CPU. Acting on it hands control to the CPU state
+      # machine, which knows nothing about the character portrait, so the
+      # hand strands at the HMN box and the match can never start.
+      gamestate =
+        cpu_gs(2,
+          controller_status: 0,
+          cpu_level: 0,
+          is_holding_cpu_slider: true,
+          character: 0xFF,
+          cursor: cursor(-32.2, -2.2)
+        )
+
+      {_state, wrote} = step_frame(MenuHelper.new(), gamestate, pid, path, base_opts())
+
+      # Fox's portrait is up and to the right: we steer, not sit there.
+      assert wrote =~ set_main(0.5, 1.0)
+    end
+
+    test "lets go when it is holding the slider but the hand has moved away", ctx do
+      {pid, path} = file_controller(ctx)
+
+      # Melee parks a port's cursor at the top of its panel when the CSS
+      # is interrupted (another port opening name entry, say) while
+      # is_holding_cpu_slider can still read true. Dragging on that stale
+      # belief walks the cursor away forever, so drop the slider instead.
+      gamestate =
+        cpu_gs(2,
+          controller_status: 1,
+          cpu_level: 2,
+          is_holding_cpu_slider: true,
+          cursor: cursor(-30.9, -2.2)
+        )
+
+      {_state, wrote} =
+        step_frame(MenuHelper.new(), gamestate, pid, path, base_opts(cpu_level: 9))
+
+      assert wrote == @release_all
     end
   end
 
@@ -419,6 +487,21 @@ defmodule Melee.MenuHelperTest do
         step_frame(state, gamestate, pid, path, base_opts(connect_code: "FOX#123"))
 
       assert wrote == "PRESS START\n"
+    end
+
+    test "without a connect code, gets on with picking a character", ctx do
+      {pid, path} = file_controller(ctx)
+
+      # Melee leaves submenu reading @name_entry_submenu after the
+      # keyboard closes, so this gamestate is also what the CSS looks
+      # like right after the nametag flow. Treating it as name entry
+      # stranded the port: no character picked, START never pressed.
+      gamestate = %{name_entry_gs(frame: 1) | players: %{1 => player(cursor: cursor(-22, 25))}}
+
+      {_state, wrote} = step_frame(MenuHelper.new(), gamestate, pid, path, base_opts())
+
+      # Steering toward Fox, not sitting on its hands.
+      assert wrote == "RELEASE START\nRELEASE A\n" <> set_main(0.5, 0.0)
     end
 
     test "leaving name entry resets the entry state", ctx do
@@ -507,7 +590,8 @@ defmodule Melee.MenuHelperTest do
       assert state.nametag_done == false
       # character selection, not the name box (which is far below at y ~ -18)
       refute wrote == ""
-      assert state == MenuHelper.new()
+      # nothing but the boot-dialog latch moved
+      assert state == %{MenuHelper.new() | seen_known_menu: true}
     end
 
     test "an already-done flow falls through to character selection", ctx do
@@ -803,7 +887,82 @@ defmodule Melee.MenuHelperTest do
         step_frame(state, gamestate, pid, path, base_opts(nametag: "EXPH", port: 3))
 
       assert wrote == @release_all
-      assert new_state == state
+      assert new_state == %{state | seen_known_menu: true}
+    end
+  end
+
+  describe "unknown scenes" do
+    @unknown_menu 0xFF
+
+    defp dialog_gs(frame), do: gs(menu_state: @unknown_menu, frame: frame, players: %{})
+
+    test "pulses A at an unknown boot scene to answer the memory card prompt", ctx do
+      {pid, path} = file_controller(ctx)
+      state = MenuHelper.new()
+
+      {state, wrote} = step_frame(state, dialog_gs(1), pid, path, base_opts())
+      assert wrote == "PRESS A\n"
+
+      {state, wrote} = step_frame(state, dialog_gs(2), pid, path, base_opts())
+      assert wrote == "RELEASE A\n"
+
+      refute state.seen_known_menu
+    end
+
+    test ":ignore leaves the scene alone", ctx do
+      {pid, path} = file_controller(ctx)
+
+      {_state, wrote} =
+        step_frame(MenuHelper.new(), dialog_gs(1), pid, path, base_opts(unknown_scene: :ignore))
+
+      assert wrote == ""
+    end
+
+    test "backs out with B at an unknown scene once a real menu has been seen", ctx do
+      {pid, path} = file_controller(ctx)
+
+      # PRESS START is a menu we recognize, so the boot phase is over.
+      {state, _wrote} =
+        step_frame(
+          MenuHelper.new(),
+          gs(menu_state: @press_start, frame: 2),
+          pid,
+          path,
+          base_opts()
+        )
+
+      assert state.seen_known_menu
+
+      # An unknown scene later in the session gets B, never A: backing
+      # out is the only safe move mid-session.
+      {_state, wrote} = step_frame(state, dialog_gs(3), pid, path, base_opts())
+      assert wrote == "PRESS B\n"
+    end
+
+    test "falls back to B when A has not shifted the scene", ctx do
+      {pid, path} = file_controller(ctx)
+
+      # The Slippi log-in screen ignores A, so after a spell of trying we
+      # back out instead of pressing A at it forever.
+      state =
+        Enum.reduce(1..300, MenuHelper.new(), fn frame, state ->
+          {state, _wrote} = step_frame(state, dialog_gs(frame), pid, path, base_opts())
+          state
+        end)
+
+      assert state.unknown_frames == 300
+
+      {_state, wrote} = step_frame(state, dialog_gs(301), pid, path, base_opts())
+      assert wrote == "PRESS B\n"
+    end
+
+    test "an in-game scene also counts as a real menu", ctx do
+      {pid, path} = file_controller(ctx)
+
+      {state, _wrote} =
+        step_frame(MenuHelper.new(), gs(menu_state: @in_game, frame: 1), pid, path, base_opts())
+
+      assert state.seen_known_menu
     end
   end
 
@@ -817,7 +976,7 @@ defmodule Melee.MenuHelperTest do
       # a call serializes any pending casts before we read the file
       _ = Controller.current(pid)
 
-      assert new_state == state
+      assert new_state == %{state | seen_known_menu: true}
       assert File.read!(path) == ""
     end
   end

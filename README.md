@@ -94,6 +94,12 @@ mix test                    # unit + property + golden replay tests
 mix test --only dolphin     # integration vs a live Slippi Dolphin
 ```
 
+Live menu work (nametags, new screens) is driven by `Melee.Probe` in
+`test/support` — a frame loop with cursor steering, button pulses and
+tracing. See `examples/nametag_session.exs` for a worked session, and
+[Driving Melee's menus](docs/melee-menus.md) for the measured mechanics
+behind `Melee.MenuHelper`.
+
 The golden tests parse a real `.slp` replay (byte-identical framing to
 the live spectator stream) and assert monotonic frames, sane physics,
 and chunked-delivery equivalence. Controller quantization is asserted

@@ -10,6 +10,7 @@ defmodule Melee.MixProject do
       version: @version,
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
+      elixirc_paths: elixirc_paths(Mix.env()),
       deps: deps(),
       dialyzer: [
         plt_add_apps: [:mix, :jason],
@@ -27,6 +28,12 @@ defmodule Melee.MixProject do
       extra_applications: [:logger]
     ]
   end
+
+  # `Melee.Probe` (test/support) is live-Dolphin exploration tooling, so
+  # it is compiled for tests only and stays out of the published package.
+  # Drive exploration scripts with `MIX_ENV=test mix run script.exs`.
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_env), do: ["lib"]
 
   defp deps do
     [
@@ -56,7 +63,9 @@ defmodule Melee.MixProject do
   defp docs do
     [
       main: "Melee",
-      source_url: @source_url
+      source_url: @source_url,
+      extras: ["README.md", "docs/melee-menus.md"],
+      groups_for_extras: [Guides: ["docs/melee-menus.md"]]
     ]
   end
 end
