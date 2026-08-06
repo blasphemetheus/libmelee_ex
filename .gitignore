@@ -24,3 +24,6 @@ libmelee_ex-*.tar
 
 # Dialyzer PLTs (built locally / cached in CI, never committed).
 /priv/plts/
+
+# Rust build artifacts (Rustler compiles into native/<crate>/target)
+native/*/target/
