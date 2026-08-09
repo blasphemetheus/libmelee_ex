@@ -1064,6 +1064,62 @@ defmodule Melee.MenuHelperTest do
     end
   end
 
+  describe "slippi online CSS direct selection" do
+    # Fox's CSS-grid id is 0x0A (from_internal): row 1, col 1 ->
+    # portrait target (-22.0, 11.5). RANDOM slot {0,0}: (-29.0, 4.5).
+    defp slippi_css_gs(attrs) do
+      base = [
+        character: 0xFF,
+        cursor: cursor(0, 0),
+        coin_down: false,
+        cpu_level: 0,
+        controller_status: 0,
+        costume: 0
+      ]
+
+      gs(
+        menu_state: @slippi_online_css,
+        frame: Keyword.get(attrs, :frame, 1),
+        players: %{1 => player(Keyword.merge(base, Keyword.delete(attrs, :frame)))}
+      )
+    end
+
+    test "steers to the character portrait, not the RANDOM slot", ctx do
+      {pid, path} = file_controller(ctx)
+
+      {state, wrote} =
+        step_frame(MenuHelper.new(), slippi_css_gs([]), pid, path, base_opts())
+
+      # Direct path: toward Fox's portrait at (-22, 11.5) from (0,0)
+      assert wrote =~ steer_main(0, 0, -22.0, 11.5)
+      assert state.slippi_css_frames == 1
+    end
+
+    test "falls back to the reroll target after the direct window", ctx do
+      {pid, path} = file_controller(ctx)
+      state = %{MenuHelper.new() | slippi_css_frames: 600}
+
+      {state, wrote} = step_frame(state, slippi_css_gs([]), pid, path, base_opts())
+
+      # Fallback: toward the RANDOM slot at (-29, 4.5)
+      assert wrote =~ steer_main(0, 0, -29.0, 4.5)
+      assert state.slippi_css_frames == 601
+    end
+
+    test "locking the character resets the clock and drives costume/START", ctx do
+      {pid, path} = file_controller(ctx)
+      state = %{MenuHelper.new() | slippi_css_frames: 123}
+
+      # Locked (hovered character == fox), odd frame, costume matches:
+      # the post-lock flow presses START — without swag.
+      gamestate = slippi_css_gs(character: @fox, frame: 3)
+      {state, wrote} = step_frame(state, gamestate, pid, path, base_opts())
+
+      assert state.slippi_css_frames == 0
+      assert wrote =~ "PRESS START"
+    end
+  end
+
   describe "empty connect code (GOTCHA #88)" do
     import ExUnit.CaptureLog
 

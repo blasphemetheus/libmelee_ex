@@ -84,6 +84,13 @@ defmodule Melee.MenuHelper do
   # (autostart evals) can pass a much tighter :stuck_after_frames.
   @stuck_after_frames_default 1800
 
+  # Slippi Online CSS: frames of failed DIRECT portrait selection before
+  # falling back to the ported random-reroll behavior (park on RANDOM,
+  # re-roll until the wanted character comes up — a 1-in-26 slot machine,
+  # ~40 presses observed live 2026-08-09). Direct steering is the
+  # default; the reroll survives only as layout-drift insurance.
+  @slippi_direct_fallback_frames 600
+
   @type t :: %__MODULE__{
           name_tag_index: non_neg_integer(),
           inputs_live: boolean(),
@@ -97,7 +104,8 @@ defmodule Melee.MenuHelper do
           unknown_frames: non_neg_integer(),
           stall_sig: term(),
           stalled_frames: non_neg_integer(),
-          stuck_reported: boolean()
+          stuck_reported: boolean(),
+          slippi_css_frames: non_neg_integer()
         }
 
   defstruct name_tag_index: 0,
@@ -112,7 +120,8 @@ defmodule Melee.MenuHelper do
             unknown_frames: 0,
             stall_sig: nil,
             stalled_frames: 0,
-            stuck_reported: false
+            stuck_reported: false,
+            slippi_css_frames: 0
 
   @doc """
   Fresh menu-navigation state.
@@ -133,7 +142,8 @@ defmodule Melee.MenuHelper do
         unknown_frames: 0,
         stall_sig: nil,
         stalled_frames: 0,
-        stuck_reported: false
+        stuck_reported: false,
+        slippi_css_frames: 0
       }
   """
   @spec new() :: t()
@@ -953,7 +963,14 @@ defmodule Melee.MenuHelper do
     {ai_state, swag} =
       if slippi_css? do
         if cpu_level != 0, do: raise(ArgumentError, "Can't choose CPU in netplay.")
-        {Map.fetch!(gamestate.players, 1), true}
+        # Direct portrait selection (2026-08-09). The ported behavior
+        # forced swag=true here, which targets {row 0, col 0} — the
+        # RANDOM slot — and re-rolls until the wanted character comes
+        # up. Steer to the portrait like the offline CSS instead; only
+        # after @slippi_direct_fallback_frames of failed direct
+        # selection does the reroll kick back in.
+        {Map.fetch!(gamestate.players, 1),
+         state.slippi_css_frames >= @slippi_direct_fallback_frames}
       else
         {Map.fetch!(gamestate.players, port), swag}
       end
@@ -981,6 +998,15 @@ defmodule Melee.MenuHelper do
       end
 
     correct_character = ai_state.character == Character.to_id(target_character)
+
+    # Direct-selection fallback clock: counts frames spent on the online
+    # CSS without the character locked; resets on success or offline.
+    state =
+      cond do
+        not slippi_css? -> %{state | slippi_css_frames: 0}
+        correct_character -> %{state | slippi_css_frames: 0}
+        true -> %{state | slippi_css_frames: state.slippi_css_frames + 1}
+      end
 
     external = Character.from_internal(target_character)
     row = div(external, 9)
@@ -1018,12 +1044,11 @@ defmodule Melee.MenuHelper do
         configure_cpu(gamestate, controller, ai_state, port, cpu_level, use_cpu)
         state
 
-      # We are already set, so let's taunt our opponent
-      correct_character and swag and opponent_state != nil and not start ->
-        taunt_opponent(gamestate, controller, opponent_state, cursor_x, cursor_y)
-        state
-
-      correct_character and swag and slippi_css? ->
+      # Locked in on the online CSS: costume via Y, START when matched.
+      # (No longer gated on swag — with direct selection swag is false
+      # on the slippi CSS until the reroll fallback engages, and this
+      # post-lock flow must run either way.)
+      correct_character and slippi_css? ->
         if Integer.mod(gamestate.frame, 2) == 0 do
           Controller.release_all(controller)
         else
@@ -1034,6 +1059,11 @@ defmodule Melee.MenuHelper do
           end
         end
 
+        state
+
+      # We are already set, so let's taunt our opponent
+      correct_character and swag and opponent_state != nil and not start ->
+        taunt_opponent(gamestate, controller, opponent_state, cursor_x, cursor_y)
         state
 
       true ->
