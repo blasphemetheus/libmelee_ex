@@ -851,7 +851,13 @@ defmodule Melee.MenuHelper do
         Controller.tilt_analog(controller, :main, 1.0, 0.5)
         state
 
-      # Let the controller go every other frame. Makes the logic below easier
+      # Release on even frames so every press-or-tilt below lands as a
+      # fresh EDGE the next odd frame. Melee list menus and confirm
+      # buttons act on the up->down edge (key-repeat only after a ~15f
+      # hold delay), so edge-every-2-frames is the correct — and for
+      # these short menus faster-than-hold — cadence, NOT an analog-hold
+      # waste (cursor STEERING never neutralizes here; that path uses
+      # steer_toward continuously). Investigated 2026-08-09 (hack sweep).
       Integer.mod(gamestate.frame, 2) == 0 ->
         Controller.release_all(controller)
         state
@@ -1441,7 +1447,13 @@ defmodule Melee.MenuHelper do
   # menu (also spams START at the PRESS_START scene).
   defp choose_versus_mode(gamestate, controller) do
     cond do
-      # Let the controller go every other frame. Makes the logic below easier
+      # Release on even frames so every press-or-tilt below lands as a
+      # fresh EDGE the next odd frame. Melee list menus and confirm
+      # buttons act on the up->down edge (key-repeat only after a ~15f
+      # hold delay), so edge-every-2-frames is the correct — and for
+      # these short menus faster-than-hold — cadence, NOT an analog-hold
+      # waste (cursor STEERING never neutralizes here; that path uses
+      # steer_toward continuously). Investigated 2026-08-09 (hack sweep).
       Integer.mod(gamestate.frame, 2) == 0 ->
         Controller.release_all(controller)
 
@@ -1477,7 +1489,13 @@ defmodule Melee.MenuHelper do
   # connect online menu (also spams START at the PRESS_START scene).
   defp choose_direct_online(gamestate, controller) do
     cond do
-      # Let the controller go every other frame. Makes the logic below easier
+      # Release on even frames so every press-or-tilt below lands as a
+      # fresh EDGE the next odd frame. Melee list menus and confirm
+      # buttons act on the up->down edge (key-repeat only after a ~15f
+      # hold delay), so edge-every-2-frames is the correct — and for
+      # these short menus faster-than-hold — cadence, NOT an analog-hold
+      # waste (cursor STEERING never neutralizes here; that path uses
+      # steer_toward continuously). Investigated 2026-08-09 (hack sweep).
       Integer.mod(gamestate.frame, 2) == 0 ->
         Controller.release_all(controller)
 
