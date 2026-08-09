@@ -277,6 +277,46 @@ defmodule Melee.MenuHelperTest do
 
       refute state.stage_selected
     end
+
+    # @fd is not Stadium, so frozen_stadium: true must NOT trigger the
+    # toggle wait — the hand presses A immediately on arrival (the
+    # 60-frame idle on every stage was the 2026-08-09 waste).
+    test "non-Stadium stage selects immediately even with frozen_stadium on", ctx do
+      {pid, path} = file_controller(ctx)
+      # FD target (6.7, -9); arrive there, frozen_stadium defaults true.
+      gamestate = stage_gs(frame: 25, cursor: cursor(6.7, -9))
+
+      {state, wrote} =
+        step_frame(MenuHelper.new(), gamestate, pid, path, base_opts(autostart: true))
+
+      assert wrote == set_main(0.5, 0.5) <> "PRESS A\n"
+      assert state.stage_selected
+    end
+
+    test "Stadium runs a brief Z-toggle then selects (no 60-frame wait)", ctx do
+      {pid, path} = file_controller(ctx)
+      # Pokémon Stadium internal id 0x12, cursor target (15, 3.5).
+      opts = base_opts(autostart: true, stage: 0x12, frozen_stadium: true)
+      at_stadium = fn frame -> stage_gs(frame: frame, cursor: cursor(15, 3.5)) end
+
+      # Drive from arrival; frames_on_stage increments each step.
+      {state, _} = step_frame(MenuHelper.new(), at_stadium.(20), pid, path, opts)
+      # frame 2 on the stage: Z press edge
+      state = Enum.reduce(21..21, state, fn f, s ->
+        {s, wrote} = step_frame(s, at_stadium.(f), pid, path, opts)
+        assert wrote =~ "PRESS Z"
+        s
+      end)
+
+      # Runs out the short settle, then selects with A — well under 60f.
+      {state, wrote} =
+        Enum.reduce(22..30, {state, ""}, fn f, {s, _} ->
+          step_frame(s, at_stadium.(f), pid, path, opts)
+        end)
+
+      assert state.stage_selected
+      assert wrote =~ "PRESS A" or state.frozen_stadium_selected
+    end
   end
 
   describe "CPU level configuration" do

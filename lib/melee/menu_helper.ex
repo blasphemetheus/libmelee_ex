@@ -1396,23 +1396,35 @@ defmodule Melee.MenuHelper do
       :arrived ->
         # If we get in the right area, press A
         state = %{state | frames_on_stage: state.frames_on_stage + 1}
-        maybe_toggle_frozen_stadium(state, controller, frozen_stadium)
+        stadium? = Stage.from_id(stage_id) == :pokemon_stadium
+        maybe_toggle_frozen_stadium(state, controller, frozen_stadium, stadium?)
     end
   end
 
-  # Empirically, it seems that we can toggle Frozen Stadium when the
-  # cursor is on any stage. So, we toggle at the first opportunity and
-  # leave it like that, whether or not we're currently selecting Stadium.
-  defp maybe_toggle_frozen_stadium(state, controller, frozen_stadium) do
-    if frozen_stadium != state.frozen_stadium_selected do
-      # Frame numbers here are probably quite loose.
+  # Frozen Stadium is a POKEMON STADIUM-only setting (it stops the
+  # stadium's transformations). The ported code toggled it on EVERY
+  # stage — "we can toggle from any stage, so toggle at the first
+  # opportunity" — which meant a full 60-frame (1s) idle wait on every
+  # stage select, even FD/BF/YS where it does nothing (measured as ~1s
+  # of the ~5s stage-select delay, 2026-08-09). Now: only run the toggle
+  # when actually selecting Stadium; select immediately otherwise. When
+  # it IS Stadium, the Z is a real EDGE (press, release next frame) plus
+  # a short settle margin — no magic 30/40/60 windows.
+  @frozen_z_press 2
+  @frozen_z_release 3
+  @frozen_z_settle 8
+
+  defp maybe_toggle_frozen_stadium(state, controller, frozen_stadium, stadium?) do
+    needs_toggle = stadium? and frozen_stadium != state.frozen_stadium_selected
+
+    if needs_toggle do
       case state.frames_on_stage do
-        30 -> Controller.press_button(controller, :z)
-        40 -> Controller.release_button(controller, :z)
+        @frozen_z_press -> Controller.press_button(controller, :z)
+        @frozen_z_release -> Controller.release_button(controller, :z)
         _ -> :ok
       end
 
-      if state.frames_on_stage < 60 do
+      if state.frames_on_stage < @frozen_z_settle do
         state
       else
         state = %{state | frozen_stadium_selected: frozen_stadium}
