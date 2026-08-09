@@ -668,8 +668,10 @@ defmodule Melee.MenuHelperTest do
       assert state.nametag_done == false
       # character selection, not the name box (which is far below at y ~ -18)
       refute wrote == ""
-      # nothing but the boot-dialog latch moved
-      assert state == %{MenuHelper.new() | seen_known_menu: true}
+      # nothing but the boot-dialog latch (and the watchdog's progress
+      # signature, which every menu step records) moved
+      assert %{state | stall_sig: nil} == %{MenuHelper.new() | seen_known_menu: true}
+      assert state.stall_sig != nil
     end
 
     test "an already-done flow falls through to character selection", ctx do
@@ -967,7 +969,7 @@ defmodule Melee.MenuHelperTest do
         step_frame(state, gamestate, pid, path, base_opts(nametag: "EXPH", port: 3))
 
       assert wrote == @release_all
-      assert new_state == %{state | seen_known_menu: true}
+      assert %{new_state | stall_sig: nil} == %{state | seen_known_menu: true}
     end
   end
 
@@ -1058,6 +1060,77 @@ defmodule Melee.MenuHelperTest do
 
       assert new_state == %{state | seen_known_menu: true}
       assert File.read!(path) == ""
+    end
+  end
+
+  describe "menu watchdog" do
+    test "counts stalled frames at an unchanging scene", ctx do
+      {pid, path} = file_controller(ctx)
+
+      state =
+        Enum.reduce(1..4, MenuHelper.new(), fn _i, state ->
+          # Same scene, no players, nothing moves: pure stall. frame
+          # deliberately constant — wall-clock isn't progress.
+          {state, _} = step_frame(state, gs(menu_state: @press_start, frame: 9), pid, path, base_opts())
+          state
+        end)
+
+      assert state.stalled_frames == 3
+      refute MenuHelper.stuck?(state)
+      assert MenuHelper.stuck?(state, stuck_after_frames: 3)
+    end
+
+    test "cursor movement resets the stall counter", ctx do
+      {pid, path} = file_controller(ctx)
+
+      stage = fn x ->
+        gs(menu_state: @stage_select, players: %{1 => player(cursor: cursor(x, 0))})
+      end
+
+      {state, _} = step_frame(MenuHelper.new(), stage.(0), pid, path, base_opts(autostart: true))
+      {state, _} = step_frame(state, stage.(0), pid, path, base_opts(autostart: true))
+      assert state.stalled_frames == 1
+
+      {state, _} = step_frame(state, stage.(2), pid, path, base_opts(autostart: true))
+      assert state.stalled_frames == 0
+    end
+
+    test "on_stuck fires exactly once per stall episode", ctx do
+      {pid, path} = file_controller(ctx)
+      test_pid = self()
+
+      opts =
+        base_opts(
+          stuck_after_frames: 2,
+          on_stuck: fn report -> send(test_pid, {:stuck, report}) end
+        )
+
+      state =
+        Enum.reduce(1..5, MenuHelper.new(), fn _i, state ->
+          {state, _} = step_frame(state, gs(menu_state: @press_start, frame: 9), pid, path, opts)
+          state
+        end)
+
+      assert state.stuck_reported
+      assert_received {:stuck, %{menu_state: @press_start, frames: 2}}
+      refute_received {:stuck, _}
+    end
+
+    test "going in-game clears the watchdog", ctx do
+      {pid, path} = file_controller(ctx)
+
+      {state, _} =
+        step_frame(MenuHelper.new(), gs(menu_state: @press_start, frame: 9), pid, path, base_opts())
+
+      {state, _} =
+        step_frame(state, gs(menu_state: @press_start, frame: 9), pid, path, base_opts())
+
+      assert state.stalled_frames == 1
+
+      # menu_state 2 = IN_GAME
+      {state, _} = step_frame(state, gs(menu_state: 2, frame: 10), pid, path, base_opts())
+      assert state.stalled_frames == 0
+      assert state.stall_sig == nil
     end
   end
 end

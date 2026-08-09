@@ -75,6 +75,13 @@ defmodule Melee.MenuHelper do
   retires pressing A at nameless scenes once a real menu is reached, and
   `unknown_frames`, how long the current nameless scene has persisted).
   """
+  # Menu watchdog: how many frames of zero progress before stuck?/2
+  # trips and :on_stuck fires. 30s at 60fps — long enough that netplay
+  # matchmaking waits and a human dawdling at a shared CSS don't trip it
+  # under the default; sessions that drive every menu themselves
+  # (autostart evals) can pass a much tighter :stuck_after_frames.
+  @stuck_after_frames_default 1800
+
   @type t :: %__MODULE__{
           name_tag_index: non_neg_integer(),
           inputs_live: boolean(),
@@ -85,7 +92,10 @@ defmodule Melee.MenuHelper do
           nametag_frames: non_neg_integer(),
           nametag_done: boolean(),
           seen_known_menu: boolean(),
-          unknown_frames: non_neg_integer()
+          unknown_frames: non_neg_integer(),
+          stall_sig: term(),
+          stalled_frames: non_neg_integer(),
+          stuck_reported: boolean()
         }
 
   defstruct name_tag_index: 0,
@@ -97,7 +107,10 @@ defmodule Melee.MenuHelper do
             nametag_frames: 0,
             nametag_done: false,
             seen_known_menu: false,
-            unknown_frames: 0
+            unknown_frames: 0,
+            stall_sig: nil,
+            stalled_frames: 0,
+            stuck_reported: false
 
   @doc """
   Fresh menu-navigation state.
@@ -115,11 +128,24 @@ defmodule Melee.MenuHelper do
         nametag_frames: 0,
         nametag_done: false,
         seen_known_menu: false,
-        unknown_frames: 0
+        unknown_frames: 0,
+        stall_sig: nil,
+        stalled_frames: 0,
+        stuck_reported: false
       }
   """
   @spec new() :: t()
   def new, do: %__MODULE__{}
+
+  @doc """
+  Has the menu watchdog tripped? True once `step/4` has seen no menu
+  progress for `:stuck_after_frames` consecutive frames (default
+  #{1800} = 30s at 60fps). See the `:on_stuck` option of `step/4`.
+  """
+  @spec stuck?(t(), keyword()) :: boolean()
+  def stuck?(%__MODULE__{stalled_frames: frames}, opts \\ []) do
+    frames >= Keyword.get(opts, :stuck_after_frames, @stuck_after_frames_default)
+  end
 
   @doc """
   Run one frame of menu navigation: press buttons on `controller` to get
@@ -173,6 +199,19 @@ defmodule Melee.MenuHelper do
       upstream's `ValueError("Can't enter a connect code without a
       user.json configured.")`. An empty connect code is exempt, as it
       is in Python (`""` is falsey there).
+    * `:stuck_after_frames` — menu-watchdog threshold (default `1800`,
+      30s): frames of zero menu progress (same scene, no cursor/phase/
+      selection movement on any port) before the state counts as stuck.
+      A wedged session used to sit silently at a screen until some
+      external timeout killed it (observed 2026-08-09: a login-screen
+      wedge burned 9 minutes); the watchdog turns that into a readable
+      signal in seconds. Progress in-game resets it. Query with
+      `stuck?/2`.
+    * `:on_stuck` — 1-arity fun invoked ONCE per stall episode when the
+      threshold is crossed, with `%{menu_state: ..., frames: ...}`.
+      Fire a log line, send a message to your session owner — whatever
+      turns the silence into an event. `nil` (default) disables the
+      callback (the `stuck?/2` flag still works).
 
   The nametag support and the unknown-scene recovery have no Python
   libmelee counterpart; the cursor coordinates they use were measured
@@ -204,7 +243,7 @@ defmodule Melee.MenuHelper do
     # Reaching any menu we recognize retires boot-dialog handling.
     state = note_known_menu(state, gamestate)
 
-    cond do
+    result = cond do
       gamestate.menu_state in [@character_select, @slippi_online_css] ->
         cond do
           nametag_pending?(state, gamestate, nametag, port) ->
@@ -280,6 +319,55 @@ defmodule Melee.MenuHelper do
       true ->
         state
     end
+
+    track_progress(result, gamestate, opts)
+  end
+
+  ## Menu watchdog
+
+  # Advance or reset the stall counter, and fire :on_stuck exactly once
+  # per stall episode when the threshold is crossed.
+  defp track_progress(state, gamestate, opts) do
+    if GameState.in_game?(gamestate) do
+      %{state | stall_sig: nil, stalled_frames: 0, stuck_reported: false}
+    else
+      sig = progress_sig(state, gamestate)
+
+      if sig == state.stall_sig do
+        state = %{state | stalled_frames: state.stalled_frames + 1}
+        threshold = Keyword.get(opts, :stuck_after_frames, @stuck_after_frames_default)
+        on_stuck = Keyword.get(opts, :on_stuck)
+
+        if on_stuck && state.stalled_frames >= threshold && not state.stuck_reported do
+          on_stuck.(%{menu_state: gamestate.menu_state, frames: state.stalled_frames})
+          %{state | stuck_reported: true}
+        else
+          state
+        end
+      else
+        %{state | stall_sig: sig, stalled_frames: 0, stuck_reported: false}
+      end
+    end
+  end
+
+  # What "progress" means at a menu: the scene itself, every port's
+  # cursor (quantized to half units — the CSS hand jitters sub-pixel),
+  # hovered character / CPU level / coin state, and our own flow phases.
+  # Any of these moving means the session is going somewhere.
+  defp progress_sig(state, gamestate) do
+    players =
+      for {port, player} <- Enum.sort(gamestate.players || %{}), player != nil do
+        cursor =
+          case player.cursor do
+            %{x: x, y: y} when is_number(x) and is_number(y) -> {round(x * 2), round(y * 2)}
+            _ -> nil
+          end
+
+        {port, cursor, player.character, player.cpu_level, player.coin_down}
+      end
+
+    {gamestate.menu_state, gamestate.submenu, players, state.nametag_phase,
+     state.name_tag_index, state.stage_selected, state.frames_on_stage > 0}
   end
 
   # Upstream raises from menu_helper_simple when a connect code is asked
