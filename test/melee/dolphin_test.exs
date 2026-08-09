@@ -171,6 +171,49 @@ defmodule Melee.DolphinTest do
       assert ini =~ "SlippiReplayDir = #{replay_dir}"
     end
 
+    test "a spectator port held by another process fails fast with a named error",
+         %{tmp_dir: tmp} do
+      exe = fake_exe(tmp)
+      {:ok, squatter} = :gen_udp.open(0, [:binary])
+      {:ok, port} = :inet.port(squatter)
+
+      try do
+        assert {:error, {:spectator_port_in_use, ^port, :eaddrinuse}} =
+                 Dolphin.prepare_home(
+                   path: exe,
+                   iso_path: "/isos/melee.iso",
+                   home: Path.join(tmp, "home"),
+                   slippi_port: port,
+                   # test_helper disables the probe globally (51441 may be
+                   # genuinely busy on a dev box); this test IS the probe
+                   check_spectator_port: true
+                 )
+      after
+        :gen_udp.close(squatter)
+      end
+    end
+
+    test "check_spectator_port: false skips the port probe", %{tmp_dir: tmp} do
+      exe = fake_exe(tmp)
+      {:ok, squatter} = :gen_udp.open(0, [:binary])
+      {:ok, port} = :inet.port(squatter)
+
+      try do
+        assert {:ok, prep} =
+                 Dolphin.prepare_home(
+                   path: exe,
+                   iso_path: "/isos/melee.iso",
+                   home: Path.join(tmp, "home"),
+                   slippi_port: port,
+                   check_spectator_port: false
+                 )
+
+        assert prep.slippi_port == port
+      after
+        :gen_udp.close(squatter)
+      end
+    end
+
     test "explicit save_replays: false still wins over a replay_dir", %{tmp_dir: tmp} do
       exe = fake_exe(tmp)
       home = Path.join(tmp, "home")

@@ -256,13 +256,14 @@ defmodule Melee.Dolphin do
           | {:error, term()}
   def prepare_home(opts) do
     info = detect_info(opts)
+    slippi_port = Keyword.get(opts, :slippi_port, @default_slippi_port)
 
     with {:ok, path} <- resolve_path_opt(opts, :path, info && info.install_dir),
          {:ok, iso_path} <- resolve_path_opt(opts, :iso_path, info && info.iso_path),
          {:ok, exe, flavor} <- resolve_exe(path, Keyword.get(opts, :flavor, :auto)),
+         :ok <- check_spectator_port(opts, slippi_port),
          {:ok, home, temp_home?} <- setup_home_dir(opts) do
       headless = Keyword.get(opts, :headless, false)
-      slippi_port = Keyword.get(opts, :slippi_port, @default_slippi_port)
 
       write_dolphin_ini(home, flavor, slippi_port, headless, opts)
       write_logger_ini(home, opts)
@@ -355,6 +356,38 @@ defmodule Melee.Dolphin do
           Logger.debug("Slippi Launcher autodetection unavailable: #{inspect(reason)}")
           nil
       end
+    end
+  end
+
+  # Session invariant (2026-08-09): a spectator port already bound by
+  # ANOTHER process makes the session dead-on-arrival in the least
+  # diagnosable way — Dolphin boots fine, shows its first screen, and
+  # serves ZERO frames, so the console starves for its whole timeout and
+  # dies looking exactly like a wedged login screen (a stray launcher
+  # Dolphin on 51441 burned two eval runs before anyone checked the
+  # port). Fail fast with a named error instead. Opt out with
+  # `check_spectator_port: false` if some exotic setup shares ports.
+  defp check_spectator_port(opts, slippi_port) do
+    default = Application.get_env(:melee, :check_spectator_port, true)
+
+    if Keyword.get(opts, :check_spectator_port, default) do
+      case :gen_udp.open(slippi_port, [:binary]) do
+        {:ok, socket} ->
+          :gen_udp.close(socket)
+          :ok
+
+        {:error, reason} ->
+          Logger.error(
+            "Melee.Dolphin: spectator port #{slippi_port} is already bound " <>
+              "(#{inspect(reason)}) — another Dolphin (launcher session, stray " <>
+              "instance) is holding it. This session would boot but never " <>
+              "receive frames. Pass a free :slippi_port or close the other instance."
+          )
+
+          {:error, {:spectator_port_in_use, slippi_port, reason}}
+      end
+    else
+      :ok
     end
   end
 
