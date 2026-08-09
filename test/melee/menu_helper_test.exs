@@ -66,9 +66,10 @@ defmodule Melee.MenuHelperTest do
     dx = if abs(tx - cx) <= tolerance, do: 0.0, else: tx - cx
     dy = if abs(ty - cy) <= tolerance, do: 0.0, else: ty - cy
     dist = :math.sqrt(dx * dx + dy * dy)
+    scale = max(abs(dx), abs(dy))
     mag = min(if(dist > 3.0, do: 0.5, else: 0.22), max_tilt)
 
-    set_main(0.5 + mag * dx / dist, 0.5 + mag * dy / dist)
+    set_main(0.5 + mag * dx / scale, 0.5 + mag * dy / scale)
   end
 
   # The (scaled) components of the last SET MAIN in `wrote`, for

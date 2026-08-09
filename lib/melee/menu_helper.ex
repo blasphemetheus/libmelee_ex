@@ -721,9 +721,18 @@ defmodule Melee.MenuHelper do
       Controller.tilt_analog(controller, :main, 0.5, 0.5)
       :arrived
     else
+      # Chebyshev normalization (divide by the DOMINANT axis, not the
+      # euclidean distance): the dominant component always carries the
+      # full magnitude. Euclidean split the 0.22 fine tilt into ~0.156
+      # per axis on diagonals — inside the analog deadzone (0.15 moves
+      # nothing; see slider_tilt) — freezing the hand just outside
+      # tolerance forever. Live failure 2026-08-09: 3 of 4 pool-eval
+      # sessions sat at stage select ~170k frames until an external
+      # deadline killed them.
       dist = :math.sqrt(dx * dx + dy * dy)
+      scale = max(abs(dx), abs(dy))
       mag = min(tilt(dist), max_tilt)
-      Controller.tilt_analog(controller, :main, 0.5 + mag * dx / dist, 0.5 + mag * dy / dist)
+      Controller.tilt_analog(controller, :main, 0.5 + mag * dx / scale, 0.5 + mag * dy / scale)
       :moving
     end
   end
