@@ -564,10 +564,8 @@ defmodule Melee.MenuHelper do
   @nametag_fine 3.0
   @nametag_fine_tilt 0.22
 
-  # Tilt the main stick toward (target_x, target_y), one axis at a time,
-  # exactly the way choose_character/select_character home in on a
-  # portrait. Returns `:moving` while outside `tolerance` and `:arrived`
-  # (stick centered) once inside it.
+  # Tilt the main stick toward (target_x, target_y). Returns `:moving`
+  # while outside `tolerance` and `:arrived` (stick centered) once inside.
   #
   # `target_x` may be `nil` for "don't steer x at all": while the tag
   # list is open Melee pins the hand to the list's column, so x cannot be
@@ -580,30 +578,14 @@ defmodule Melee.MenuHelper do
           number(),
           number()
         ) :: :moving | :arrived
-  defp move_toward(controller, %{x: cursor_x, y: cursor_y}, target_x, target_y, tolerance) do
+  defp move_toward(controller, %{y: cursor_y}, nil, target_y, tolerance) do
     cond do
-      # Move up if we're too low
       cursor_y < target_y - tolerance ->
         Controller.tilt_analog(controller, :main, 0.5, 0.5 + tilt(target_y - cursor_y))
         :moving
 
-      # Move down if we're too high
       cursor_y > target_y + tolerance ->
         Controller.tilt_analog(controller, :main, 0.5, 0.5 - tilt(cursor_y - target_y))
-        :moving
-
-      target_x == nil ->
-        Controller.tilt_analog(controller, :main, 0.5, 0.5)
-        :arrived
-
-      # Move right if we're too left
-      cursor_x < target_x - tolerance ->
-        Controller.tilt_analog(controller, :main, 0.5 + tilt(target_x - cursor_x), 0.5)
-        :moving
-
-      # Move left if we're too right
-      cursor_x > target_x + tolerance ->
-        Controller.tilt_analog(controller, :main, 0.5 - tilt(cursor_x - target_x), 0.5)
         :moving
 
       true ->
@@ -612,8 +594,52 @@ defmodule Melee.MenuHelper do
     end
   end
 
-  # How far off center to push the stick vertically, given how far we
-  # still have to travel.
+  defp move_toward(controller, cursor, target_x, target_y, tolerance) do
+    steer_toward(controller, cursor, target_x, target_y, tolerance)
+  end
+
+  # Proportional 2D steering: tilt the stick along the error VECTOR so
+  # the hand travels the direct diagonal path, instead of the
+  # axis-at-a-time bang-bang the Python helper traces (y first, then x —
+  # the "hand goes up, then over" L every menu pick used to draw).
+  #
+  # An axis already inside `tolerance` contributes nothing, so the tail
+  # of the approach degrades gracefully to single-axis steering — which
+  # also keeps the active component at full magnitude, safely outside
+  # the analog deadzone (the 0.15-tilt-does-nothing trap the CPU slider
+  # hit; see slider_tilt).
+  #
+  # `max_tilt` caps how far off center the stick goes (default 0.5 =
+  # full). The ease-off inside @nametag_fine units is the measured CSS
+  # rule: the cursor accelerates while the stick is pinned, so full tilt
+  # aimed at a near target sails past it.
+  @spec steer_toward(
+          GenServer.server(),
+          Melee.Position.t(),
+          number(),
+          number(),
+          number(),
+          keyword()
+        ) :: :moving | :arrived
+  defp steer_toward(controller, %{x: cursor_x, y: cursor_y}, target_x, target_y, tolerance, opts \\ []) do
+    max_tilt = Keyword.get(opts, :max_tilt, 0.5)
+
+    dx = if abs(target_x - cursor_x) <= tolerance, do: 0.0, else: target_x - cursor_x
+    dy = if abs(target_y - cursor_y) <= tolerance, do: 0.0, else: target_y - cursor_y
+
+    if dx == 0.0 and dy == 0.0 do
+      Controller.tilt_analog(controller, :main, 0.5, 0.5)
+      :arrived
+    else
+      dist = :math.sqrt(dx * dx + dy * dy)
+      mag = min(tilt(dist), max_tilt)
+      Controller.tilt_analog(controller, :main, 0.5 + mag * dx / dist, 0.5 + mag * dy / dist)
+      :moving
+    end
+  end
+
+  # How far off center to push the stick, given how far we still have to
+  # travel.
   defp tilt(distance) when distance > @nametag_fine, do: 0.5
   defp tilt(_distance), do: @nametag_fine_tilt
 
@@ -952,28 +978,16 @@ defmodule Melee.MenuHelper do
 
         Controller.release_button(controller, :a)
 
-        cond do
-          # Move up if we're too low
-          cursor_y < target_y - wiggleroom ->
-            Controller.tilt_analog(controller, :main, 0.5, 1.0)
+        case steer_toward(controller, ai_state.cursor, target_x, target_y, wiggleroom) do
+          :moving ->
+            :ok
 
-          # Move down if we're too high
-          cursor_y > target_y + wiggleroom ->
-            Controller.tilt_analog(controller, :main, 0.5, 0.0)
-
-          # Move right if we're too left
-          cursor_x < target_x - wiggleroom ->
-            Controller.tilt_analog(controller, :main, 1.0, 0.5)
-
-          # Move left if we're too right
-          cursor_x > target_x + wiggleroom ->
-            Controller.tilt_analog(controller, :main, 0.0, 0.5)
-
-          Integer.mod(gamestate.frame, 2) == 0 ->
-            Controller.press_button(controller, :a)
-
-          true ->
-            Controller.release_all(controller)
+          :arrived ->
+            if Integer.mod(gamestate.frame, 2) == 0 do
+              Controller.press_button(controller, :a)
+            else
+              Controller.release_all(controller)
+            end
         end
 
       # We think we're holding the slider, but the hand is nowhere near
@@ -1014,30 +1028,26 @@ defmodule Melee.MenuHelper do
             Controller.release_all(controller)
         end
 
-      # Move over to and pick up the CPU slider
+      # Move over to and pick up the CPU slider. The gentler 0.3 cap is
+      # the original 0.8/0.2 approach speed — grabbing the slider needs
+      # finer positioning than the portrait walk.
       ai_state.cpu_level != cpu_level ->
         wiggleroom = 1
         target_y = @cpu_slider_y
         target_x = -30.9 + 15.4 * (port - 1)
 
-        cond do
-          cursor_y < target_y - wiggleroom ->
-            Controller.tilt_analog(controller, :main, 0.5, 0.8)
+        case steer_toward(controller, ai_state.cursor, target_x, target_y, wiggleroom,
+               max_tilt: 0.3
+             ) do
+          :moving ->
+            :ok
 
-          cursor_y > target_y + wiggleroom ->
-            Controller.tilt_analog(controller, :main, 0.5, 0.2)
-
-          cursor_x < target_x - wiggleroom ->
-            Controller.tilt_analog(controller, :main, 0.8, 0.5)
-
-          cursor_x > target_x + wiggleroom ->
-            Controller.tilt_analog(controller, :main, 0.2, 0.5)
-
-          Integer.mod(gamestate.frame, 2) == 0 ->
-            Controller.press_button(controller, :a)
-
-          true ->
-            Controller.release_all(controller)
+          :arrived ->
+            if Integer.mod(gamestate.frame, 2) == 0 do
+              Controller.press_button(controller, :a)
+            else
+              Controller.release_all(controller)
+            end
         end
 
       true ->
@@ -1142,29 +1152,17 @@ defmodule Melee.MenuHelper do
               end
           end
         else
-          # Move in
+          # Move in — straight line to the portrait (steer_toward), not
+          # the old y-then-x L.
           Controller.release_button(controller, :a)
 
-          cond do
-            # Move up if we're too low
-            cursor_y < target_y - wiggleroom ->
-              Controller.tilt_analog(controller, :main, 0.5, 1.0)
-
-            # Move down if we're too high
-            cursor_y > target_y + wiggleroom ->
-              Controller.tilt_analog(controller, :main, 0.5, 0.0)
-
-            # Move right if we're too left
-            cursor_x < target_x - wiggleroom ->
-              Controller.tilt_analog(controller, :main, 1.0, 0.5)
-
-            # Move left if we're too right
-            cursor_x > target_x + wiggleroom ->
-              Controller.tilt_analog(controller, :main, 0.0, 0.5)
+          case steer_toward(controller, ai_state.cursor, target_x, target_y, wiggleroom) do
+            :moving ->
+              :ok
 
             # Unreachable given over_character? is false, but Python ends
             # with an unconditional release_all here; keep it.
-            true ->
+            :arrived ->
               Controller.release_all(controller)
           end
         end
@@ -1223,36 +1221,15 @@ defmodule Melee.MenuHelper do
     {target_x, target_y} = Map.get(@stage_targets, Stage.from_id(stage_id), {0, 0})
     # Wiggle room in positioning cursor
     wiggleroom = 1.5
-    %{x: cursor_x, y: cursor_y} = Map.fetch!(gamestate.players, port).cursor
+    cursor = Map.fetch!(gamestate.players, port).cursor
 
-    cond do
-      # Move up if we're too low
-      cursor_y < target_y - wiggleroom ->
+    case steer_toward(controller, cursor, target_x, target_y, wiggleroom) do
+      :moving ->
         Controller.release_button(controller, :a)
-        Controller.tilt_analog(controller, :main, 0.5, 1.0)
         state
 
-      # Move down if we're too high
-      cursor_y > target_y + wiggleroom ->
-        Controller.release_button(controller, :a)
-        Controller.tilt_analog(controller, :main, 0.5, 0.0)
-        state
-
-      # Move right if we're too left
-      cursor_x < target_x - wiggleroom ->
-        Controller.release_button(controller, :a)
-        Controller.tilt_analog(controller, :main, 1.0, 0.5)
-        state
-
-      # Move left if we're too right
-      cursor_x > target_x + wiggleroom ->
-        Controller.release_button(controller, :a)
-        Controller.tilt_analog(controller, :main, 0.0, 0.5)
-        state
-
-      true ->
+      :arrived ->
         # If we get in the right area, press A
-        Controller.tilt_analog(controller, :main, 0.5, 0.5)
         state = %{state | frames_on_stage: state.frames_on_stage + 1}
         maybe_toggle_frozen_stadium(state, controller, frozen_stadium)
     end

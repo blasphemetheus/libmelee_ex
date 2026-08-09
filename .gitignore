@@ -27,3 +27,4 @@ libmelee_ex-*.tar
 
 # Rust build artifacts (Rustler compiles into native/<crate>/target)
 native/*/target/
+.nix-mix/

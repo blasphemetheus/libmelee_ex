@@ -55,6 +55,37 @@ defmodule Melee.MenuHelperTest do
       "#{Float.to_string(Controller.fix_analog_stick(y))}\n"
   end
 
+  # Mirrors MenuHelper's proportional steering (steer_toward/6): the
+  # expected SET MAIN write for a hand at (cx, cy) heading straight for
+  # (tx, ty). An axis already inside `tolerance` contributes nothing;
+  # magnitude eases to the fine tilt inside 3 units.
+  defp steer_main(cx, cy, tx, ty, opts \\ []) do
+    tolerance = Keyword.get(opts, :tolerance, 1.5)
+    max_tilt = Keyword.get(opts, :max_tilt, 0.5)
+
+    dx = if abs(tx - cx) <= tolerance, do: 0.0, else: tx - cx
+    dy = if abs(ty - cy) <= tolerance, do: 0.0, else: ty - cy
+    dist = :math.sqrt(dx * dx + dy * dy)
+    mag = min(if(dist > 3.0, do: 0.5, else: 0.22), max_tilt)
+
+    set_main(0.5 + mag * dx / dist, 0.5 + mag * dy / dist)
+  end
+
+  # The (scaled) components of the last SET MAIN in `wrote`, for
+  # directional assertions against `stick_center()`.
+  defp main_dir(wrote) do
+    [x, y] =
+      ~r/SET MAIN ([\d.]+) ([\d.]+)/
+      |> Regex.scan(wrote)
+      |> List.last()
+      |> tl()
+      |> Enum.map(&String.to_float/1)
+
+    {x, y}
+  end
+
+  defp stick_center, do: Controller.fix_analog_stick(0.5)
+
   defp gs(attrs), do: struct!(GameState, attrs)
   defp player(attrs), do: struct!(PlayerState, attrs)
   defp cursor(x, y), do: %Position{x: x * 1.0, y: y * 1.0}
@@ -189,23 +220,26 @@ defmodule Melee.MenuHelperTest do
 
     test "cursor moves toward Final Destination's coordinates", ctx do
       {pid, path} = file_controller(ctx)
-      # FD target is (6.7, -9); from (0, 0) we're too high -> move down
+      # FD target is (6.7, -9); from (0, 0) the hand takes the direct
+      # diagonal (down-right), not the old y-then-x L
       gamestate = stage_gs(frame: 25, cursor: cursor(0, 0))
 
       {_state, wrote} =
         step_frame(MenuHelper.new(), gamestate, pid, path, base_opts(autostart: true))
 
-      assert wrote == "RELEASE A\n" <> set_main(0.5, 0.0)
+      assert wrote == steer_main(0, 0, 6.7, -9) <> "RELEASE A\n"
     end
 
     test "cursor moves right when left of the stage", ctx do
       {pid, path} = file_controller(ctx)
+      # y already inside tolerance -> pure rightward tilt
       gamestate = stage_gs(frame: 25, cursor: cursor(0, -9))
 
       {_state, wrote} =
         step_frame(MenuHelper.new(), gamestate, pid, path, base_opts(autostart: true))
 
-      assert wrote == "RELEASE A\n" <> set_main(1.0, 0.5)
+      assert wrote == steer_main(0, -9, 6.7, -9) <> "RELEASE A\n"
+      assert steer_main(0, -9, 6.7, -9) == set_main(1.0, 0.5)
     end
 
     test "presses A over the stage and records selection", ctx do
@@ -268,25 +302,27 @@ defmodule Melee.MenuHelperTest do
       {state, wrote} = step_frame(state, gamestate, pid, path, opts)
       assert wrote == "RELEASE A\n" <> set_main(0.5, 0.0)
 
-      # 2. Over the box, even frame: press A (flips HMN -> CPU)
+      # 2. Over the box, even frame: press A (flips HMN -> CPU).
+      # steer_toward centers the stick the frame it arrives.
       gamestate = cpu_gs(2, controller_status: 0, cpu_level: 0, cursor: cursor(-32.2, -2.2))
       {state, wrote} = step_frame(state, gamestate, pid, path, opts)
-      assert wrote == "RELEASE A\nPRESS A\n"
+      assert wrote == "RELEASE A\n" <> set_main(0.5, 0.5) <> "PRESS A\n"
 
       # 3. Over the box, odd frame: let go (the alternating press)
       gamestate = cpu_gs(3, controller_status: 0, cpu_level: 0, cursor: cursor(-32.2, -2.2))
       {state, wrote} = step_frame(state, gamestate, pid, path, opts)
-      assert wrote == "RELEASE A\n" <> @release_all
+      assert wrote == "RELEASE A\n" <> set_main(0.5, 0.5) <> @release_all
 
-      # 4. Now CPU status but wrong level: walk down toward the slider
+      # 4. Now CPU status but wrong level: walk toward the slider along
+      # the diagonal, capped at the gentle 0.3 approach tilt
       gamestate = cpu_gs(2, controller_status: 1, cpu_level: 1, cursor: cursor(-32.2, -2.2))
       {state, wrote} = step_frame(state, gamestate, pid, path, opts)
-      assert wrote == set_main(0.5, 0.2)
+      assert wrote == steer_main(-32.2, -2.2, -30.9, -15.12, tolerance: 1, max_tilt: 0.3)
 
       # 5. Over the slider, even frame: press A to grab it
       gamestate = cpu_gs(2, controller_status: 1, cpu_level: 1, cursor: cursor(-30.9, -15.12))
       {state, wrote} = step_frame(state, gamestate, pid, path, opts)
-      assert wrote == "PRESS A\n"
+      assert wrote == set_main(0.5, 0.5) <> "PRESS A\n"
 
       # 6. Holding the slider below the target level: drag right
       gamestate =
@@ -312,6 +348,7 @@ defmodule Melee.MenuHelperTest do
 
       {state, wrote} = step_frame(state, gamestate, pid, path, opts)
       assert wrote == "PRESS A\n"
+      # (holding-the-slider branches don't steer, so no SET MAIN here)
 
       # 8. Configured: CPU status, right level, slider released. The CPU
       # branch no longer triggers; with the character selected and coin
@@ -403,8 +440,11 @@ defmodule Melee.MenuHelperTest do
 
       {_state, wrote} = step_frame(MenuHelper.new(), gamestate, pid, path, base_opts())
 
-      # Fox's portrait is up and to the right: we steer, not sit there.
-      assert wrote =~ set_main(0.5, 1.0)
+      # Fox's portrait is up and to the right: we steer (diagonally,
+      # both components off center), not sit there.
+      {x, y} = main_dir(wrote)
+      assert x > stick_center()
+      assert y > stick_center()
     end
 
     test "lets go when it is holding the slider but the hand has moved away", ctx do
@@ -538,7 +578,8 @@ defmodule Melee.MenuHelperTest do
       {_state, wrote} = step_frame(MenuHelper.new(), gamestate, pid, path, base_opts())
 
       # Steering toward Fox, not sitting on its hands.
-      assert wrote == "RELEASE START\nRELEASE A\n" <> set_main(0.5, 0.0)
+      assert wrote =~ "RELEASE START\nRELEASE A\n"
+      assert main_dir(wrote) != {stick_center(), stick_center()}
     end
 
     test "leaving name entry resets the entry state", ctx do
@@ -694,8 +735,9 @@ defmodule Melee.MenuHelperTest do
       {state, wrote} =
         step_frame(MenuHelper.new(), css(cursor(-23, 0)), pid, path, base_opts(nametag: "EXPH"))
 
-      # far away on y -> full downward tilt
-      assert wrote =~ set_main(0.5, 0.0)
+      # far away -> full tilt straight at the name box (mostly down,
+      # nudging left onto its column)
+      assert wrote =~ steer_main(-23, 0, -23.7, -18.62, tolerance: 0.4)
       assert state.nametag_phase == :name_box
       assert state.nametag_frames == 0
     end
@@ -713,7 +755,8 @@ defmodule Melee.MenuHelperTest do
           base_opts(nametag: "EXPH")
         )
 
-      assert wrote =~ set_main(0.5, 0.28)
+      {x, _y} = @name_box
+      assert wrote =~ steer_main(-23.22, y + 2.0, x, y, tolerance: 0.4)
     end
 
     test "on the name box, pulses A then advances to the list phase", ctx do
@@ -853,7 +896,7 @@ defmodule Melee.MenuHelperTest do
 
       assert state.nametag_phase == :name_box
       # still heading down to the name box at y ~ -18.6
-      assert wrote =~ set_main(0.5, 0.0)
+      assert wrote =~ steer_main(-23, -5, -23.7, -18.62, tolerance: 0.4)
     end
 
     test "a cursor that never arrives keeps the flow in its first phase", ctx do
