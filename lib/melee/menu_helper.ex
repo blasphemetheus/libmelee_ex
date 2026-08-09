@@ -1072,7 +1072,7 @@ defmodule Melee.MenuHelper do
   # The CPU-configuration state machine: walk to the HMN/CPU box, press A,
   # walk to the slider, grab it, drag it to the wanted level, release.
   defp configure_cpu(gamestate, controller, ai_state, port, cpu_level, use_cpu) do
-    %{x: cursor_x, y: cursor_y} = ai_state.cursor
+    %{y: cursor_y} = ai_state.cursor
     cpu_selected = ai_state.controller_status == @controller_cpu
 
     cond do
