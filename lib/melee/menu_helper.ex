@@ -1108,17 +1108,24 @@ defmodule Melee.MenuHelper do
 
   defp gripping_slider?(cursor_y), do: abs(cursor_y - @cpu_slider_y) <= @cpu_slider_grip_y
 
-  # How hard to shove the CPU-level slider. Python drags at a flat 0.15
-  # off centre the whole way. That is both slow — seconds to cross nine
-  # levels — and, once `Melee.Controller.fix_analog_stick/1` has scaled
-  # it, small enough to sit inside the stick deadzone and not move the
-  # slider at all; a drag that got within two levels of its target would
-  # simply stop there.
+  # CPU-slider drag rate. This is a FEEDBACK controller, not an
+  # open-loop drag: `configure_cpu` reads `ai_state.cpu_level` every
+  # frame and pushes toward the target, so it self-corrects overshoot
+  # (level too high -> push back). Direct-to-target-x was considered and
+  # rejected in the 2026-08-09 hack sweep: it needs per-level x
+  # coordinates we don't have, and a mis-positioned drag "walks the
+  # cursor off across the screen forever" (the guard below) — the same
+  # fragile-hardcoded-coordinate failure that bit stage-select steering
+  # live. The level readout is the robust signal; keep the feedback loop.
   #
-  # So: slam it while there is ground to cover, and for the last couple
-  # of levels use a tilt that is definitely outside the deadzone but
-  # apply it every other frame. That is half speed without being
-  # ignored, which lands on the level we actually asked for.
+  # Rate control: Python drags at a flat 0.15, which after
+  # `Melee.Controller.fix_analog_stick/1` scaling sits inside the stick
+  # deadzone and moves nothing near the target. So: full 0.5 while there
+  # is ground to cover, and within @cpu_slider_near use a
+  # definitely-past-deadzone 0.3 applied every OTHER frame — the Melee
+  # slider steps level-by-level per above-deadzone frame, so half the
+  # frames = half the step rate, landing on the asked-for level without
+  # overshoot. (Single-axis, so no euclidean-split deadzone trap.)
   @cpu_slider_near 2
   @cpu_slider_fine_tilt 0.3
 
