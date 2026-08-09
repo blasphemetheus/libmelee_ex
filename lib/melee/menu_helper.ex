@@ -105,7 +105,8 @@ defmodule Melee.MenuHelper do
           stall_sig: term(),
           stalled_frames: non_neg_integer(),
           stuck_reported: boolean(),
-          slippi_css_frames: non_neg_integer()
+          slippi_css_frames: non_neg_integer(),
+          logged_scenes: MapSet.t()
         }
 
   defstruct name_tag_index: 0,
@@ -121,33 +122,22 @@ defmodule Melee.MenuHelper do
             stall_sig: nil,
             stalled_frames: 0,
             stuck_reported: false,
-            slippi_css_frames: 0
+            slippi_css_frames: 0,
+            logged_scenes: nil
 
   @doc """
   Fresh menu-navigation state.
 
   ## Examples
 
-      iex> Melee.MenuHelper.new()
-      %Melee.MenuHelper{
-        name_tag_index: 0,
-        inputs_live: false,
-        frames_on_stage: 0,
-        frozen_stadium_selected: false,
-        stage_selected: false,
-        nametag_phase: :waiting,
-        nametag_frames: 0,
-        nametag_done: false,
-        seen_known_menu: false,
-        unknown_frames: 0,
-        stall_sig: nil,
-        stalled_frames: 0,
-        stuck_reported: false,
-        slippi_css_frames: 0
-      }
+      iex> s = Melee.MenuHelper.new()
+      iex> {s.nametag_phase, s.stalled_frames, s.slippi_css_frames}
+      {:waiting, 0, 0}
+      iex> MapSet.size(s.logged_scenes)
+      0
   """
   @spec new() :: t()
-  def new, do: %__MODULE__{}
+  def new, do: %__MODULE__{logged_scenes: MapSet.new()}
 
   @doc """
   Has the menu watchdog tripped? True once `step/4` has seen no menu
@@ -419,6 +409,13 @@ defmodule Melee.MenuHelper do
   @unknown_accept_frames 300
 
   defp recover_unknown_scene(state, gamestate, controller) do
+    # Log each distinct unknown raw scene ONCE — turns "we're stuck on
+    # some nameless screen" into "raw scene 0xNNNN, still unrecognized",
+    # the datum needed to give it a named clause in Events.Menu. This is
+    # how the login/boot scenes stop being blind spots.
+    scene = gamestate.raw_scene
+    state = maybe_log_unknown_scene(state, scene)
+
     button =
       if not state.seen_known_menu and state.unknown_frames < @unknown_accept_frames,
         do: :a,
@@ -432,6 +429,23 @@ defmodule Melee.MenuHelper do
     end
 
     %{state | unknown_frames: state.unknown_frames + 1}
+  end
+
+  defp maybe_log_unknown_scene(state, scene) do
+    seen = state.logged_scenes || MapSet.new()
+    state = %{state | logged_scenes: seen}
+
+    if scene == nil or MapSet.member?(seen, scene) do
+      state
+    else
+      Logger.info(
+        "[MenuHelper] unrecognized menu scene #{inspect(scene, base: :hex)} " <>
+          "(#{inspect(Melee.Events.Menu.scene_name(scene))}) — recovering blind. " <>
+          "Add a named clause in Melee.Events.Menu to type it."
+      )
+
+      %{state | logged_scenes: MapSet.put(state.logged_scenes, scene)}
+    end
   end
 
   # Latch "we have seen a real menu", which retires pressing A at unknown

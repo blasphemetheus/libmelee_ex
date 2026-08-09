@@ -84,6 +84,7 @@ defmodule Melee.GameState do
           fod_platforms: FoDPlatforms.t() | nil,
           stadium_transformation: StadiumTransformation.t() | nil,
           menu_state: integer(),
+          raw_scene: integer() | nil,
           submenu: integer(),
           players: %{port_number() => PlayerState.t()},
           projectiles: [Projectile.t()],
@@ -105,6 +106,14 @@ defmodule Melee.GameState do
             fod_platforms: nil,
             stadium_transformation: nil,
             menu_state: 2,
+            # Raw 16-bit scene id from the menu event — the value
+            # menu_state is DERIVED from. Preserved so an @unknown_menu
+            # (0xFF) scene stays identifiable: the login screen and the
+            # boot "create game data?" dialog both collapse to unknown,
+            # and without the raw scene they can't be told apart (the
+            # blind A-then-B recovery exists because of exactly this
+            # blind spot). nil until a menu event is decoded.
+            raw_scene: nil,
             submenu: 0xFF,
             players: %{},
             projectiles: [],

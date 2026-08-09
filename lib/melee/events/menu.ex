@@ -50,7 +50,11 @@ defmodule Melee.Events.Menu do
         _ -> {@unknown_menu, false}
       end
 
-    gamestate = %{gamestate | menu_state: menu_state}
+    # Preserve the raw scene so an @unknown_menu stays identifiable (the
+    # login screen vs the boot data-card dialog vs a genuinely novel
+    # scene) — the blind A-then-B recovery exists precisely because this
+    # value used to be thrown away. scene_name/1 labels the known ones.
+    gamestate = %{gamestate | menu_state: menu_state, raw_scene: scene}
 
     gamestate =
       if reset_players? do
@@ -64,6 +68,49 @@ defmodule Melee.Events.Menu do
     |> stage_select_fields(bin)
     |> common_fields(bin)
   end
+
+  @doc """
+  A human label for a raw scene id — the known scenes by name, and
+  `{:unknown, scene}` for anything else, so callers (recovery logic,
+  logs) can distinguish scenes that decode to `@unknown_menu`.
+
+  The two @unknown scenes that show up in practice — the Slippi login
+  screen and the boot "create game data?" dialog — do not yet have
+  confirmed scene ids here: they only ever appeared live, where the
+  bridge had already collapsed them to 255 and discarded the raw value.
+  Now that `raw_scene` is preserved, the next occurrence of each logs
+  its id (see the consumer in `Melee.MenuHelper`), at which point they
+  earn a named clause below and stop being "unknown".
+
+  ## Examples
+
+      iex> Melee.Events.Menu.scene_name(0x0008)
+      :slippi_online_css
+
+      iex> Melee.Events.Menu.scene_name(0x0102)
+      :stage_select
+
+      iex> Melee.Events.Menu.scene_name(0x4242)
+      {:unknown, 0x4242}
+
+      iex> Melee.Events.Menu.scene_name(nil)
+      {:unknown, nil}
+  """
+  @spec scene_name(integer() | nil) ::
+          :character_select
+          | :stage_select
+          | :in_game
+          | :main_menu
+          | :slippi_online_css
+          | :press_start
+          | {:unknown, integer() | nil}
+  def scene_name(0x02), do: :character_select
+  def scene_name(s) when s in [0x0102, 0x0108], do: :stage_select
+  def scene_name(0x0202), do: :in_game
+  def scene_name(0x0001), do: :main_menu
+  def scene_name(0x0008), do: :slippi_online_css
+  def scene_name(0x0000), do: :press_start
+  def scene_name(other), do: {:unknown, other}
 
   ## Character-select-screen fields (CSS and Slippi Online CSS)
 

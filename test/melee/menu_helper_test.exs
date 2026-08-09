@@ -979,6 +979,28 @@ defmodule Melee.MenuHelperTest do
 
     defp dialog_gs(frame), do: gs(menu_state: @unknown_menu, frame: frame, players: %{})
 
+    defp scene_gs(frame, scene),
+      do: gs(menu_state: @unknown_menu, raw_scene: scene, frame: frame, players: %{})
+
+    test "logs each distinct unknown raw scene once (turns mystery into telemetry)", ctx do
+      import ExUnit.CaptureLog
+      {pid, path} = file_controller(ctx)
+
+      log =
+        capture_log(fn ->
+          state = MenuHelper.new()
+          # Same scene twice, then a different one: two log lines total.
+          {state, _} = step_frame(state, scene_gs(1, 0x1234), pid, path, base_opts())
+          {state, _} = step_frame(state, scene_gs(3, 0x1234), pid, path, base_opts())
+          {state, _} = step_frame(state, scene_gs(5, 0x5678), pid, path, base_opts())
+          assert MapSet.equal?(state.logged_scenes, MapSet.new([0x1234, 0x5678]))
+        end)
+
+      assert length(String.split(log, "unrecognized menu scene")) == 3
+      assert log =~ "0x1234"
+      assert log =~ "0x5678"
+    end
+
     test "pulses A at an unknown boot scene to answer the memory card prompt", ctx do
       {pid, path} = file_controller(ctx)
       state = MenuHelper.new()
