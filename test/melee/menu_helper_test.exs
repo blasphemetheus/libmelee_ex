@@ -1063,6 +1063,28 @@ defmodule Melee.MenuHelperTest do
     end
   end
 
+  describe "empty connect code (GOTCHA #88)" do
+    import ExUnit.CaptureLog
+
+    test "\"\" still drives the keyboard but logs the hijack once", ctx do
+      {pid, path} = file_controller(ctx)
+      gamestate = name_entry_gs(frame: 1, menu_selection: 20)
+
+      log =
+        capture_log(fn ->
+          {_state, _wrote} =
+            step_frame(MenuHelper.new(), gamestate, pid, path, base_opts(connect_code: ""))
+
+          # Second frame: the warning must NOT repeat (once per process)
+          {_state, _wrote} =
+            step_frame(MenuHelper.new(), gamestate, pid, path, base_opts(connect_code: ""))
+        end)
+
+      assert log =~ "connect_code is \"\""
+      assert length(String.split(log, "connect_code is")) == 2
+    end
+  end
+
   describe "menu watchdog" do
     test "counts stalled frames at an unchanging scene", ctx do
       {pid, path} = file_controller(ctx)

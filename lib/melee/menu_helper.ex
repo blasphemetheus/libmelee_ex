@@ -28,6 +28,8 @@ defmodule Melee.MenuHelper do
   alias Melee.{Controller, GameState}
   alias Melee.Enums.{Character, Stage}
 
+  require Logger
+
   # Menu wire values (Melee.Enums.Menu)
   @character_select 0
   @stage_select 1
@@ -789,6 +791,22 @@ defmodule Melee.MenuHelper do
   # At the nametag entry screen, enter the given direct connect code and
   # exit. Port of MenuHelper.enter_direct_code.
   defp enter_direct_code(state, gamestate, controller, connect_code) do
+    # An empty connect code still drives the direct-code keyboard —
+    # upstream v0.47 parity ("" is falsey in Python, so their guard skips
+    # it, but any code that reaches here types it). In practice "" is
+    # almost always an unset env var, and it HIJACKS the keyboard from a
+    # human trying to type (GOTCHA #88, 2026-08-07). Keep the behavior,
+    # name the hazard — once per process, not once per frame.
+    if connect_code == "" and not Process.get(:melee_warned_empty_connect_code, false) do
+      Process.put(:melee_warned_empty_connect_code, true)
+
+      Logger.warning(
+        "[MenuHelper] connect_code is \"\" (empty, not nil) — driving the " <>
+          "direct-code keyboard with an empty code. If a human should be " <>
+          "typing here, pass connect_code: nil."
+      )
+    end
+
     # The name entry screen is dead for the first few frames
     #   So if the first character is A, then the input can get eaten
     #   Account for this by making sure we can move off the letter first

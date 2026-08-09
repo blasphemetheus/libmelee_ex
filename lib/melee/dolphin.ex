@@ -699,7 +699,6 @@ defmodule Melee.Dolphin do
 
     online_delay = Keyword.get(opts, :online_delay, 0)
     blocking_input = Keyword.get(opts, :blocking_input, headless)
-    save_replays = Keyword.get(opts, :save_replays, false)
     emulation_speed = Keyword.get(opts, :emulation_speed, 1.0)
     gfx_backend = Keyword.get(opts, :gfx_backend, if(headless, do: "Null", else: ""))
 
@@ -713,6 +712,15 @@ defmodule Melee.Dolphin do
           File.mkdir_p!(dir)
           dir
       end
+
+    # Invariant: a caller who configures a replay dir wants replays.
+    # SaveReplays previously stayed False unless separately enabled, so a
+    # session could point at a dir and still write NOTHING — every run
+    # then reports "no fresh replay" with no hint why (the 2026-08-07
+    # native-bridge regression: eval protocols scored stale files).
+    # :save_replays therefore defaults to `replay_dir != nil`; an
+    # explicit `save_replays: false` still wins.
+    save_replays = Keyword.get(opts, :save_replays, replay_dir != nil)
 
     monthly = Keyword.get(opts, :replay_monthly_folders)
 

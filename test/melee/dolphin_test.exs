@@ -151,6 +151,41 @@ defmodule Melee.DolphinTest do
       assert ini =~ "SlippiReplayDir = #{replay_dir}"
       assert ini =~ "BlockingPipes = True"
     end
+
+    test "a replay_dir implies save_replays (invariant: a configured dir wants replays)",
+         %{tmp_dir: tmp} do
+      exe = fake_exe(tmp)
+      home = Path.join(tmp, "home")
+      replay_dir = Path.join(tmp, "replays")
+
+      assert {:ok, _} =
+               Dolphin.prepare_home(
+                 path: exe,
+                 iso_path: "/isos/melee.iso",
+                 home: home,
+                 replay_dir: replay_dir
+               )
+
+      ini = read_ini(home)
+      assert ini =~ "SlippiSaveReplays = True"
+      assert ini =~ "SlippiReplayDir = #{replay_dir}"
+    end
+
+    test "explicit save_replays: false still wins over a replay_dir", %{tmp_dir: tmp} do
+      exe = fake_exe(tmp)
+      home = Path.join(tmp, "home")
+
+      assert {:ok, _} =
+               Dolphin.prepare_home(
+                 path: exe,
+                 iso_path: "/isos/melee.iso",
+                 home: home,
+                 replay_dir: Path.join(tmp, "replays"),
+                 save_replays: false
+               )
+
+      assert read_ini(home) =~ "SlippiSaveReplays = False"
+    end
   end
 
   describe "prepare_home/1 — mainline" do
