@@ -59,6 +59,13 @@ defmodule Melee.Dolphin do
   `launch(home: home, ...)` — or simply call `setup_controller/3` on a
   launched struct only when you accept that Dolphin must be restarted to
   pick it up.
+
+  `:controller_ports` accepts bare port numbers (wired as `:standard`
+  pipe controllers) or `{port, type}` tuples — declare
+  `{2, :gcn_adapter}` for a local human-vs-bot session. All four ports
+  are written explicitly (undeclared ports become `:unplugged` via
+  `DolphinConfig.declare_ports/2`), so a session that declares no
+  adapter port never claims the GC adapter's USB device.
   """
 
   alias Melee.Dolphin.Info
@@ -266,10 +273,20 @@ defmodule Melee.Dolphin do
       end
 
       # Bot controllers must be wired in BEFORE the process starts —
-      # Dolphin reads pad config at boot.
-      for port <- Keyword.get(opts, :controller_ports, []) do
-        {:ok, _pipe} = DolphinConfig.setup_controller(home, port, :standard)
-      end
+      # Dolphin reads pad config at boot. declare_ports/2 also UNPLUGS
+      # every port not listed, so an adapter claim inherited from the
+      # home template (libmelee leaves ports 3/4 on SIDevice 12) can't
+      # ride along and grab the human's GC adapter. A local showcase
+      # that wants the adapter declares it: `{2, :gcn_adapter}`.
+      ports_spec =
+        opts
+        |> Keyword.get(:controller_ports, [])
+        |> Map.new(fn
+          {port, type} -> {port, type}
+          port when is_integer(port) -> {port, :standard}
+        end)
+
+      {:ok, _pipes} = DolphinConfig.declare_ports(home, ports_spec)
 
       platform_args =
         if flavor == :mainline and headless, do: ["--platform", "headless"], else: []

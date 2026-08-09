@@ -22,10 +22,47 @@ defmodule Melee.DolphinConfig do
   def pipes_path(dolphin_home, port), do: Path.join([dolphin_home, "Pipes", "slippibot#{port}"])
 
   @doc """
+  Declare the COMPLETE controller layout for a session: every one of the
+  four ports gets an explicit SIDevice, so nothing inherited from a
+  config template or a previous session survives. Ports absent from
+  `ports` are written `:unplugged`.
+
+  In particular, a session that declares no `:gcn_adapter` port will
+  never claim the GC adapter's USB device — libusb allows only one
+  claimant, so a bot Dolphin that inherits adapter ports blocks the
+  human's own Slippi session from using the controller (the 2026-08-09
+  adapter fight: libmelee's template leaves ports 3/4 on SIDevice 12 in
+  every spawned instance).
+
+  `ports` maps port number to type, e.g. `%{1 => :standard, 2 => :standard}`
+  for a bot-vs-CPU session, or `%{1 => :standard, 2 => :gcn_adapter}`
+  for a local human-vs-bot showcase.
+
+  Returns `{:ok, %{port => fifo_path}}` covering the `:standard` ports.
+  """
+  @spec declare_ports(Path.t(), %{optional(gc_port()) => :standard | :gcn_adapter | :unplugged}) ::
+          {:ok, %{gc_port() => Path.t()}} | {:error, term()}
+  def declare_ports(dolphin_home, ports) when is_map(ports) do
+    Enum.reduce_while(1..4, {:ok, %{}}, fn port, {:ok, pipes} ->
+      type = Map.get(ports, port, :unplugged)
+
+      case setup_controller(dolphin_home, port, type) do
+        {:ok, pipe} when type == :standard -> {:cont, {:ok, Map.put(pipes, port, pipe)}}
+        {:ok, _} -> {:cont, {:ok, pipes}}
+        {:error, reason} -> {:halt, {:error, {:port, port, reason}}}
+      end
+    end)
+  end
+
+  @doc """
   Create the input fifo and write pad + SIDevice config for `port`.
 
   `type` is `:standard` (bot pipe input), `:gcn_adapter`, or `:unplugged`.
   Returns the fifo path on success.
+
+  Prefer `declare_ports/2` for whole-session setup — it also unplugs the
+  ports you are NOT using, which is what keeps a bot Dolphin from
+  claiming the GC adapter.
   """
   @spec setup_controller(Path.t(), gc_port(), :standard | :gcn_adapter | :unplugged) ::
           {:ok, Path.t()} | {:error, term()}
