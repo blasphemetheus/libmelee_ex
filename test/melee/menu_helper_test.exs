@@ -302,11 +302,12 @@ defmodule Melee.MenuHelperTest do
       # Drive from arrival; frames_on_stage increments each step.
       {state, _} = step_frame(MenuHelper.new(), at_stadium.(20), pid, path, opts)
       # frame 2 on the stage: Z press edge
-      state = Enum.reduce(21..21, state, fn f, s ->
-        {s, wrote} = step_frame(s, at_stadium.(f), pid, path, opts)
-        assert wrote =~ "PRESS Z"
-        s
-      end)
+      state =
+        Enum.reduce(21..21, state, fn f, s ->
+          {s, wrote} = step_frame(s, at_stadium.(f), pid, path, opts)
+          assert wrote =~ "PRESS Z"
+          s
+        end)
 
       # Runs out the short settle, then selects with A — well under 60f.
       {state, wrote} =
@@ -963,7 +964,10 @@ defmodule Melee.MenuHelperTest do
   describe "in-game nametag: per-port coordinate math" do
     test "port 2's name box is one panel width to the right of port 1's", ctx do
       {pid, path} = file_controller(ctx)
-      spacing = 15.82
+      # Name-box spacing is 15.4 — the CPU-slider pitch, NOT the 15.82
+      # the HMN/CPU box uses. Measured live 2026-08-14: pinned tag-list
+      # columns at exactly -25.2 + 15.4*(N-1) for all four ports.
+      spacing = 15.4
       port2_box_x = -23.7 + spacing
 
       # Sitting exactly on PORT 1's box while driving port 2: we must
@@ -1212,7 +1216,9 @@ defmodule Melee.MenuHelperTest do
         Enum.reduce(1..4, MenuHelper.new(), fn _i, state ->
           # Same scene, no players, nothing moves: pure stall. frame
           # deliberately constant — wall-clock isn't progress.
-          {state, _} = step_frame(state, gs(menu_state: @press_start, frame: 9), pid, path, base_opts())
+          {state, _} =
+            step_frame(state, gs(menu_state: @press_start, frame: 9), pid, path, base_opts())
+
           state
         end)
 
@@ -1261,7 +1267,13 @@ defmodule Melee.MenuHelperTest do
       {pid, path} = file_controller(ctx)
 
       {state, _} =
-        step_frame(MenuHelper.new(), gs(menu_state: @press_start, frame: 9), pid, path, base_opts())
+        step_frame(
+          MenuHelper.new(),
+          gs(menu_state: @press_start, frame: 9),
+          pid,
+          path,
+          base_opts()
+        )
 
       {state, _} =
         step_frame(state, gs(menu_state: @press_start, frame: 9), pid, path, base_opts())

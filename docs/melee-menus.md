@@ -153,19 +153,44 @@ the integration tests guard on wall clock, with observed runs at
 
 ## The character select screen
 
-Coordinates are in Melee's cursor units. Everything below was measured on
-**port 1**. Panels are **15.82** apart in x, so port N is
-`x + 15.82 * (N - 1)` — that spacing comes from the pre-existing HMN/CPU
-box formula and is applied to the nametag targets by extrapolation; only
-port 1 was confirmed live.
+Coordinates are in Melee's cursor units. Port 1 was measured first;
+ports 2-4 were confirmed live on 2026-08-14 (netplay-stable, windowed
+OGL, `Melee.Probe` sessions). The headline from that session: **two
+different panel spacings coexist.** The HMN/CPU box is 15.82 apart per
+port; the CPU slider *and the name box* are 15.4 apart. The name box
+was originally extrapolated at 15.82, which works for ports 1-2 and
+misses from port 3 on.
 
-| Target | Coordinates | Notes |
+| Target | Coordinates | Confirmed |
 | --- | --- | --- |
-| HMN/CPU box | `(-32.2, -2.2)` | |
-| CPU level slider | `(-30.9 + 15.4*(N-1), -15.12)` | note the 15.4, not 15.82 — inherited from Python |
-| Name box | `(-23.7, -18.62)` | opens the tag list |
-| Tag list row 2 | `y = -8.7`, x irrelevant | NAME ENTRY when no tag is saved, the tag once one is |
+| HMN/CPU box | `(-32.2 + 15.82*(N-1), -2.2)` | ports 2-4 live: status toggles / full CPU config via this box |
+| CPU level slider | `(-30.9 + 15.4*(N-1), -15.12)` | ports 2-4 live: dragged to level 5 |
+| Name box | `(-23.7 + 15.4*(N-1), -18.62)` | all ports live; opening presses at -23.04, -8.00, 7.83, 23.20 |
+| Open tag list pinned column | `-25.2 + 15.4*(N-1)` exactly | -25.2, -9.8, 5.6, 21.0 measured |
+| Tag list row 2 | `y = -8.7`, x irrelevant | all ports: keyboard opened (`menu_selection == 45`) from y = -9.04 |
 | Tag list row pitch | ~2.4 in y | |
+
+### The panel is inert until a character is locked in
+
+A port with no character picked shows an empty "N/A" panel: no HMN/CPU
+tab, no name box, nothing for A to press, and `controller_status` reads
+`3` (`:controller_unplugged`) even though the pad is attached and its
+hand moves. Every panel interaction — name box included — requires the
+port to lock a character first. `Melee.MenuHelper` encodes this
+(`nametag_pending?` waits for `character_locked_in?`), but a probe
+session poking coordinates directly will reproduce "the name box never
+opens" perfectly until a character is picked. Cost a four-run
+measurement detour; check this first.
+
+### Detecting "the list opened" without pixels
+
+Opening the list *yanks* the hand off the name box up into the rows
+(y jumps from ~-18.4 to ~-11.5) and pins x at the list column. The
+robust headless signature is the yank: after the A press, the cursor's
+y sitting well above the bottom edge means the list is up. A
+"full-tilt and see if x moves" probe also works, but beware two false
+readings: the yank itself moves x (so measure *after* it), and at
+port 4 the screen edge (x caps at 26) can fake a pin.
 
 ### The name box is narrower than it looks
 
@@ -280,6 +305,22 @@ The gate must apply **at the CSS only**. `MenuHelper` will not navigate
 the stage select at all without `autostart`, so a gate that stays false
 past the CSS strands the run there instead — trading a stall on one
 screen for a stall on the next.
+
+### Sequence cross-port flows; never interleave them
+
+The nametag flow (tag list, name-entry keyboard) *interrupts the CSS*,
+and Melee responds by relocating **every other port's hand** to the top
+of its panel. A port mid-CPU-slider-drag gets yanked off one level
+short — observed live as "asked for 9, stuck at 8": the drag is
+interrupted, the re-grab at the fixed slider coordinate misses the
+handle (it has moved with the level), and the autostart gate then
+correctly never opens, so the run sits on the CSS forever.
+
+So when one port needs a nametag and another needs CPU config, run
+them in sequence: withhold the `:nametag` option until the CPU port is
+`port_configured?/2`, then let the nametag flow run — its interruption
+is harmless once the level is already set. The nametag integration
+test is the worked example.
 
 ## How to work out a new screen
 

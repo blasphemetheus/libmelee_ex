@@ -245,82 +245,83 @@ defmodule Melee.MenuHelper do
     # Reaching any menu we recognize retires boot-dialog handling.
     state = note_known_menu(state, gamestate)
 
-    result = cond do
-      gamestate.menu_state in [@character_select, @slippi_online_css] ->
-        cond do
-          nametag_pending?(state, gamestate, nametag, port) ->
-            set_nametag(state, gamestate, controller, nametag, nametag_mode, port)
+    result =
+      cond do
+        gamestate.menu_state in [@character_select, @slippi_online_css] ->
+          cond do
+            nametag_pending?(state, gamestate, nametag, port) ->
+              set_nametag(state, gamestate, controller, nametag, nametag_mode, port)
 
-          # Only claim the name-entry screen when we actually mean to type
-          # a connect code (v0.47 semantics: nil = leave it to a human).
-          #
-          # The `connect_code != nil` half is load-bearing, not just an
-          # optimisation. Melee leaves `submenu` reading
-          # @name_entry_submenu after the keyboard closes — the nametag
-          # flow has to finish on a frame count for exactly this reason —
-          # so `name_entry?/1` keeps saying "yes" back at the CSS. Taking
-          # this branch on that stale value stranded the port: it never
-          # picked a character and never pressed START, leaving the match
-          # sat on READY TO FIGHT forever.
-          connect_code != nil and name_entry?(gamestate) ->
-            enter_direct_code(state, gamestate, controller, connect_code)
+            # Only claim the name-entry screen when we actually mean to type
+            # a connect code (v0.47 semantics: nil = leave it to a human).
+            #
+            # The `connect_code != nil` half is load-bearing, not just an
+            # optimisation. Melee leaves `submenu` reading
+            # @name_entry_submenu after the keyboard closes — the nametag
+            # flow has to finish on a frame count for exactly this reason —
+            # so `name_entry?/1` keeps saying "yes" back at the CSS. Taking
+            # this branch on that stale value stranded the port: it never
+            # picked a character and never pressed START, leaving the match
+            # sat on READY TO FIGHT forever.
+            connect_code != nil and name_entry?(gamestate) ->
+              enter_direct_code(state, gamestate, controller, connect_code)
 
-          true ->
-            # We've exited the name entry screen, so reset the state in case
-            # we go back
-            state = %{state | name_tag_index: 0, inputs_live: false}
+            true ->
+              # We've exited the name entry screen, so reset the state in case
+              # we go back
+              state = %{state | name_tag_index: 0, inputs_live: false}
 
-            choose_character(
-              state,
-              gamestate,
-              controller,
-              character,
-              port,
-              cpu_level,
-              costume,
-              swag,
-              autostart
-            )
-        end
+              choose_character(
+                state,
+                gamestate,
+                controller,
+                character,
+                port,
+                cpu_level,
+                costume,
+                swag,
+                autostart
+              )
+          end
 
-      # If we're at the postgame scores screen, spam START
-      gamestate.menu_state == @postgame_scores ->
-        skip_postgame(state, controller)
+        # If we're at the postgame scores screen, spam START
+        gamestate.menu_state == @postgame_scores ->
+          skip_postgame(state, controller)
 
-      gamestate.menu_state == @stage_select ->
-        choose_stage(
-          state,
-          gamestate,
-          controller,
-          stage,
-          character,
-          frozen_stadium,
-          autostart,
-          port
-        )
+        gamestate.menu_state == @stage_select ->
+          choose_stage(
+            state,
+            gamestate,
+            controller,
+            stage,
+            character,
+            frozen_stadium,
+            autostart,
+            port
+          )
 
-      # Python's menu_helper_simple only routes MAIN_MENU here, but both
-      # choose_versus_mode and choose_direct_online handle PRESS_START
-      # (spamming START); routing PRESS_START through them preserves that
-      # behavior for callers using this single entry point.
-      gamestate.menu_state in [@main_menu, @press_start] ->
-        if connect_code in [nil, ""] do
-          choose_versus_mode(gamestate, controller)
-        else
-          choose_direct_online(gamestate, controller)
-        end
+        # Python's menu_helper_simple only routes MAIN_MENU here, but both
+        # choose_versus_mode and choose_direct_online handle PRESS_START
+        # (spamming START); routing PRESS_START through them preserves that
+        # behavior for callers using this single entry point.
+        gamestate.menu_state in [@main_menu, @press_start] ->
+          if connect_code in [nil, ""] do
+            choose_versus_mode(gamestate, controller)
+          else
+            choose_direct_online(gamestate, controller)
+          end
 
-        state
+          state
 
-      # A scene the spectator stream cannot name. Melee's boot-time
-      # memory-card prompt and the Slippi log-in screen both land here.
-      unknown_scene == :recover and gamestate.menu_state == @unknown_menu ->
-        recover_unknown_scene(state, gamestate, controller)
+        # A scene the spectator stream cannot name. Melee's boot-time
+        # memory-card prompt and the Slippi log-in screen both land here.
+        unknown_scene == :recover and gamestate.menu_state == @unknown_menu ->
+          recover_unknown_scene(state, gamestate, controller)
 
-      # In-game (or an unknown scene we've decided not to touch)
-      true ->
-        state
-    end
+        # In-game (or an unknown scene we've decided not to touch)
+        true ->
+          state
+      end
 
     track_progress(result, gamestate, opts)
   end
@@ -368,8 +369,8 @@ defmodule Melee.MenuHelper do
         {port, cursor, player.character, player.cpu_level, player.coin_down}
       end
 
-    {gamestate.menu_state, gamestate.submenu, players, state.nametag_phase,
-     state.name_tag_index, state.stage_selected, state.frames_on_stage > 0}
+    {gamestate.menu_state, gamestate.submenu, players, state.nametag_phase, state.name_tag_index,
+     state.stage_selected, state.frames_on_stage > 0}
   end
 
   # Upstream raises from menu_helper_simple when a connect code is asked
@@ -464,14 +465,20 @@ defmodule Melee.MenuHelper do
   # frame-count-driven rather than feedback-driven.
 
   # The name box under our character portrait; pressing A here opens the
-  # port's tag list. Measured for port 1; panels are @panel_spacing apart
-  # in x, the same spacing the CPU/HMN box uses in configure_cpu.
-  # Presses at x = -23.56, -23.22 and -22.94 all opened the list; ones at
-  # -22.73 and -22.32 did not. The hand arrives from the character
-  # portrait on the right, so we aim left of centre to land safely.
+  # port's tag list.
+  # Port 1: presses at x = -23.56, -23.22 and -22.94 all opened the list;
+  # ones at -22.73 and -22.32 did not. The hand arrives from the
+  # character portrait on the right, so we aim left of centre to land
+  # safely.
+  # Ports 2-4 (measured live 2026-08-14): the name box is spaced 15.4
+  # apart — the CPU-slider spacing, NOT the 15.82 the HMN/CPU box uses.
+  # Opening presses landed at -8.00 (p2), 7.83 (p3), 23.20 (p4), and the
+  # open list's pinned column sat at exactly -25.2 + 15.4*(N-1)
+  # (-9.8, 5.6, 21.0). The 15.82 extrapolation misses from port 3 on
+  # (p3 aim 8.24 and p4 aims 24.02/23.61 did not open).
   @nametag_box_x -23.7
   @nametag_box_y -18.62
-  @panel_spacing 15.82
+  @nametag_box_spacing 15.4
 
   # y of the SECOND row of the open tag list. Only y matters: the open
   # list pins the hand's x wherever the list was opened from, so we never
@@ -575,7 +582,7 @@ defmodule Melee.MenuHelper do
 
   # Walk the hand onto the name box and press A to open the tag list.
   defp open_tag_list(state, gamestate, controller, port) do
-    target_x = @nametag_box_x + @panel_spacing * (port - 1)
+    target_x = @nametag_box_x + @nametag_box_spacing * (port - 1)
 
     press_at(
       state,
@@ -735,7 +742,14 @@ defmodule Melee.MenuHelper do
           number(),
           keyword()
         ) :: :moving | :arrived
-  defp steer_toward(controller, %{x: cursor_x, y: cursor_y}, target_x, target_y, tolerance, opts \\ []) do
+  defp steer_toward(
+         controller,
+         %{x: cursor_x, y: cursor_y},
+         target_x,
+         target_y,
+         tolerance,
+         opts \\ []
+       ) do
     max_tilt = Keyword.get(opts, :max_tilt, 0.5)
 
     dx = if abs(target_x - cursor_x) <= tolerance, do: 0.0, else: target_x - cursor_x
