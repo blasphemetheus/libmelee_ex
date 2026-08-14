@@ -25,11 +25,13 @@ defmodule Melee.GameEvents do
       a menu-to-in-game transition
     * `{:game_end, %{stocks: %{port => stocks_left}}}` — in-game to menu
     * `{:stock_lost, %{port: p, remaining: n, kind: :sd | :ko,
-      percent_before: pct}}` — a port's stock count fell. `:sd` when the
-      pre-death percent was under #{20.0} (walked/fell off with no real
-      damage taken — the classifier the 2026-08-09 behavior eval used to
-      separate the argmax edge-dive absorber from genuine KOs); `:ko`
-      otherwise.
+      percent_before: pct}}` — a port's stock count fell. Trajectory
+      classified: `:ko` when the player had been in hitstun (or had
+      hitstun frames pending) at any point since they last touched
+      ground or ledge — i.e. the fall was *caused*; `:sd` when the fall
+      was untouched, at ANY percent. This replaces the percent<20
+      heuristic, which was wrong both ways (GOTCHA #94: high-percent
+      walk-offs read as KOs, low-percent spikes read as SDs).
     * `{:shield_break, %{port: p}}` — a shielding action transitioned
       into the break family (205..211, ShieldBreakFly/…/FuraFura)
     * `{:menu_transition, %{from: m1, to: m2}}` — any menu-state change
@@ -38,8 +40,11 @@ defmodule Melee.GameEvents do
 
   alias Melee.GameState
 
-  # Pre-death percent below this = self-destruct, not a KO.
-  @sd_percent_threshold 20.0
+  # Hitstun action families (DamageHigh1..DamageFlyRoll) — the same set
+  # ExPhil's GroundTruth / edge_snippet_mine trajectory classifier uses.
+  @hitstun_states MapSet.new(Enum.to_list(75..91) ++ Enum.to_list(223..232))
+  # CliffCatch/CliffWait: grabbing ledge is a "safe" reset, same as ground.
+  @ledge_states MapSet.new([252, 253])
 
   # Shield action states (GuardOn/Guard/GuardOff) and the hard-break
   # family they can transition into (ShieldBreakFly .. FuraFura) — same
@@ -109,10 +114,18 @@ defmodule Melee.GameEvents do
         events
       end
 
+    # hit_since_safe only carries across consecutive in-game frames — a
+    # fresh game must not inherit the previous game's hitstun state.
+    prev_flags = if tracker.in_game, do: tracker.players, else: %{}
+
     tracker = %__MODULE__{
       in_game: in_game,
       menu_state: gamestate.menu_state,
-      players: if(in_game, do: Map.new(known_players(gamestate), &snapshot/1), else: tracker.players)
+      players:
+        if(in_game,
+          do: Map.new(known_players(gamestate), &snapshot(&1, prev_flags)),
+          else: tracker.players
+        )
     }
 
     {events, tracker}
@@ -122,8 +135,30 @@ defmodule Melee.GameEvents do
     for {port, p} <- players || %{}, p != nil, do: {port, p}
   end
 
-  defp snapshot({port, p}) do
-    {port, %{stock: p.stock, percent: p.percent, action: p.action, character: p.character}}
+  defp snapshot({port, p}, prev_flags) do
+    action = int(p.action)
+
+    hit? =
+      MapSet.member?(@hitstun_states, action) or
+        (is_number(p.hitstun_frames_left) and p.hitstun_frames_left > 0)
+
+    safe? = p.on_ground == true or MapSet.member?(@ledge_states, action)
+
+    hit_since_safe =
+      cond do
+        hit? -> true
+        safe? -> false
+        true -> get_in(prev_flags, [port, :hit_since_safe]) || false
+      end
+
+    {port,
+     %{
+       stock: p.stock,
+       percent: p.percent,
+       action: p.action,
+       character: p.character,
+       hit_since_safe: hit_since_safe
+     }}
   end
 
   defp player_events(prev_players, current) do
@@ -138,10 +173,9 @@ defmodule Melee.GameEvents do
   defp diff_player(port, prev, p) do
     stock_events =
       if is_integer(prev.stock) and is_integer(p.stock) and p.stock < prev.stock do
-        kind =
-          if is_number(prev.percent) and prev.percent < @sd_percent_threshold,
-            do: :sd,
-            else: :ko
+        # Classified off the PRE-death frame's trajectory flag: hit at
+        # some point since last touching ground/ledge = a caused fall.
+        kind = if Map.get(prev, :hit_since_safe, false), do: :ko, else: :sd
 
         [
           {:stock_lost,

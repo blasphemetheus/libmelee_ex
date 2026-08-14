@@ -52,20 +52,54 @@ defmodule Melee.GameEventsTest do
            ] = events
   end
 
-  test "a low-percent death is an SD, a high-percent death a KO" do
+  test "an untouched fall is an SD at any percent (GOTCHA #94)" do
+    # High percent, walks off, never hit while airborne: the percent<20
+    # heuristic called this a KO — trajectory says SD.
     events =
       feed([
-        gs(@in_game, %{1 => player(stock: 4, percent: 2.0)}),
-        gs(@in_game, %{1 => player(stock: 4, percent: 2.0)}),
-        gs(@in_game, %{1 => player(stock: 3, percent: 0.0)}),
-        gs(@in_game, %{1 => player(stock: 3, percent: 132.0)}),
-        gs(@in_game, %{1 => player(stock: 2, percent: 0.0)})
+        gs(@in_game, %{1 => player(stock: 4, percent: 132.0, on_ground: true)}),
+        gs(@in_game, %{1 => player(stock: 4, percent: 132.0, on_ground: false)}),
+        gs(@in_game, %{1 => player(stock: 4, percent: 132.0, on_ground: false)}),
+        gs(@in_game, %{1 => player(stock: 3, percent: 0.0)})
       ])
 
     assert [
              {:game_start, _},
-             {:stock_lost, %{port: 1, remaining: 3, kind: :sd, percent_before: 2.0}},
-             {:stock_lost, %{port: 1, remaining: 2, kind: :ko, percent_before: 132.0}}
+             {:stock_lost, %{port: 1, remaining: 3, kind: :sd, percent_before: 132.0}}
+           ] = events
+  end
+
+  test "a low-percent spike is a KO (GOTCHA #94)" do
+    # Airborne, enters hitstun (DamageFlyHigh = 223) at 8%, dies: the
+    # percent<20 heuristic called this an SD — trajectory says KO.
+    events =
+      feed([
+        gs(@in_game, %{1 => player(stock: 4, percent: 0.0, on_ground: false)}),
+        gs(@in_game, %{1 => player(stock: 4, percent: 8.0, on_ground: false, action: 223)}),
+        gs(@in_game, %{1 => player(stock: 4, percent: 8.0, on_ground: false, action: 29)}),
+        gs(@in_game, %{1 => player(stock: 3, percent: 0.0)})
+      ])
+
+    assert [
+             {:game_start, _},
+             {:stock_lost, %{port: 1, remaining: 3, kind: :ko, percent_before: 8.0}}
+           ] = events
+  end
+
+  test "touching ground or ledge after a hit resets the trajectory to SD" do
+    # Hit, recovers to ledge (CliffCatch = 252), then drops off untouched
+    # and dies: the hit no longer explains the fall — SD.
+    events =
+      feed([
+        gs(@in_game, %{1 => player(stock: 4, percent: 40.0, on_ground: false, action: 223)}),
+        gs(@in_game, %{1 => player(stock: 4, percent: 40.0, on_ground: false, action: 252)}),
+        gs(@in_game, %{1 => player(stock: 4, percent: 40.0, on_ground: false, action: 29)}),
+        gs(@in_game, %{1 => player(stock: 3, percent: 0.0)})
+      ])
+
+    assert [
+             {:game_start, _},
+             {:stock_lost, %{port: 1, remaining: 3, kind: :sd, percent_before: 40.0}}
            ] = events
   end
 
