@@ -121,6 +121,8 @@ defmodule Melee.Probe do
 
     * `:ports` — GC ports to drive (default `[1]`); the first is the
       default subject of `goto!/4` and friends
+    * `:console` — extra `Melee.Console.start_link/1` options (e.g.
+      `transport: Melee.Transport.EnetNif`)
     * `:slippi_port` — spectator port (default `#{@default_slippi_port}`)
     * `:trace` — log scene transitions as they happen (default `false`)
     * `:boot_timeout` — ms to wait for the console (default `60_000`)
@@ -132,6 +134,7 @@ defmodule Melee.Probe do
     ports = Keyword.get(opts, :ports, [1])
     slippi_port = Keyword.get(opts, :slippi_port, @default_slippi_port)
     boot_timeout = Keyword.get(opts, :boot_timeout, 60_000)
+    {console_opts, opts} = Keyword.pop(opts, :console, [])
 
     launch_opts =
       opts
@@ -142,7 +145,9 @@ defmodule Melee.Probe do
     {:ok, dolphin} = Dolphin.launch(launch_opts)
 
     {:ok, console} =
-      Console.start_link(port: slippi_port, polling_mode: true, polling_timeout: 100)
+      Console.start_link(
+        [port: slippi_port, polling_mode: true, polling_timeout: 100] ++ console_opts
+      )
 
     :ok = await_console(console, boot_timeout)
 
@@ -199,16 +204,32 @@ defmodule Melee.Probe do
     end
   end
 
-  @doc "Shut the session down, stopping Dolphin if the probe launched it."
+  @doc """
+  Shut the session down, stopping Dolphin if the probe launched it.
+
+  Every step is crash-tolerant: after a controller dies (an `:epipe`
+  when Dolphin stops reading its fifo, say) the release calls raise, and
+  a `stop/1` that gave up there would leak the emulator. A leaked
+  windowed Dolphin then squats on the probe's spectator port and
+  controller fifos, poisoning every later run with the same home
+  (observed live: recurring instant `:epipe`s until the zombie was
+  killed by hand).
+  """
   @spec stop(t()) :: :ok
   def stop(%__MODULE__{} = probe) do
     Enum.each(probe.controllers, fn {_port, controller} ->
-      Controller.release_all(controller)
+      safe(fn -> Controller.release_all(controller) end)
     end)
 
-    Console.stop(probe.console)
-    if probe.dolphin, do: Dolphin.stop(probe.dolphin)
+    safe(fn -> Console.stop(probe.console) end)
+    if probe.dolphin, do: safe(fn -> Dolphin.stop(probe.dolphin) end)
     :ok
+  end
+
+  defp safe(fun) do
+    fun.()
+  catch
+    _kind, _reason -> :ok
   end
 
   ## ------------------------------------------------------------------
