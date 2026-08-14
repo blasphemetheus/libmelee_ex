@@ -36,6 +36,16 @@ Out of scope: replay-file streaming — for `.slp` replay *parsing* at
 scale, use a [peppi](https://github.com/hohav/peppi)-based parser
 instead; the live event decoder here is for the spectator stream.
 
+## Documentation
+
+- [Getting started](docs/getting-started.md) — zero to a live bot, plus
+  the smoke-test catalog that proves each capability on your machine.
+- [Driving Melee's menus](docs/melee-menus.md) — measured menu
+  mechanics and the traps.
+- [Capabilities, edges, and behavior testing](docs/behavior-testing.md)
+  — what the library can make the game do, where the semantic edges
+  are, and how to test a specific behavior.
+
 ## Usage
 
 ```elixir

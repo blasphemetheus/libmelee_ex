@@ -4,6 +4,33 @@ Written 2026-08-05, at the end of the session that built the port. Read
 this first; it is the live resume point. Everything below is verified
 unless it says otherwise.
 
+## Addendum 2026-08-14
+
+- **CSS coordinates measured live for ports 2-4** (`Melee.Probe`
+  sessions, netplay windowed). Headline: the name box is **15.4**-spaced
+  (slider pitch), not 15.82; pinned tag-list columns at exactly
+  `-25.2 + 15.4*(N-1)`. Two new traps documented in `melee-menus.md`:
+  a CSS panel is inert (N/A, `controller_status` 3) until the port
+  locks a character; CSS fields stop updating past the CSS, so
+  cross-port gates may only bite at the CSS.
+- **Elixir-native by default:** `Melee.Transport.EnetBeam` is the
+  default transport; the Rustler crate compiles only with
+  `MELEE_BUILD_ENET_NIF=1` (prebuilt priv .so loads otherwise). Plain
+  `mix test` needs no Rust.
+- **Nametag select test fixed and live-verified** (create 8.1s,
+  select 10.6s): the nametag flow must be sequenced after CPU config
+  (keyboard interruption yanked the port-2 hand off the slider,
+  9 became 8), and its gate must apply at the CSS only. `Probe.stop/1`
+  is crash-tolerant now (a killed Dolphin no longer leaks the emulator).
+- **Open bugs:** (1) ExiAI build + the two-port memory-card flow drops
+  the spectator link within seconds, either transport — nametag work
+  needs the netplay build (which ignores the headless flag and always
+  opens a window); (2) boot scene `0x28` still untyped; (3) a Dolphin
+  crash is invisible — the port's `:exit_status` is never read.
+- **Docs:** `docs/getting-started.md` (with smoke-test catalog) and
+  `docs/behavior-testing.md` (capability catalog, semantic edges,
+  improvement roadmap) added and wired into ex_doc.
+
 ## What this is
 
 An Elixir port of [libmelee](https://github.com/vladfi1/libmelee), the

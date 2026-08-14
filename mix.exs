@@ -64,8 +64,19 @@ defmodule Melee.MixProject do
     [
       main: "Melee",
       source_url: @source_url,
-      extras: ["README.md", "docs/melee-menus.md"],
-      groups_for_extras: [Guides: ["docs/melee-menus.md"]]
+      extras: [
+        "README.md",
+        "docs/getting-started.md",
+        "docs/melee-menus.md",
+        "docs/behavior-testing.md"
+      ],
+      groups_for_extras: [
+        Guides: [
+          "docs/getting-started.md",
+          "docs/melee-menus.md",
+          "docs/behavior-testing.md"
+        ]
+      ]
     ]
   end
 end
