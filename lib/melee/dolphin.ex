@@ -457,6 +457,11 @@ defmodule Melee.Dolphin do
       System.cmd("kill", [pid_str], stderr_to_stdout: true)
 
       unless wait_for_exit(dolphin, 2_000) do
+        # os_pid is the spawn shim; TERM was forwarded by its trap. If
+        # Dolphin ignored it, -9 the shim's CHILDREN (the emulator +
+        # stdin watcher) first — -9ing only the shim would orphan a
+        # TERM-immune Dolphin.
+        System.cmd("pkill", ["-9", "-P", pid_str], stderr_to_stdout: true)
         System.cmd("kill", ["-9", pid_str], stderr_to_stdout: true)
         wait_for_exit(dolphin, 1_000)
       end
@@ -899,13 +904,41 @@ defmodule Melee.Dolphin do
   ## Process control
   ## ------------------------------------------------------------------
 
+  # Orphan guard: Dolphin is spawned through a tiny sh shim instead of
+  # directly. A bare spawn_executable leaks the emulator whenever the
+  # BEAM dies abruptly (SIGKILL, the EXLA-recompile SIGBUS, a crashed
+  # eval) — the port pipe closes but Dolphin never reads stdin, so it
+  # runs forever (four such orphans burned ~5 cores for 2 days,
+  # found 2026-08-13). The shim:
+  #   * `cat` blocks on the port's stdin — EOF fires on ANY beam death
+  #     mode (kernel closes the pipe even on SIGKILL) -> TERM Dolphin
+  #   * traps TERM/INT and forwards to Dolphin, so stop/1 killing the
+  #     shim's os_pid still takes the emulator down
+  #   * waits on Dolphin, so a natural game exit still surfaces as the
+  #     port's :exit_status (game-end detection unchanged)
+  # NOTE the fd-3 dance: POSIX gives BACKGROUNDED commands an implicit
+  # /dev/null stdin, so `( cat ... ) &` would EOF instantly and kill
+  # Dolphin at launch (caught by the 2026-08-13 smoke test). Stashing
+  # the port pipe on fd 3 before `&` gives the watcher the real stdin.
+  @spawn_shim ~S"""
+  exec 3<&0
+  "$@" & pid=$!
+  trap 'kill -TERM "$pid" 2>/dev/null' TERM INT
+  ( cat <&3 >/dev/null 2>&1; kill -TERM "$pid" 2>/dev/null ) &
+  watcher=$!
+  wait "$pid"
+  status=$?
+  kill "$watcher" 2>/dev/null
+  exit "$status"
+  """
+
   defp start_process(prep) do
     if File.regular?(prep.exe) do
       port =
-        Port.open({:spawn_executable, to_charlist(prep.exe)}, [
+        Port.open({:spawn_executable, ~c"/bin/sh"}, [
           :binary,
           :exit_status,
-          args: prep.args
+          args: ["-c", @spawn_shim, "dolphin-shim", prep.exe | prep.args]
         ])
 
       os_pid =
