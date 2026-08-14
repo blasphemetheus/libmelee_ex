@@ -86,15 +86,13 @@ defmodule Melee.GameEvents do
             {:game_start,
              %{
                stage: gamestate.stage,
-               players:
-                 Map.new(known_players(gamestate), fn {port, p} -> {port, p.character} end)
+               players: Map.new(known_players(gamestate), fn {port, p} -> {port, p.character} end)
              }}
           ]
 
         not in_game and tracker.in_game ->
           [
-            {:game_end,
-             %{stocks: Map.new(tracker.players, fn {port, p} -> {port, p.stock} end)}}
+            {:game_end, %{stocks: Map.new(tracker.players, fn {port, p} -> {port, p.stock} end)}}
           ]
 
         not in_game and tracker.menu_state != nil and

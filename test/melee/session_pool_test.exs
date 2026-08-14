@@ -73,9 +73,7 @@ defmodule Melee.SessionPoolTest do
 
   test "starts N sessions with distinct ports and homes", %{home: home} do
     pool =
-      start_supervised!(
-        {SessionPool, count: 3, session: session_opts(home), base_port: 55_000}
-      )
+      start_supervised!({SessionPool, count: 3, session: session_opts(home), base_port: 55_000})
 
     sessions = SessionPool.sessions(pool)
     assert length(sessions) == 3
@@ -100,9 +98,7 @@ defmodule Melee.SessionPoolTest do
 
   test "a stopped session does not take down its siblings", %{home: home} do
     pool =
-      start_supervised!(
-        {SessionPool, count: 2, session: session_opts(home), base_port: 55_100}
-      )
+      start_supervised!({SessionPool, count: 2, session: session_opts(home), base_port: 55_100})
 
     [{1, s1}, {2, s2}] = SessionPool.sessions(pool)
 
