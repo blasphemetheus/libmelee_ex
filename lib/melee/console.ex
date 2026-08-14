@@ -12,7 +12,8 @@ defmodule Melee.Console do
     * `:address` — Dolphin host, default `"127.0.0.1"`
     * `:port` — Slippi spectator port, default `51441`
     * `:transport` — `Melee.Transport` implementation, default
-      `Melee.Transport.EnetNif`
+      `Melee.Transport.EnetBeam` (pure BEAM, no native code; pass
+      `Melee.Transport.EnetNif` for the Rust NIF)
     * `:transport_opts` — extra options for `c:Melee.Transport.connect/4`
     * `:skip_rollback_frames` — default `true`
     * `:blocking_input` — flush controllers on skipped rollback frames so
@@ -148,7 +149,7 @@ defmodule Melee.Console do
 
   defmodule State do
     @moduledoc false
-    defstruct transport: Melee.Transport.EnetNif,
+    defstruct transport: Melee.Transport.EnetBeam,
               transport_opts: [],
               address: "127.0.0.1",
               port: 51_441,
@@ -181,7 +182,7 @@ defmodule Melee.Console do
     parser_opts = [skip_rollback_frames: Keyword.get(opts, :skip_rollback_frames, true)]
 
     state = %State{
-      transport: Keyword.get(opts, :transport, Melee.Transport.EnetNif),
+      transport: Keyword.get(opts, :transport, Melee.Transport.EnetBeam),
       transport_opts: Keyword.get(opts, :transport_opts, []),
       address: Keyword.get(opts, :address, "127.0.0.1"),
       port: Keyword.get(opts, :port, 51_441),

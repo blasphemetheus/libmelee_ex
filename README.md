@@ -80,11 +80,16 @@ default so what you send matches what `step` reports back.
 
 ## Building
 
-Rust is required for the ENet NIF. On NixOS:
+Pure Elixir — no Rust toolchain required. The default transport is
+`Melee.Transport.EnetBeam` (a BEAM-native ENet implementation), and the
+optional `Melee.Transport.EnetNif` loads a prebuilt
+`priv/native/melee_enet.so` (x86_64-linux). To rebuild the NIF from
+source (other platforms, or after changing the crate):
 
 ```sh
-nix shell nixpkgs#cargo nixpkgs#rustc nixpkgs#gcc --command mix test
-# or: devenv shell -- mix test
+MELEE_BUILD_ENET_NIF=1 mix compile
+# NixOS: nix shell nixpkgs#cargo nixpkgs#rustc nixpkgs#gcc --command \
+#          env MELEE_BUILD_ENET_NIF=1 mix compile
 ```
 
 ## Testing

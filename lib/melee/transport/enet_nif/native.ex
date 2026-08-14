@@ -12,7 +12,16 @@ defmodule Melee.Transport.EnetNif.Native do
   functions are the low-level building blocks it drives.
   """
 
-  use Rustler, otp_app: :libmelee_ex, crate: "melee_enet"
+  # By default the prebuilt priv/native/melee_enet.so is loaded and the
+  # Rust toolchain is NOT required — the library is pure Elixir to build,
+  # and `Melee.Transport.EnetBeam` (the default transport) needs no NIF
+  # at all. Set MELEE_BUILD_ENET_NIF=1 to compile the crate from source
+  # (needed on platforms the committed .so doesn't match; refresh the
+  # committed artifact from _build after doing so).
+  use Rustler,
+    otp_app: :libmelee_ex,
+    crate: "melee_enet",
+    skip_compilation?: System.get_env("MELEE_BUILD_ENET_NIF") in [nil, "", "0", "false"]
 
   @typedoc "Opaque NIF resource holding an ENet host."
   @type resource :: reference()
