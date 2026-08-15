@@ -22,11 +22,22 @@ unless it says otherwise.
   (keyboard interruption yanked the port-2 hand off the slider,
   9 became 8), and its gate must apply at the CSS only. `Probe.stop/1`
   is crash-tolerant now (a killed Dolphin no longer leaks the emulator).
-- **Open bugs:** (1) ExiAI build + the two-port memory-card flow drops
-  the spectator link within seconds, either transport — nametag work
-  needs the netplay build (which ignores the headless flag and always
-  opens a window); (2) boot scene `0x28` still untyped; (3) a Dolphin
-  crash is invisible — the port's `:exit_status` is never read.
+- **Open bug (narrowed):** the ExiAI nametag failure is NOT the
+  transport (both fail identically), NOT Dolphin dying (it stays
+  alive), and NOT the CSS (tag list opens fine there, verified by
+  probe). Root cause: on ExiAI the GCI-folder card never gets Melee
+  save data — boot skips the "Create Game Data?" prompt — so the
+  create flow completes vacuously and nothing persists; the
+  intermittent disconnect is secondary. Next: pre-seed the card with a
+  known-good `.gci`. Until then nametag work needs the netplay build
+  (which ignores the headless flag and always opens a window).
+- **Fixed since:** Dolphin's death is now visible
+  (`Melee.Dolphin.watch/2`, stderr captured, output tail in the exit
+  log; `Melee.Session` logs the tail too); a dead controller pipe
+  latches gracefully instead of crash-cascading (`flush/1` returns
+  `{:error, {:pipe_closed, reason}}`); boot scene `0x28` is typed
+  `:boot_splash` and waited out (it auto-advances; A-pressing it was
+  how runs wandered into Online Play).
 - **Docs:** `docs/getting-started.md` (with smoke-test catalog) and
   `docs/behavior-testing.md` (capability catalog, semantic edges,
   improvement roadmap) added and wired into ex_doc.
