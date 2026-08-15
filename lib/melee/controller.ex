@@ -15,9 +15,24 @@ defmodule Melee.Controller do
   By default analog inputs are quantized (`fix_analog_inputs`) so that
   the values you send match what `Melee.Console` reports back on the
   next frame, modulo deadzones.
+
+  ## When Dolphin stops reading
+
+  If Dolphin exits (or is killed) the fifo's read end closes and writes
+  start failing with `:epipe`. That is terminal for the session, not a
+  bug in the caller, so the controller **latches disconnected** instead
+  of crashing: it logs one warning, drops the device, keeps accepting
+  state changes as no-ops (exactly like the not-yet-connected state),
+  and `flush/1` returns `{:error, {:pipe_closed, reason}}`. The
+  session-level death signal comes from `Melee.Dolphin.watch/2` /
+  `Melee.Session` (Dolphin's exit) and the console's
+  `:enet_disconnected`; a crashed controller taking the whole tree down
+  with it was how a closed Dolphin window used to cascade.
   """
 
   use GenServer
+
+  require Logger
 
   alias Melee.ControllerState
   alias Melee.Enums.Button
@@ -147,8 +162,13 @@ defmodule Melee.Controller do
   def simple_press(controller, x, y, button),
     do: GenServer.cast(controller, {:simple_press, x, y, button})
 
-  @doc "Commit this frame's queued inputs (writes `FLUSH`)."
-  @spec flush(GenServer.server()) :: :ok
+  @doc """
+  Commit this frame's queued inputs (writes `FLUSH`).
+
+  Returns `{:error, {:pipe_closed, reason}}` once the pipe has latched
+  disconnected (Dolphin stopped reading — see the module doc).
+  """
+  @spec flush(GenServer.server()) :: :ok | {:error, {:pipe_closed, term()}}
   def flush(controller), do: GenServer.call(controller, :flush)
 
   @doc "The controller state as of the last `flush/1`."
@@ -171,7 +191,10 @@ defmodule Melee.Controller do
               device: nil,
               fix_analog_inputs: true,
               current: %Melee.ControllerState{},
-              prev: %Melee.ControllerState{}
+              prev: %Melee.ControllerState{},
+              # Set when a write hit a dead pipe (Dolphin stopped
+              # reading) and the controller latched disconnected.
+              closed_reason: nil
   end
 
   @impl true
@@ -187,14 +210,21 @@ defmodule Melee.Controller do
   @impl true
   def handle_call(:connect, _from, state) do
     case File.open(state.pipe_path, [:write, :raw]) do
-      {:ok, device} -> {:reply, :ok, %{state | device: device}}
+      {:ok, device} -> {:reply, :ok, %{state | device: device, closed_reason: nil}}
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
 
   def handle_call(:flush, _from, state) do
-    write(state, "FLUSH\n")
-    {:reply, :ok, %{state | prev: state.current}}
+    state = write(state, "FLUSH\n")
+
+    reply =
+      case state.closed_reason do
+        nil -> :ok
+        reason -> {:error, {:pipe_closed, reason}}
+      end
+
+    {:reply, reply, %{state | prev: state.current}}
   end
 
   def handle_call(:prev, _from, state), do: {:reply, state.prev, state}
@@ -202,18 +232,18 @@ defmodule Melee.Controller do
 
   @impl true
   def handle_cast({:press, button}, state) do
-    write(state, "PRESS #{Button.to_command_string(button)}\n")
+    state = write(state, "PRESS #{Button.to_command_string(button)}\n")
     {:noreply, put_button(state, button, true)}
   end
 
   def handle_cast({:release, button}, state) do
-    write(state, "RELEASE #{Button.to_command_string(button)}\n")
+    state = write(state, "RELEASE #{Button.to_command_string(button)}\n")
     {:noreply, put_button(state, button, false)}
   end
 
   def handle_cast({:shoulder, button, amount}, state) do
     wire = if state.fix_analog_inputs, do: fix_analog_trigger(amount), else: amount
-    write(state, "SET #{Button.to_command_string(button)} #{fmt(wire)}\n")
+    state = write(state, "SET #{Button.to_command_string(button)} #{fmt(wire)}\n")
 
     current =
       case button do
@@ -230,7 +260,7 @@ defmodule Melee.Controller do
         do: {fix_analog_stick(x), fix_analog_stick(y)},
         else: {x, y}
 
-    write(state, "SET #{Button.to_command_string(stick)} #{fmt(wx)} #{fmt(wy)}\n")
+    state = write(state, "SET #{Button.to_command_string(stick)} #{fmt(wx)} #{fmt(wy)}\n")
 
     current =
       case stick do
@@ -248,7 +278,7 @@ defmodule Melee.Controller do
       end) <>
         "SET MAIN .5 .5\nSET C .5 .5\nSET L 0\nSET R 0\n"
 
-    write(state, commands)
+    state = write(state, commands)
     {:noreply, %{state | current: ControllerState.neutral()}}
   end
 
@@ -280,10 +310,29 @@ defmodule Melee.Controller do
     %{state | current: %{state.current | button: Map.put(state.current.button, button, value)}}
   end
 
-  # Not yet connected: state changes still apply, writes are dropped —
-  # mirroring Python's `if not self.pipe: return`.
-  defp write(%State{device: nil}, _data), do: :ok
-  defp write(%State{device: device}, data), do: IO.binwrite(device, data)
+  # Not yet connected (or latched after a dead pipe): state changes
+  # still apply, writes are dropped — mirroring Python's
+  # `if not self.pipe: return`.
+  defp write(%State{device: nil} = state, _data), do: state
+
+  defp write(%State{device: device} = state, data) do
+    # :file.write, not IO.binwrite: the raised ErlangError from
+    # IO.binwrite is what used to crash the controller (and cascade
+    # through Console.flush) when Dolphin stopped reading the fifo.
+    case :file.write(device, data) do
+      :ok ->
+        state
+
+      {:error, reason} ->
+        Logger.warning(
+          "Melee.Controller: pipe #{state.pipe_path} closed " <>
+            "(#{inspect(reason)}) — Dolphin stopped reading; latching disconnected"
+        )
+
+        _ = File.close(device)
+        %{state | device: nil, closed_reason: reason}
+    end
+  end
 
   # Python str(float) and Elixir Float.to_string both print the shortest
   # round-trip representation, so wire output matches libmelee exactly.

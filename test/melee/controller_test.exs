@@ -187,5 +187,52 @@ defmodule Melee.ControllerTest do
       assert Task.await(reader, 5_000) == "PRESS A\nFLUSH\n"
       File.rm(path)
     end
+
+    @tag :fifo
+    test "a dead pipe latches the controller instead of crashing it", ctx do
+      import ExUnit.CaptureLog
+
+      path = Path.join(@scratch, "melee_fifo_dead_#{:erlang.phash2(ctx.test)}")
+      File.rm(path)
+      {_, 0} = System.cmd("mkfifo", [path])
+
+      # A reader that hangs up immediately — what Dolphin's exit looks
+      # like from the write end.
+      reader =
+        Task.async(fn ->
+          {:ok, dev} = File.open(path, [:read, :raw])
+          File.close(dev)
+        end)
+
+      {:ok, pid} = Controller.start_link(pipe_path: path)
+      :ok = Controller.connect(pid, 5_000)
+      Task.await(reader, 5_000)
+
+      # The kernel may buffer the first write; keep writing until the
+      # :epipe lands. Before the latch this raised out of the
+      # GenServer and took the whole linked tree down.
+      log =
+        capture_log(fn ->
+          Enum.reduce_while(1..50, :ok, fn _i, _ ->
+            Controller.press_button(pid, :a)
+
+            case Controller.flush(pid) do
+              :ok -> {:cont, :ok}
+              {:error, {:pipe_closed, _}} = err -> {:halt, err}
+            end
+          end)
+        end)
+
+      assert Process.alive?(pid)
+      assert {:error, {:pipe_closed, :epipe}} = Controller.flush(pid)
+      assert log =~ "latching disconnected"
+
+      # State changes still apply while latched, like pre-connect.
+      Controller.release_button(pid, :a)
+      refute Controller.current(pid).button.a
+
+      :ok = Controller.disconnect(pid)
+      File.rm(path)
+    end
   end
 end
