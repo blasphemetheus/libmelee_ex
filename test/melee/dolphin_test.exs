@@ -641,4 +641,67 @@ defmodule Melee.DolphinTest do
       refute Dolphin.setup_user_json(Path.join(tmp, "home"), nil, info)
     end
   end
+
+  describe "watch/2" do
+    import ExUnit.CaptureLog
+
+    # A stand-in for a launched Dolphin: a port on a short script, with
+    # the same options start_process uses.
+    defp fake_dolphin(script) do
+      port =
+        Port.open({:spawn_executable, ~c"/bin/sh"}, [
+          :binary,
+          :exit_status,
+          :stderr_to_stdout,
+          args: ["-c", script]
+        ])
+
+      %Dolphin{
+        port: port,
+        os_pid: 424_242,
+        exe: "/bin/sh",
+        home: "/nonexistent",
+        slippi_port: 51_441,
+        flavor: :ishiiruka,
+        temp_home?: false
+      }
+    end
+
+    test "a death is logged with status and output tail, and messaged" do
+      dolphin = fake_dolphin("echo boom stdout; echo boom stderr >&2; exit 3")
+
+      log =
+        capture_log(fn ->
+          Dolphin.watch(dolphin)
+          assert_receive {:dolphin_exited, 424_242, 3}, 5_000
+        end)
+
+      assert log =~ "exited with status 3"
+      assert log =~ "boom stdout"
+      # :stderr_to_stdout captures stderr too — that's where crash
+      # evidence like "A signal was received" lands.
+      assert log =~ "boom stderr"
+    end
+
+    test "a clean exit is messaged with status 0" do
+      dolphin = fake_dolphin("exit 0")
+
+      capture_log(fn ->
+        Dolphin.watch(dolphin)
+        assert_receive {:dolphin_exited, 424_242, 0}, 5_000
+      end)
+    end
+
+    test "an intentional port close (stop/1) is silent, and the watcher exits" do
+      dolphin = fake_dolphin("sleep 30")
+      watcher = Dolphin.watch(dolphin)
+
+      # stop/1's first act; the script has no real Dolphin behind it,
+      # so closing the port is the whole teardown here.
+      Port.close(dolphin.port)
+
+      refute_receive {:dolphin_exited, _, _}, 300
+      refute Process.alive?(watcher)
+    end
+  end
 end

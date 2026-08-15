@@ -144,6 +144,12 @@ defmodule Melee.Probe do
 
     {:ok, dolphin} = Dolphin.launch(launch_opts)
 
+    # Make Dolphin's death visible: without this a crashed emulator is
+    # indistinguishable from a spectator disconnect (a live debugging
+    # session was spent exactly there). Logs the exit + output tail and
+    # drains the port's output messages.
+    Dolphin.watch(dolphin)
+
     {:ok, console} =
       Console.start_link(
         [port: slippi_port, polling_mode: true, polling_timeout: 100] ++ console_opts

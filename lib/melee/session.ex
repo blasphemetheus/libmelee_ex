@@ -193,7 +193,11 @@ defmodule Melee.Session do
       :controller_connect_timeout,
       ports: [],
       # %{gc_port => %{pid: pid, pipe: path}}
-      controllers: %{}
+      controllers: %{},
+      # Tail of Dolphin's captured stdout+stderr, kept for the exit log
+      # — that's where crash evidence ("A signal was received", backend
+      # failures) lands.
+      dolphin_output: ""
     ]
 
     @type t :: %__MODULE__{}
@@ -244,9 +248,22 @@ defmodule Melee.Session do
     do: {:reply, get_in(state.controllers, [port, :pid]), state}
 
   @impl true
+  def handle_info({port, {:data, data}}, %{dolphin: %{port: port}} = state)
+      when is_port(port) do
+    {:noreply, %{state | dolphin_output: output_tail(state.dolphin_output <> data)}}
+  end
+
   def handle_info({port, {:exit_status, status}}, %{dolphin: %{port: port}} = state)
       when is_port(port) do
-    Logger.warning("Melee.Session: Dolphin exited with status #{status}; stopping session")
+    tail =
+      case state.dolphin_output do
+        "" -> ""
+        out -> "; last output:\n" <> out
+      end
+
+    Logger.warning(
+      "Melee.Session: Dolphin exited with status #{status}; stopping session" <> tail
+    )
 
     {:stop, {:shutdown, {:dolphin_exited, status}},
      %{state | dolphin: %{state.dolphin | port: nil}}}
@@ -265,6 +282,15 @@ defmodule Melee.Session do
   end
 
   def handle_info(_other, state), do: {:noreply, state}
+
+  # Same cap as Melee.Dolphin.watch/2: enough for crash evidence,
+  # small enough to log.
+  @output_tail_bytes 2_048
+
+  defp output_tail(tail) when byte_size(tail) <= @output_tail_bytes, do: tail
+
+  defp output_tail(tail),
+    do: binary_part(tail, byte_size(tail) - @output_tail_bytes, @output_tail_bytes)
 
   @impl true
   def terminate(_reason, state), do: teardown(state)

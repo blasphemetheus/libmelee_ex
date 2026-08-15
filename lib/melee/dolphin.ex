@@ -220,8 +220,10 @@ defmodule Melee.Dolphin do
   required only when they cannot be autodetected from the Slippi
   Launcher (see `default_info/1`); pass `autodetect: false` to skip
   detection entirely. Returns `{:ok, t}` with the Port owned by the
-  caller (the caller receives `{port, {:exit_status, n}}` when Dolphin
-  exits).
+  caller: the caller receives `{port, {:exit_status, n}}` when Dolphin
+  exits, and `{port, {:data, out}}` with captured stdout+stderr. Either
+  handle those (as `Melee.Session` does) or call `watch/2` to hand them
+  to a watcher that logs the death and drains the output.
   """
   @spec launch([launch_opt()]) :: {:ok, t()} | {:error, term()}
   def launch(opts) do
@@ -470,6 +472,84 @@ defmodule Melee.Dolphin do
     if dolphin.temp_home?, do: File.rm_rf(dolphin.home)
     :ok
   end
+
+  # How much captured Dolphin output to keep for the exit log. Enough
+  # for the crash evidence (signal lines, backend failures), small
+  # enough to be loggable.
+  @output_tail_bytes 2_048
+
+  @doc """
+  Hand the Dolphin port to a watcher that makes the emulator's death
+  visible.
+
+  Without this, `{port, {:exit_status, n}}` and the captured output sit
+  unread in the launching process's mailbox: a crashed emulator is
+  indistinguishable from a spectator disconnect until a step times out
+  or a controller write hits `:epipe` — which cost a live debugging
+  session exactly that confusion. The watcher:
+
+    * logs Dolphin's exit loudly (warning for a non-zero status, info
+      for a clean one), including a tail of the captured stdout+stderr
+      — that's where crash evidence like "A signal was received" lands;
+    * sends `{:dolphin_exited, os_pid, status}` to `subscriber`
+      (default: the caller);
+    * drains the port's `:data` messages so a long session's output
+      can't grow the owner's mailbox.
+
+  Must be called by the process that ran `launch/1` (the port owner).
+  The watcher is linked to that caller, so it cannot outlive the
+  session; the port stays linked to the caller too, so the orphan
+  guard (BEAM death closes the port, the spawn shim TERMs Dolphin) is
+  unaffected.
+
+  Do NOT combine with `Melee.Session`, which deliberately owns the port
+  itself and has equivalent handling.
+  """
+  @spec watch(t(), pid() | nil) :: pid()
+  def watch(%__MODULE__{port: port} = dolphin, subscriber \\ nil) when is_port(port) do
+    subscriber = subscriber || self()
+    watcher = spawn_link(fn -> watch_loop(dolphin, subscriber, "") end)
+    Port.connect(port, watcher)
+    watcher
+  end
+
+  defp watch_loop(%__MODULE__{port: port} = dolphin, subscriber, tail) do
+    # Monitor the port as well: stop/1 closes it without an
+    # :exit_status, and a watcher blocked on a dead port would leak.
+    ref = :erlang.monitor(:port, port)
+    do_watch(dolphin, subscriber, tail, ref)
+  end
+
+  defp do_watch(%__MODULE__{port: port} = dolphin, subscriber, tail, ref) do
+    receive do
+      {^port, {:data, data}} ->
+        do_watch(dolphin, subscriber, output_tail(tail <> data), ref)
+
+      {^port, {:exit_status, status}} ->
+        level = if status == 0, do: :info, else: :warning
+
+        Logger.log(
+          level,
+          "Melee.Dolphin: Dolphin (os pid #{dolphin.os_pid}) exited " <>
+            "with status #{status}" <> format_tail(tail)
+        )
+
+        send(subscriber, {:dolphin_exited, dolphin.os_pid, status})
+
+      {:DOWN, ^ref, :port, ^port, _reason} ->
+        # Closed by stop/1 (or the owner died): an intentional
+        # shutdown, not a death worth alarming anyone about.
+        :ok
+    end
+  end
+
+  defp output_tail(tail) when byte_size(tail) <= @output_tail_bytes, do: tail
+
+  defp output_tail(tail),
+    do: binary_part(tail, byte_size(tail) - @output_tail_bytes, @output_tail_bytes)
+
+  defp format_tail(""), do: ""
+  defp format_tail(tail), do: "; last output:\n" <> tail
 
   ## ------------------------------------------------------------------
   ## Exe resolution / flavor detection
@@ -934,10 +1014,15 @@ defmodule Melee.Dolphin do
 
   defp start_process(prep) do
     if File.regular?(prep.exe) do
+      # :stderr_to_stdout so the port captures Dolphin's stderr too —
+      # that is where crash evidence lands ("A signal was received",
+      # backend failures). watch/2 and Melee.Session keep a tail of it
+      # for the exit log instead of letting it scroll by unattributed.
       port =
         Port.open({:spawn_executable, ~c"/bin/sh"}, [
           :binary,
           :exit_status,
+          :stderr_to_stdout,
           args: ["-c", @spawn_shim, "dolphin-shim", prep.exe | prep.args]
         ])
 
