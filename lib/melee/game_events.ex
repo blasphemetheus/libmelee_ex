@@ -72,6 +72,26 @@ defmodule Melee.GameEvents do
   def new, do: %__MODULE__{}
 
   @doc """
+  Flush the tracker at end of stream: returns the `{:game_end, %{stocks:
+  ...}}` the in-game -> menu transition would have produced, or `[]` if
+  no game was in progress.
+
+  Exists for replay files: a `.slp` stops AT Melee's GAME_END, so no
+  menu frame ever follows and `step/2` alone can never emit the
+  `:game_end`. Live consumers don't need this — menus follow a game —
+  but calling it after a disconnect is also correct.
+
+      {events, tracker} = Enum.reduce(frames, {[], GameEvents.new()}, ...)
+      events ++ GameEvents.finish(tracker)
+  """
+  @spec finish(t()) :: [event()]
+  def finish(%__MODULE__{in_game: false}), do: []
+
+  def finish(%__MODULE__{} = tracker) do
+    [{:game_end, %{stocks: Map.new(tracker.players, fn {port, p} -> {port, p.stock} end)}}]
+  end
+
+  @doc """
   Fold one gamestate: returns `{events, tracker}` with the events this
   frame produced, oldest first.
   """

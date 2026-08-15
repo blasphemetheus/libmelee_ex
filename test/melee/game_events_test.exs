@@ -163,10 +163,9 @@ defmodule Melee.GameEventsTest do
 
     # A semantic edge worth pinning: :game_end fires on the in-game ->
     # menu transition, and a replay stream stops AT Melee's GAME_END —
-    # no menu frame ever arrives, so the tracker cannot emit it. Live
-    # play (where menus follow) does; replay consumers must not wait
-    # for one.
-    test "a replay stream ends without a :game_end event" do
+    # no menu frame ever arrives, so `step/2` alone cannot emit it.
+    # `finish/1` is the end-of-stream flush that closes the gap.
+    test "a replay stream needs finish/1 for its :game_end" do
       {events, tracker} =
         @fixture
         |> Melee.SlpFile.stream!()
@@ -177,10 +176,11 @@ defmodule Melee.GameEventsTest do
 
       refute Enum.any?(events, &match?({:game_end, _}, &1))
 
-      # ...but the tracker is one menu frame away from emitting it,
-      # with the final stock counts intact.
-      {final, _} = GameEvents.step(tracker, %GameState{menu_state: 1, players: %{}})
-      assert [{:game_end, %{stocks: %{1 => 0, 2 => 3}}}] = final
+      assert [{:game_end, %{stocks: %{1 => 0, 2 => 3}}}] = GameEvents.finish(tracker)
+
+      # Idempotent by construction on a fresh tracker, and a no-op when
+      # no game was in progress.
+      assert GameEvents.finish(GameEvents.new()) == []
     end
   end
 end
