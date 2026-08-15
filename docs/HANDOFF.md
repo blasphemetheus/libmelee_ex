@@ -22,15 +22,19 @@ unless it says otherwise.
   (keyboard interruption yanked the port-2 hand off the slider,
   9 became 8), and its gate must apply at the CSS only. `Probe.stop/1`
   is crash-tolerant now (a killed Dolphin no longer leaks the emulator).
-- **Open bug (narrowed):** the ExiAI nametag failure is NOT the
-  transport (both fail identically), NOT Dolphin dying (it stays
-  alive), and NOT the CSS (tag list opens fine there, verified by
-  probe). Root cause: on ExiAI the GCI-folder card never gets Melee
-  save data — boot skips the "Create Game Data?" prompt — so the
-  create flow completes vacuously and nothing persists; the
-  intermittent disconnect is secondary. Next: pre-seed the card with a
-  known-good `.gci`. Until then nametag work needs the netplay build
-  (which ignores the headless flag and always opens a window).
+- **ExiAI nametag bug: SOLVED via card seeding.** Root cause: scene
+  0x28 (the boot scene) holds the "Create Game Data?" prompt on
+  netplay but never appears with a prompt on ExiAI, so an ExiAI
+  GCI-folder card never gets save data and nametag flows ran
+  vacuously (the intermittent disconnect was secondary). Fix:
+  `memory_card: {:folder, seed: path}` copies a known-good `.gci`
+  into a fresh card (never clobbering); a netplay-created save with
+  the EXPH tag is committed at
+  `test/fixtures/01-GALE-SuperSmashBros0110290334.gci`. The select
+  test now seeds and runs on **ExiAI, headless, ~5s, no window**
+  (`--only nametag_select`); only the create test (`--only
+  nametag_create`) still needs the windowed netplay build, because
+  answering the boot prompt is the thing it tests.
 - **Fixed since:** Dolphin's death is now visible
   (`Melee.Dolphin.watch/2`, stderr captured, output tail in the exit
   log; `Melee.Session` logs the tail too); a dead controller pipe

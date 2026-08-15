@@ -3,19 +3,31 @@ defmodule Melee.Integration.NametagTest do
 
   @moduledoc """
   End-to-end check of in-game nametags against a real Dolphin, driven by
-  `Melee.Probe`.
+  `Melee.Probe`. Excluded by default; it launches Dolphin itself.
 
-  Excluded by default; it launches Dolphin itself. Point it at an install
-  and an ISO, then:
+  The two tests have different build requirements:
 
-      MELEE_DOLPHIN_PATH=~/.local/share/slippi/netplay/Slippi_Online-x86_64.AppImage \\
-      MELEE_ISO_PATH=~/isos/melee.iso \\
-      mix test --only dolphin_nametag
+    * **select** runs on any build, including the ExiAI headless one —
+      it seeds the memory card from the committed fixture save
+      (`memory_card: {:folder, seed: ...}`), so no boot prompt and no
+      window:
 
-  The first test wipes its user directory, so it also covers the two
-  things that make a nametag possible at all: `Melee.Dolphin`
-  provisioning a GCI-folder memory card, and `Melee.MenuHelper`
-  answering Melee's "Create Game Data?" boot prompt.
+          MELEE_DOLPHIN_PATH=~/.local/share/slippi/exi-ai/dolphin-emu-headless \\
+          MELEE_ISO_PATH=~/isos/melee.iso \\
+          mix test --only nametag_select
+
+    * **create** exercises tag creation from a wiped home — provisioning
+      the GCI-folder card, answering the "Create Game Data?" boot
+      prompt, and typing the tag. The prompt only appears on the
+      netplay build (ExiAI skips it, which is why a fresh ExiAI card
+      never gets save data), and the netplay build ignores the headless
+      flag, so this one opens a window:
+
+          MELEE_DOLPHIN_PATH=~/.local/share/slippi/netplay/Slippi_Online-x86_64.AppImage \\
+          MELEE_ISO_PATH=~/isos/melee.iso \\
+          mix test --only nametag_create
+
+  `--only dolphin_nametag` runs both (netplay build required).
   """
 
   alias Melee.{Dolphin, Enums, Probe}
@@ -29,13 +41,20 @@ defmodule Melee.Integration.NametagTest do
 
   # A smoke check that these runs are not vacuous: launching Dolphin and
   # connecting the console alone costs seconds, so a "pass" faster than
-  # this never drove the game at all. Measured runs land at 8-11s, hence
-  # the floor rather than something tighter.
+  # this never drove the game at all. Measured: netplay 8-11s, ExiAI
+  # with a seeded card 2.9s — hence a 2s floor rather than something
+  # tighter.
   #
   # Wall clock, NOT `probe.frames`: that counts console steps, which
   # polling coalesces, so it reads far lower than the emulated frames
   # (a full boot-and-navigate is only ~250-350 steps).
-  @min_run_ms 5_000
+  @min_run_ms 2_000
+
+  # A Melee save created by the create test on the netplay build, with
+  # the EXPH tag already registered. Seeding it into a fresh card lets
+  # the select test run on builds that skip the "Create Game Data?"
+  # prompt (ExiAI) — and skips the prompt everywhere else.
+  @seed_gci Path.expand("../../fixtures/01-GALE-SuperSmashBros0110290334.gci", __DIR__)
 
   setup_all do
     path = System.get_env("MELEE_DOLPHIN_PATH")
@@ -50,7 +69,7 @@ defmodule Melee.Integration.NametagTest do
 
   # Headless by default so a test run doesn't take over the desktop;
   # MELEE_WINDOWED=1 renders a window when you want to watch.
-  defp start_probe(ctx, ports) do
+  defp start_probe(ctx, ports, memory_card \\ :folder) do
     windowed? = System.get_env("MELEE_WINDOWED") == "1"
 
     transport =
@@ -66,7 +85,7 @@ defmodule Melee.Integration.NametagTest do
       slippi_port: 51_599,
       headless: not windowed?,
       gfx_backend: if(windowed?, do: "OGL", else: "Null"),
-      memory_card: :folder,
+      memory_card: memory_card,
       blocking_input: false,
       ports: ports,
       console: [transport: transport]
@@ -113,6 +132,7 @@ defmodule Melee.Integration.NametagTest do
     ]
   end
 
+  @tag :nametag_create
   test "creates a nametag on a freshly provisioned memory card", ctx do
     if ctx[:skip] do
       IO.puts("\n[dolphin] skipped: #{ctx.skip}")
@@ -143,16 +163,19 @@ defmodule Melee.Integration.NametagTest do
     end
   end
 
+  @tag :nametag_select
   test "selects the saved nametag and it lands in GAME_START", ctx do
     if ctx[:skip] do
       IO.puts("\n[dolphin] skipped: #{ctx.skip}")
     else
-      # Test order is shuffled, so provision the tag ourselves when the
-      # card doesn't hold one yet.
-      if saved_gci() == [], do: create_tag!(ctx)
+      # Independent of the create test (order is shuffled) AND of the
+      # build: a wiped home gets its card seeded from the fixture save,
+      # which already holds the tag — so no boot prompt, and it runs on
+      # the ExiAI headless build (which never shows the prompt at all).
+      File.rm_rf!(@home)
 
       # A match needs a second player, so port 2 gets a CPU.
-      probe = start_probe(ctx, [1, 2])
+      probe = start_probe(ctx, [1, 2], {:folder, seed: @seed_gci})
 
       cpu_opts = [
         port: 2,

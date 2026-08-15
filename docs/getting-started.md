@@ -161,7 +161,8 @@ export MELEE_DOLPHIN_PATH=...
 |---|---|---|---|
 | Whole stack: launch, connect, live frames | `mix test --only dolphin_session` | ExiAI headless | green in ~5-10s, no window |
 | Dolphin process management | `mix test --only dolphin` (includes all of these) | per test | — |
-| Nametag create + select, CPU config, full match start | `mix test --only dolphin_nametag` | netplay (window appears; it ignores headless) | `create: ~8s`, `select: ~11s`, match starts with Falco at CPU 9 |
+| Nametag select, CPU config, full match start (seeded card) | `mix test --only nametag_select` | ExiAI headless | `select: ~5s`, no window, match starts with the EXPH tag and Falco at CPU 9 |
+| Nametag creation from a wiped home (card provisioning + boot prompt) | `mix test --only nametag_create` | netplay (window appears; it ignores headless, and only it shows the boot prompt) | `create: ~10s` and a `.gci` written |
 | Slippi Direct netplay, both sides | `mix test --only netplay_direct` | netplay | two instances matchmake; ~24s |
 
 Knobs:

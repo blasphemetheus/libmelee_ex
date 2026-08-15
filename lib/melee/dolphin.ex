@@ -48,6 +48,12 @@ defmodule Melee.Dolphin do
       remember something between runs, such as an in-game nametag. On
       the first boot with a fresh folder Melee asks to create game data;
       `Melee.MenuHelper` answers that prompt by default.
+    * `{:folder, seed: path}` — same, but copy an existing `.gci` save
+      into a fresh card first (never clobbering one already there).
+      Required for save-data features on the ExiAI headless build,
+      which skips the "Create Game Data?" prompt, so a fresh card never
+      gets save data there; on any build it also skips the prompt and
+      boots a little faster.
 
   ## Controller setup ordering
 
@@ -127,7 +133,7 @@ defmodule Melee.Dolphin do
           | {:headless, boolean()}
           | {:gfx_backend, String.t()}
           | {:emulation_speed, number()}
-          | {:memory_card, boolean() | :folder}
+          | {:memory_card, boolean() | :folder | {:folder, seed: Path.t()}}
           | {:memory_card_region, String.t()}
           | {:blocking_input, boolean()}
           | {:online_delay, non_neg_integer()}
@@ -923,6 +929,12 @@ defmodule Melee.Dolphin do
   #   * `:folder` — plug a GCI-folder card into slot A, creating the
   #     directory Dolphin expects. Persists nametags and unlocks across
   #     runs, which `true` alone will not do.
+  #   * `{:folder, seed: path}` — same, but also copy an existing `.gci`
+  #     save into the fresh card. This matters on builds that skip
+  #     Melee's boot-time "Create Game Data?" prompt (the ExiAI headless
+  #     build does): there a fresh card never gets save data, so
+  #     nametags cannot persist at all. A seeded card sidesteps the
+  #     prompt on every build — and skipping it is also faster.
   defp memory_card_kvs(home, opts) do
     case Keyword.get(opts, :memory_card, false) do
       false ->
@@ -935,17 +947,34 @@ defmodule Melee.Dolphin do
         provision_gci_folder(home, Keyword.get(opts, :memory_card_region, "USA"))
         [{"SlotA", @exi_device_memory_card_folder}]
 
+      {:folder, seed: seed} ->
+        provision_gci_folder(home, Keyword.get(opts, :memory_card_region, "USA"), seed)
+        [{"SlotA", @exi_device_memory_card_folder}]
+
       other ->
         raise ArgumentError,
-              ":memory_card must be false, true or :folder, got: #{inspect(other)}"
+              ":memory_card must be false, true, :folder or {:folder, seed: path}, " <>
+                "got: #{inspect(other)}"
     end
   end
 
   # Dolphin's folder-backed memory card reads GCI files out of
   # `<home>/GC/<region>/Card A`, so the directory has to exist before
-  # boot. Melee writes its own save into it on first run.
-  defp provision_gci_folder(home, region) do
-    home |> gci_folder_path(region) |> File.mkdir_p!()
+  # boot. Melee writes its own save into it on first run — on builds
+  # that show the boot prompt; see the seed variant above for the rest.
+  defp provision_gci_folder(home, region, seed \\ nil) do
+    dir = gci_folder_path(home, region)
+    File.mkdir_p!(dir)
+
+    # Keep the .gci's own filename: Dolphin's GCI folder matches saves
+    # by name and game id. Never clobber an existing save — a home
+    # reused across sessions owns its card contents.
+    if seed do
+      target = Path.join(dir, Path.basename(seed))
+      unless File.exists?(target), do: File.cp!(seed, target)
+    end
+
+    :ok
   end
 
   @doc """

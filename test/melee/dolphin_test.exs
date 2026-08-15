@@ -375,6 +375,28 @@ defmodule Melee.DolphinTest do
       assert Dolphin.gci_folder_path(home) == Path.join([home, "GC", "USA", "Card A"])
     end
 
+    test "{:folder, seed: path} copies the save in, without clobbering", %{tmp_dir: tmp} do
+      exe = fake_exe(tmp)
+      home = Path.join(tmp, "home")
+      seed = Path.join(tmp, "seed.gci")
+      File.write!(seed, "fresh save")
+
+      opts = [path: exe, iso_path: "/isos/melee.iso", home: home]
+
+      assert {:ok, _} = Dolphin.prepare_home(opts ++ [memory_card: {:folder, seed: seed}])
+
+      assert read_ini(home) =~ "SlotA = 8"
+      target = Path.join(Dolphin.gci_folder_path(home), "seed.gci")
+      assert File.read!(target) == "fresh save"
+
+      # A home reused across sessions owns its card contents: the game
+      # has since written into the save, and re-seeding must not undo
+      # that.
+      File.write!(target, "game progress")
+      assert {:ok, _} = Dolphin.prepare_home(opts ++ [memory_card: {:folder, seed: seed}])
+      assert File.read!(target) == "game progress"
+    end
+
     test ":folder honours :memory_card_region", %{tmp_dir: tmp} do
       exe = fake_exe(tmp)
       home = Path.join(tmp, "home")
