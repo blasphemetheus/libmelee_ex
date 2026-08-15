@@ -409,6 +409,12 @@ defmodule Melee.MenuHelper do
   # the only safe move.
   @unknown_accept_frames 300
 
+  # Grace steps for the :boot scene before falling back to the blind
+  # A-pulse. ExiAI's splash is gone within ~2 polling steps; 120 covers
+  # it with a wide margin while delaying the netplay card prompt's
+  # answer by only ~2s.
+  @boot_grace_frames 120
+
   defp recover_unknown_scene(state, gamestate, controller) do
     # Log each distinct unknown raw scene ONCE — turns "we're stuck on
     # some nameless screen" into "raw scene 0xNNNN, still unrecognized",
@@ -416,13 +422,17 @@ defmodule Melee.MenuHelper do
     # how the login/boot scenes stop being blind spots.
     scene = gamestate.raw_scene
 
-    if Melee.Events.Menu.scene_name(scene) == :boot_splash do
-      # The boot splash auto-advances with zero input within a fraction
-      # of a second (measured). Pressing A here is not just pointless —
-      # blind A-presses at nameless scenes are how a run wanders deep
-      # into Online Play. Wait it out.
+    if Melee.Events.Menu.scene_name(scene) == :boot and
+         state.unknown_frames < @boot_grace_frames do
+      # The boot scene auto-advances with zero input on ExiAI (measured:
+      # gone within two polling steps), so give it a short grace before
+      # pressing anything — blind A-presses at nameless scenes are how a
+      # run wanders deep into Online Play. Grace only, NOT forever: on
+      # the netplay build the same scene id holds the "Create Game
+      # Data?" prompt, which sits waiting for A (a wait-it-out version
+      # of this code stranded the boot on the card menu, watched live).
       Controller.release_all(controller)
-      state
+      %{state | unknown_frames: state.unknown_frames + 1}
     else
       recover_unknown_scene_blind(state, gamestate, controller, scene)
     end

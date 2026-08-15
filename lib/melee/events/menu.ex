@@ -103,6 +103,7 @@ defmodule Melee.Events.Menu do
           | :main_menu
           | :slippi_online_css
           | :press_start
+          | :boot
           | {:unknown, integer() | nil}
   def scene_name(0x02), do: :character_select
   def scene_name(s) when s in [0x0102, 0x0108], do: :stage_select
@@ -110,13 +111,19 @@ defmodule Melee.Events.Menu do
   def scene_name(0x0001), do: :main_menu
   def scene_name(0x0008), do: :slippi_online_css
   def scene_name(0x0000), do: :press_start
-  # Major scene 0x28: a transient boot splash. Observed 2026-08-14 on
-  # both local builds (netplay-stable and ExiAI): appears for a fraction
-  # of a second at boot, before the main menu, with no players and
-  # regardless of memory-card config, and AUTO-ADVANCES to the main
-  # menu with zero input (confirmed by idling on it: gone within two
-  # polling steps). Needs no recovery — MenuHelper just waits it out.
-  def scene_name(0x28), do: :boot_splash
+  # Major scene 0x28: the boot scene. Observed 2026-08-14 on both local
+  # builds: appears at boot, before the main menu, with no players.
+  # Its behavior depends on the build and card state:
+  #   * ExiAI: a transient splash that AUTO-ADVANCES with zero input
+  #     (idling on it: gone within two polling steps) — and the
+  #     "Create Game Data?" prompt never appears there, which is why an
+  #     ExiAI GCI-folder card never gets save data.
+  #   * netplay + fresh GCI-folder card: the SAME scene id holds the
+  #     "Create Game Data?" prompt, which sits waiting for A (watched
+  #     live sitting on the card menu).
+  # So MenuHelper gives it a short grace (auto-advance case), then
+  # falls back to the blind A-pulse (prompt case).
+  def scene_name(0x28), do: :boot
   def scene_name(other), do: {:unknown, other}
 
   ## Character-select-screen fields (CSS and Slippi Online CSS)

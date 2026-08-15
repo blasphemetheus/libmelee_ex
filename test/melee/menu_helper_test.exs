@@ -1058,22 +1058,35 @@ defmodule Melee.MenuHelperTest do
       refute state.seen_known_menu
     end
 
-    test "the boot splash (0x28) is waited out, never pressed at", ctx do
+    test "the boot scene (0x28) gets a grace period, then the A-pulse", ctx do
       {pid, path} = file_controller(ctx)
       state = MenuHelper.new()
 
-      # It auto-advances with zero input (measured live) — pressing A at
-      # nameless scenes is how runs wander into Online Play.
+      # Grace first: on ExiAI it auto-advances with zero input (measured
+      # live), and pressing A at nameless scenes is how runs wander into
+      # Online Play.
       {state, wrote} = step_frame(state, scene_gs(1, 0x28), pid, path, base_opts())
       refute wrote =~ "PRESS"
       {state, wrote} = step_frame(state, scene_gs(2, 0x28), pid, path, base_opts())
       refute wrote =~ "PRESS"
 
+      # ...but only a grace period: on the netplay build the same scene
+      # holds the "Create Game Data?" prompt, which waits for A — a
+      # wait-forever version stranded the boot on the card menu live.
+      state =
+        Enum.reduce(3..130, state, fn f, state ->
+          {state, _} = step_frame(state, scene_gs(f, 0x28), pid, path, base_opts())
+          state
+        end)
+
+      {state, wrote} = step_frame(state, scene_gs(131, 0x28), pid, path, base_opts())
+      {_state, wrote2} = step_frame(state, scene_gs(132, 0x28), pid, path, base_opts())
+      assert wrote <> wrote2 =~ "PRESS A"
+
       # Typed, so it never lands in the unrecognized-scene telemetry.
       # (Asserted on state, not captured logs — capture_log is global
       # and async siblings legitimately log "unrecognized".)
-      assert Melee.Events.Menu.scene_name(0x28) == :boot_splash
-      assert state.logged_scenes in [nil, MapSet.new()]
+      assert Melee.Events.Menu.scene_name(0x28) == :boot
     end
 
     test ":ignore leaves the scene alone", ctx do
