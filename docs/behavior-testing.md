@@ -28,9 +28,9 @@ unit/golden tested, not separately proven live).
 
 | Capability | Module | Status |
 |---|---|---|
-| Button/analog input at 60fps over named pipes | `Melee.Controller` | live-verified; analog quantization float-exact vs Python |
+| Button/analog input at 60fps over named pipes | `Melee.Controller` | live-verified (`--only dolphin_gameplay`: the character demonstrably obeys the stick in a running match); analog quantization float-exact vs Python. Caveat: on the ExiAI build, in-game input requires `blocking_input: true` — menus work either way |
 | Full menu navigation: boot screens → CSS → stage select → match | `Melee.MenuHelper` | live-verified end-to-end |
-| Character select on any port, human or CPU, incl. CPU level slider | `Melee.MenuHelper` | live-verified on ports 1-4 (2026-08-14 measurement session) |
+| Character select on any port, human or CPU, incl. CPU level slider | `Melee.MenuHelper` | live-verified on ports 1-4; the measurements are codified as a rerunnable test (`--only dolphin_css`) |
 | In-game nametag create + select, persisted to a real save | `Melee.MenuHelper` + `memory_card: :folder` | live-verified (`--only dolphin_nametag`) |
 | Slippi Direct connect-code entry and netplay matchmaking | `Melee.MenuHelper`, `Melee.Dolphin` (user.json) | live-verified both sides (`--only netplay_direct`) |
 | Frozen Stadium toggle | `Melee.MenuHelper` | live-verified (edge-driven) |

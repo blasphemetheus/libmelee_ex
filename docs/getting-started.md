@@ -160,6 +160,8 @@ export MELEE_DOLPHIN_PATH=...
 | Capability | Command | Build | Pass looks like |
 |---|---|---|---|
 | Whole stack: launch, connect, live frames | `mix test --only dolphin_session` | ExiAI headless | green in ~5-10s, no window |
+| Inputs move the character in a live match | `mix test --only dolphin_gameplay` | ExiAI headless | ~5s, no window; Fox dashes right then left on command |
+| CSS geometry, ports 2-4 (name-box spacing, tag-list columns, CPU config) | `mix test --only dolphin_css` | ExiAI headless | ~5s, no window; columns at exactly -9.8 / 5.6 / 21.0 |
 | Dolphin process management | `mix test --only dolphin` (includes all of these) | per test | — |
 | Nametag select, CPU config, full match start (seeded card) | `mix test --only nametag_select` | ExiAI headless | `select: ~5s`, no window, match starts with the EXPH tag and Falco at CPU 9 |
 | Nametag creation from a wiped home (card provisioning + boot prompt) | `mix test --only nametag_create` | netplay (window appears; it ignores headless, and only it shows the boot prompt) | `create: ~10s` and a `.gci` written |
@@ -190,6 +192,10 @@ which are handled).
   Known; `MenuHelper`'s unknown-scene recovery backs out of it.
 - **A window appears despite `headless: true`.** You're on the netplay
   AppImage; it has no headless mode. Use the ExiAI build for headless.
+- **Menus obey the controller but the character ignores it in-game.**
+  On the ExiAI build, in-game pipe input requires
+  `blocking_input: true` (the default — don't turn it off there).
+  Menus work either way, which makes this maddening to diagnose.
 - **Weird failures after a crashed run.** Check for a leaked Dolphin
   (`pgrep -f Slippi`) squatting on the spectator port or controller
   pipes, and wipe the test home directory.

@@ -192,6 +192,13 @@ y sitting well above the bottom edge means the list is up. A
 readings: the yank itself moves x (so measure *after* it), and at
 port 4 the screen edge (x caps at 26) can fake a pin.
 
+The pin is **one-sided**: rightward motion stops exactly at the
+column, leftward motion is free (port 3's hand walked from 1.3 to
+-4.0 under a left tilt with the list open). To read the column, tilt
+RIGHT and take where x stops — every column (max 21.0 at port 4) sits
+well left of the screen edge. `--only dolphin_css` is the rerunnable
+form of these measurements.
+
 ### The name box is narrower than it looks
 
 Presses at `x = -23.56`, `-23.22` and `-22.94` open the tag list;

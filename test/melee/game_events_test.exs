@@ -131,4 +131,56 @@ defmodule Melee.GameEventsTest do
     assert :stock_lost not in kinds
     assert kinds == [:game_start, :game_end, :game_start]
   end
+
+  describe "against a real replay" do
+    @fixture Path.expand("../fixtures/fox_multishine.slp", __DIR__)
+
+    # Golden events for the whole fixture, discovered by running the
+    # tracker over it and checked against watching the game: a KO on
+    # each side early, then port 1 dumps its remaining stocks at 0% to
+    # end the game (three untouched falls). Exercises the trajectory
+    # KO/SD classifier on real frames — both kinds, in one file.
+    test "the fixture replay produces the golden event sequence" do
+      {events, _tracker} =
+        @fixture
+        |> Melee.SlpFile.stream!()
+        |> Enum.reduce({[], GameEvents.new()}, fn gs, {acc, tracker} ->
+          {new, tracker} = GameEvents.step(tracker, gs)
+          {acc ++ new, tracker}
+        end)
+
+      assert [
+               {:game_start, %{players: %{1 => 1, 2 => 24}, stage: 25}},
+               {:stock_lost, %{port: 2, kind: :ko, remaining: 3, percent_before: p2}},
+               {:stock_lost, %{port: 1, kind: :ko, remaining: 3, percent_before: 27.0}},
+               {:stock_lost, %{port: 1, kind: :sd, remaining: 2, percent_before: 0.0}},
+               {:stock_lost, %{port: 1, kind: :sd, remaining: 1, percent_before: 0.0}},
+               {:stock_lost, %{port: 1, kind: :sd, remaining: 0, percent_before: 0.0}}
+             ] = events
+
+      assert_in_delta p2, 21.0, 0.001
+    end
+
+    # A semantic edge worth pinning: :game_end fires on the in-game ->
+    # menu transition, and a replay stream stops AT Melee's GAME_END —
+    # no menu frame ever arrives, so the tracker cannot emit it. Live
+    # play (where menus follow) does; replay consumers must not wait
+    # for one.
+    test "a replay stream ends without a :game_end event" do
+      {events, tracker} =
+        @fixture
+        |> Melee.SlpFile.stream!()
+        |> Enum.reduce({[], GameEvents.new()}, fn gs, {acc, tracker} ->
+          {new, tracker} = GameEvents.step(tracker, gs)
+          {acc ++ new, tracker}
+        end)
+
+      refute Enum.any?(events, &match?({:game_end, _}, &1))
+
+      # ...but the tracker is one menu frame away from emitting it,
+      # with the final stock counts intact.
+      {final, _} = GameEvents.step(tracker, %GameState{menu_state: 1, players: %{}})
+      assert [{:game_end, %{stocks: %{1 => 0, 2 => 3}}}] = final
+    end
+  end
 end
