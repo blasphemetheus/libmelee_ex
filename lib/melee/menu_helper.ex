@@ -415,6 +415,20 @@ defmodule Melee.MenuHelper do
     # the datum needed to give it a named clause in Events.Menu. This is
     # how the login/boot scenes stop being blind spots.
     scene = gamestate.raw_scene
+
+    if Melee.Events.Menu.scene_name(scene) == :boot_splash do
+      # The boot splash auto-advances with zero input within a fraction
+      # of a second (measured). Pressing A here is not just pointless —
+      # blind A-presses at nameless scenes are how a run wanders deep
+      # into Online Play. Wait it out.
+      Controller.release_all(controller)
+      state
+    else
+      recover_unknown_scene_blind(state, gamestate, controller, scene)
+    end
+  end
+
+  defp recover_unknown_scene_blind(state, gamestate, controller, scene) do
     state = maybe_log_unknown_scene(state, scene)
 
     button =

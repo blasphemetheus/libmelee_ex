@@ -1058,6 +1058,24 @@ defmodule Melee.MenuHelperTest do
       refute state.seen_known_menu
     end
 
+    test "the boot splash (0x28) is waited out, never pressed at", ctx do
+      {pid, path} = file_controller(ctx)
+      state = MenuHelper.new()
+
+      # It auto-advances with zero input (measured live) — pressing A at
+      # nameless scenes is how runs wander into Online Play.
+      {state, wrote} = step_frame(state, scene_gs(1, 0x28), pid, path, base_opts())
+      refute wrote =~ "PRESS"
+      {state, wrote} = step_frame(state, scene_gs(2, 0x28), pid, path, base_opts())
+      refute wrote =~ "PRESS"
+
+      # Typed, so it never lands in the unrecognized-scene telemetry.
+      # (Asserted on state, not captured logs — capture_log is global
+      # and async siblings legitimately log "unrecognized".)
+      assert Melee.Events.Menu.scene_name(0x28) == :boot_splash
+      assert state.logged_scenes in [nil, MapSet.new()]
+    end
+
     test ":ignore leaves the scene alone", ctx do
       {pid, path} = file_controller(ctx)
 
