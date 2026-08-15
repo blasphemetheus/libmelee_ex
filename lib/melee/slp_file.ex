@@ -179,7 +179,25 @@ defmodule Melee.SlpFile do
         {:ok, gamestate, %{file | parser: parser}}
 
       {:game_end, parser} ->
-        {:done, %{file | parser: parser, cursor: byte_size(file.raw)}}
+        file = %{file | parser: parser, cursor: byte_size(file.raw)}
+
+        # On a manual-bookend file the FINAL frame is still accumulating
+        # when GAME_END arrives — there is no successor pre-frame to
+        # complete it off. Flush it or it is silently dropped (found by
+        # the peppi differential: every pre-2.2.0 replay came up exactly
+        # one frame short). complete_frame is a no-op once flushed, so
+        # the subsequent out-of-data flush cannot double-emit.
+        if file.manual_bookends do
+          case Events.complete_frame(file.parser) do
+            {:frame_complete, gamestate, parser} ->
+              {:ok, gamestate, %{file | parser: parser}}
+
+            {_other, parser} ->
+              {:done, %{file | parser: parser}}
+          end
+        else
+          {:done, file}
+        end
 
       {:rollback, parser} ->
         feed(%{file | parser: parser})

@@ -157,6 +157,31 @@ defmodule Melee.SlpFileTest do
       path = write_old_replay(ctx, 12)
       assert direct_parse_count(path) == 0
     end
+
+    test "the final frame survives a GAME_END ending", ctx do
+      # Real old replays end WITH a GAME_END event (the synthetic ones
+      # above end by running out of data, a different code path). The
+      # final frame is still accumulating when GAME_END arrives — no
+      # successor pre-frame will ever complete it — and dropping it was
+      # a real bug: the peppi differential found every pre-2.2.0 corpus
+      # replay exactly one frame short.
+      path = write_old_replay(ctx, 12)
+      File.write!(path, with_game_end(File.read!(path)))
+
+      frames = path |> SlpFile.stream!() |> Enum.to_list()
+      assert length(frames) == 12
+      assert List.last(frames).players[1].position.x == 12.0
+    end
+
+    # Append a GAME_END (0x39) to the synthetic replay's raw element,
+    # fixing up the container length.
+    defp with_game_end(
+           <<"{U", 3, "raw[$U#l", len::big-unsigned-32, raw::binary-size(len), rest::binary>>
+         ) do
+      raw = raw <> <<0x39, 0>>
+
+      <<"{U", 3, "raw[$U#l", byte_size(raw)::big-unsigned-32>> <> raw <> rest
+    end
   end
 
   describe "next_frame/1" do
