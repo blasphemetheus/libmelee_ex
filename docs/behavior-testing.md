@@ -143,9 +143,15 @@ The pattern every live test here follows:
 
 ### Validation
 
-- Extend the peppi differential to pre-2.2.0 files now that
-  `Melee.SlpFile` reads them (the current 1.34B-comparison evidence is
-  v2.2.0+ only).
+- ~~Extend the peppi differential to pre-2.2.0 files~~ — DONE
+  (2026-08-16, exphil `ef35986`): the entire pre-2.2.0 corpus
+  population, 9,092 replays through `Melee.SlpFile`'s manual bookends,
+  compared field-by-field against peppi — **9,087 OK, 0 divergences**
+  (the only 5 skips are Rust panics inside peppi's own deserializer).
+  The run found and fixed two real `SlpFile` bugs (final-frame drop at
+  GAME_END; duplicated-frame merge) and byte-verified one case where
+  peppi fabricates data over a Slippi write-gap while this codec stays
+  faithful to the raw.
 - EnetBeam ↔ EnetNif cross-compat property tests over loopback (the
   NIF's `host_listen` exists for exactly this).
 - A CI-optional job that runs the smoke catalog nightly against a real

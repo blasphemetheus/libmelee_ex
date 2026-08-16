@@ -46,6 +46,19 @@ unless it says otherwise.
   `docs/behavior-testing.md` (capability catalog, semantic edges,
   improvement roadmap) added and wired into ex_doc.
 
+## Addendum 2026-08-16
+
+- **Peppi differential extended to pre-2.2.0 replays** (exphil
+  `ef35986`): all 9,092 old corpus files through `Melee.SlpFile`,
+  **9,087 OK / 0 divergences** (5 skips = peppi's own Rust panics).
+  Found and fixed here: the final frame of GAME_END-ending old replays
+  was dropped (`83bcc6a`), and a duplicated (early-rollback) frame was
+  silently merged instead of treated as a re-simulation boundary
+  (`f278bfa`). Byte-verified along the way: peppi fabricates and
+  misassigns rows over old Slippi's mid-game port write-gaps; this
+  codec matches the raw exactly there. `GameEvents.finish/1` added for
+  end-of-stream `:game_end` (`21b72c1`).
+
 ## What this is
 
 An Elixir port of [libmelee](https://github.com/vladfi1/libmelee), the
