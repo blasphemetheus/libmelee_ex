@@ -168,9 +168,18 @@ The pattern every live test here follows:
   (p50 6µs vs 30µs, exphil bench).
 - Bench EnetBeam vs EnetNif under load before optimizing either; no
   measured gap justifies the NIF yet.
-- Boot-to-CSS (~8s) dominates iteration time for menu tests. A
-  persistent warm session pool (`Melee.SessionPool`) amortizes it;
-  a "boot to CSS" gecko code could cut it further if one is adopted
+- Boot time: ExiAI reaches the CSS in ~1-2s and a match in ~4s;
+  netplay takes ~8s. A persistent warm session pool
+  (`Melee.SessionPool`) amortizes it, and multi-game sessions
+  (`--only dolphin_multigame`) cut per-game overhead to menu time
+  alone.
+- **Savestate fast-reset: investigated 2026-08-16, dead end on current
+  builds.** The ExiAI build's CLI is `-e`/`-u` only and headless has
+  no hotkey input; the netplay build has no `--save_state` either
+  (its `--movie` flag could smuggle one in via a
+  recorded-from-savestate .dtm — fragile, windowed, untried); only
+  mainline has `-s/--save_state`, and it is windowed-only here with
+  build-specific state files. Revisit only as an Ishiiruka patch
   upstream.
 - Menu navigation itself has known slack (fixed `@nametag_settle_frames`
   style waits); tightening is possible but has historically traded

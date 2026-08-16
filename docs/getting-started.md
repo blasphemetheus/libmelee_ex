@@ -197,6 +197,7 @@ export MELEE_DOLPHIN_PATH=...
 | Inputs move the character in a live match | `mix test --only dolphin_gameplay` | ExiAI headless | ~5s, no window; Fox dashes right then left on command |
 | Frame-perfect input: sustained multishine | `mix test --only dolphin_tech` | ExiAI headless | ~7s, no window; 74 shines in 600 frames (8-frame cycle) |
 | The public API end-to-end (`Melee.Bot` + `Melee.Match`) | `mix test --only dolphin_match` | ExiAI headless | ~10s, no window; a one-callback bot plays a whole game to its natural end |
+| Many games, one emulator (training-loop shape) | `mix test --only dolphin_multigame` | ExiAI headless | ~22s, no window; 3 full games, same Dolphin pid, ~4.7s of menus between games |
 | CSS geometry, ports 2-4 (name-box spacing, tag-list columns, CPU config) | `mix test --only dolphin_css` | ExiAI headless | ~5s, no window; columns at exactly -9.8 / 5.6 / 21.0 |
 | Dolphin process management | `mix test --only dolphin` (includes all of these) | per test | — |
 | Nametag select, CPU config, full match start (seeded card) | `mix test --only nametag_select` | ExiAI headless | `select: ~5s`, no window, match starts with the EXPH tag and Falco at CPU 9 |
