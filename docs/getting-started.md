@@ -201,6 +201,9 @@ export MELEE_DOLPHIN_PATH=...
 | CSS geometry, ports 2-4 (name-box spacing, tag-list columns, CPU config) | `mix test --only dolphin_css` | ExiAI headless | ~5s, no window; columns at exactly -9.8 / 5.6 / 21.0 |
 | Full roster (25 portraits), Sheik transform, Frozen Stadium paths | `mix test --only dolphin_roster` | ExiAI headless | ~10s, no window; 25/25 locked in, Sheik in-game via the Zelda pick |
 | Replay round-trip: Slippi's recording of our game decodes identically | `mix test --only dolphin_replay` | ExiAI headless | ~8s, no window; 74 shines live == 74 in the written .slp |
+| The fleet: N concurrent sessions to simultaneous matches | `mix test --only dolphin_pool` | ExiAI headless | ~3s(!), no window; 3 Dolphins, distinct pids/ports, 3 matches at once |
+| Projectile decoding, live | `mix test --only dolphin_projectiles` | ExiAI headless | ~10s, no window; hundreds of fox-laser rows with sane physics |
+| Ice Climbers: Nana's follower frames | `mix test --only dolphin_ics` | ExiAI headless | ~7s, no window; `player.nana` present with her own moving body |
 | Dolphin process management | `mix test --only dolphin` (includes all of these) | per test | — |
 | Nametag select, CPU config, full match start (seeded card) | `mix test --only nametag_select` | ExiAI headless | `select: ~5s`, no window, match starts with the EXPH tag and Falco at CPU 9 |
 | Nametag creation from a wiped home (card provisioning + boot prompt) | `mix test --only nametag_create` | netplay (window appears; it ignores headless, and only it shows the boot prompt) | `create: ~10s` and a `.gci` written |
