@@ -26,6 +26,7 @@ defmodule Melee.MenuHelper do
   """
 
   alias Melee.{Controller, GameState}
+  alias Melee.Events.Menu, as: MenuEvents
   alias Melee.Enums.{Character, Stage}
 
   require Logger
@@ -422,7 +423,7 @@ defmodule Melee.MenuHelper do
     # how the login/boot scenes stop being blind spots.
     scene = gamestate.raw_scene
 
-    if Melee.Events.Menu.scene_name(scene) == :boot and
+    if MenuEvents.scene_name(scene) == :boot and
          state.unknown_frames < @boot_grace_frames do
       # The boot scene auto-advances with zero input on ExiAI (measured:
       # gone within two polling steps), so give it a short grace before
@@ -465,7 +466,7 @@ defmodule Melee.MenuHelper do
     else
       Logger.info(
         "[MenuHelper] unrecognized menu scene #{inspect(scene, base: :hex)} " <>
-          "(#{inspect(Melee.Events.Menu.scene_name(scene))}) — recovering blind. " <>
+          "(#{inspect(MenuEvents.scene_name(scene))}) — recovering blind. " <>
           "Add a named clause in Melee.Events.Menu to type it."
       )
 

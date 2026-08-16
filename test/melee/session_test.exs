@@ -261,6 +261,67 @@ defmodule Melee.SessionTest do
     end
   end
 
+  describe "stream/2" do
+    # A console stand-in scripted with step results, so the stream's
+    # contract (yield frames, swallow nils, halt on error) is testable
+    # without Dolphin.
+    defmodule ScriptedConsole do
+      use GenServer
+
+      def start_link(script), do: GenServer.start_link(__MODULE__, script)
+
+      @impl true
+      def init(script), do: {:ok, script}
+
+      @impl true
+      def handle_call(:step, _from, [head | rest]), do: {:reply, head, rest}
+      def handle_call(:step, _from, []), do: {:reply, {:error, :script_over}, []}
+    end
+
+    # And a session stand-in that hands out that console.
+    defmodule ScriptedSession do
+      use GenServer
+
+      def start_link(console), do: GenServer.start_link(__MODULE__, console)
+
+      @impl true
+      def init(console), do: {:ok, console}
+
+      @impl true
+      def handle_call(:console, _from, console), do: {:reply, console, console}
+    end
+
+    test "yields frames, skips nils, and halts on the first error" do
+      frames = for n <- 1..3, do: %Melee.GameState{frame: n}
+
+      script =
+        [{:ok, Enum.at(frames, 0)}, nil, {:ok, Enum.at(frames, 1)}, nil, nil] ++
+          [{:ok, Enum.at(frames, 2)}, {:error, :enet_disconnected}, {:ok, :never_reached}]
+
+      {:ok, console} = ScriptedConsole.start_link(script)
+      {:ok, session} = ScriptedSession.start_link(console)
+
+      assert Session.stream(session, 1_000) |> Enum.to_list() == frames
+    end
+
+    test "composes with GameEvents.stream/1" do
+      in_game = %Melee.GameState{menu_state: 2, players: %{1 => %Melee.PlayerState{stock: 4}}}
+      menu = %Melee.GameState{menu_state: 1, players: %{}}
+
+      script = [{:ok, in_game}, {:ok, in_game}, {:ok, menu}, {:error, :enet_disconnected}]
+      {:ok, console} = ScriptedConsole.start_link(script)
+      {:ok, session} = ScriptedSession.start_link(console)
+
+      events =
+        session
+        |> Session.stream(1_000)
+        |> Melee.GameEvents.stream()
+        |> Enum.to_list()
+
+      assert [{:game_start, _}, {:game_end, %{stocks: %{1 => 4}}}] = events
+    end
+  end
+
   defp wait_for_new_controller(session, original, tries \\ 100) do
     case Session.controller(session, 1) do
       ^original when tries > 0 ->

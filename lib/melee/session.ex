@@ -159,6 +159,38 @@ defmodule Melee.Session do
   def step(session, timeout \\ :infinity),
     do: session |> console() |> Console.step(timeout)
 
+  @doc """
+  The session's frames as a lazy stream.
+
+  Yields one `Melee.GameState` per frame, skipping polling-mode `nil`s,
+  and HALTS on the console's first error (a disconnect ends the stream
+  rather than raising — check the session afterwards if you need the
+  reason). The stream is infinite while frames flow; bound it yourself
+  (`Stream.take_while/2`, `Enum.take/2`).
+
+  Composes with `Melee.GameEvents.stream/1` for live scoring:
+
+      session
+      |> Melee.Session.stream()
+      |> Melee.GameEvents.stream()
+      |> Enum.take(3)
+  """
+  @spec stream(t(), timeout()) :: Enumerable.t()
+  def stream(session, timeout \\ :infinity) do
+    Stream.resource(
+      # Resolve the console once, not per frame.
+      fn -> console(session) end,
+      fn console ->
+        case Console.step(console, timeout) do
+          {:ok, gamestate} -> {[gamestate], console}
+          nil -> {[], console}
+          {:error, _reason} -> {:halt, console}
+        end
+      end,
+      fn _console -> :ok end
+    )
+  end
+
   @doc "The `Melee.Controller` pid for a GC port, or `nil`."
   @spec controller(t(), pos_integer()) :: pid() | nil
   def controller(session, port), do: GenServer.call(session, {:controller, port})

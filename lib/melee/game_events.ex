@@ -92,6 +92,32 @@ defmodule Melee.GameEvents do
   end
 
   @doc """
+  Lazily turn any enumerable of gamestates into a stream of events,
+  with the end-of-stream `finish/1` flush built in.
+
+  Composes with both halves of the library:
+
+      # A replay file, events end to end (:game_end included):
+      "game.slp" |> Melee.SlpFile.stream!() |> Melee.GameEvents.stream()
+
+      # A live session, scored as it plays:
+      session
+      |> Melee.Session.stream()
+      |> Melee.GameEvents.stream()
+      |> Enum.each(&IO.inspect/1)
+  """
+  @spec stream(Enumerable.t()) :: Enumerable.t()
+  def stream(gamestates) do
+    Stream.transform(
+      gamestates,
+      fn -> new() end,
+      fn gamestate, tracker -> step(tracker, gamestate) end,
+      fn tracker -> {finish(tracker), tracker} end,
+      fn _tracker -> :ok end
+    )
+  end
+
+  @doc """
   Fold one gamestate: returns `{events, tracker}` with the events this
   frame produced, oldest first.
   """

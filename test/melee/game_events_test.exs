@@ -183,5 +183,32 @@ defmodule Melee.GameEventsTest do
       # no game was in progress.
       assert GameEvents.finish(GameEvents.new()) == []
     end
+
+    test "stream/1 equals the hand-rolled fold, finish included" do
+      gamestates = @fixture |> Melee.SlpFile.stream!() |> Enum.to_list()
+
+      {folded, tracker} =
+        Enum.reduce(gamestates, {[], GameEvents.new()}, fn gs, {acc, tracker} ->
+          {new, tracker} = GameEvents.step(tracker, gs)
+          {acc ++ new, tracker}
+        end)
+
+      folded = folded ++ GameEvents.finish(tracker)
+      streamed = gamestates |> GameEvents.stream() |> Enum.to_list()
+
+      assert streamed == folded
+      assert match?({:game_end, _}, List.last(streamed))
+    end
+
+    test "stream/1 is lazy" do
+      # Taking the first event must not require walking the whole
+      # replay: an infinite source proves it can't have been consumed.
+      first =
+        Stream.cycle([%GameState{menu_state: 2, players: %{1 => %PlayerState{stock: 4}}}])
+        |> GameEvents.stream()
+        |> Enum.take(1)
+
+      assert [{:game_start, _}] = first
+    end
   end
 end
