@@ -204,6 +204,9 @@ export MELEE_DOLPHIN_PATH=...
 | The fleet: N concurrent sessions to simultaneous matches | `mix test --only dolphin_pool` | ExiAI headless | ~3s(!), no window; 3 Dolphins, distinct pids/ports, 3 matches at once |
 | Projectile decoding, live | `mix test --only dolphin_projectiles` | ExiAI headless | ~10s, no window; hundreds of fox-laser rows with sane physics |
 | Ice Climbers: Nana's follower frames | `mix test --only dolphin_ics` | ExiAI headless | ~7s, no window; `player.nana` present with her own moving body |
+| Analog round-trip: sent stick == readback, deadzone pinned | `mix test --only dolphin_analog` | ExiAI headless | ~7s, no window; 12 identity round-trips, [0.4, 0.6] collapses to neutral |
+| Four-port match + live event pipeline | `mix test --only dolphin_4p` | ExiAI headless | ~3s, no window; 4 bodies in-game, `Session.stream \|> GameEvents.stream` reports the SD live |
+| CPU slider, levels 1-9 up and back down | `mix test --only dolphin_cpu` | ExiAI headless | ~1s, no window; all ten configurations land exactly |
 | Dolphin process management | `mix test --only dolphin` (includes all of these) | per test | — |
 | Nametag select, CPU config, full match start (seeded card) | `mix test --only nametag_select` | ExiAI headless | `select: ~5s`, no window, match starts with the EXPH tag and Falco at CPU 9 |
 | Nametag creation from a wiped home (card provisioning + boot prompt) | `mix test --only nametag_create` | netplay (window appears; it ignores headless, and only it shows the boot prompt) | `create: ~10s` and a `.gci` written |

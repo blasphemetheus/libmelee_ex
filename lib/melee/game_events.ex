@@ -26,12 +26,14 @@ defmodule Melee.GameEvents do
     * `{:game_end, %{stocks: %{port => stocks_left}}}` — in-game to menu
     * `{:stock_lost, %{port: p, remaining: n, kind: :sd | :ko,
       percent_before: pct}}` — a port's stock count fell. Trajectory
-      classified: `:ko` when the player had been in hitstun (or had
-      hitstun frames pending) at any point since they last touched
-      ground or ledge — i.e. the fall was *caused*; `:sd` when the fall
-      was untouched, at ANY percent. This replaces the percent<20
-      heuristic, which was wrong both ways (GOTCHA #94: high-percent
-      walk-offs read as KOs, low-percent spikes read as SDs).
+      classified: `:ko` when the player entered a hitstun ACTION at any
+      point since they last touched ground or ledge — i.e. the fall was
+      *caused*; `:sd` when the fall was untouched, at ANY percent. This
+      replaces the percent<20 heuristic, which was wrong both ways
+      (GOTCHA #94: high-percent walk-offs read as KOs, low-percent
+      spikes read as SDs). Action states only: `hitstun_frames_left`
+      (misc_as) is a union field with unrelated meanings outside damage
+      actions, and consulting it misread untouched falls as KOs.
     * `{:shield_break, %{port: p}}` — a shielding action transitioned
       into the break family (205..211, ShieldBreakFly/…/FuraFura)
     * `{:menu_transition, %{from: m1, to: m2}}` — any menu-state change
@@ -182,9 +184,14 @@ defmodule Melee.GameEvents do
   defp snapshot({port, p}, prev_flags) do
     action = int(p.action)
 
-    hit? =
-      MapSet.member?(@hitstun_states, action) or
-        (is_number(p.hitstun_frames_left) and p.hitstun_frames_left > 0)
+    # Action states ONLY — deliberately not `hitstun_frames_left > 0`.
+    # That field decodes misc_as (0x2B), a UNION whose meaning depends
+    # on the action: it is hitstun remaining only during damage
+    # actions, and carries unrelated data otherwise. Reading it
+    # unconditionally classified an untouched dash-off-the-edge at
+    # 0.0% as a KO in a live 4-player game (caught by the 4p smoke
+    # test).
+    hit? = MapSet.member?(@hitstun_states, action)
 
     safe? = p.on_ground == true or MapSet.member?(@ledge_states, action)
 

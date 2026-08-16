@@ -167,7 +167,10 @@ defmodule Melee.MenuHelper do
       use it); an explicit `""` still drives the direct-code keyboard —
       the nil/"" distinction matches upstream v0.47 semantics.
     * `:cpu_level` — CPU level to configure, `0` (default) for human/bot
-    * `:costume` — costume index (default `0`)
+    * `:costume` — costume index (default `0`). NOTE: applied on the
+      Slippi ONLINE CSS only (Y presses after lock-in, ported Python
+      semantics); the local CSS ignores it — verified live, a port
+      always enters with costume 0 locally.
     * `:autostart` — press START when the match is ready (default `false`)
     * `:swag` — what it sounds like (default `false`)
     * `:frozen_stadium` — toggle Frozen Stadium at stage select

@@ -135,11 +135,13 @@ defmodule Melee.GameEventsTest do
   describe "against a real replay" do
     @fixture Path.expand("../fixtures/fox_multishine.slp", __DIR__)
 
-    # Golden events for the whole fixture, discovered by running the
-    # tracker over it and checked against watching the game: a KO on
-    # each side early, then port 1 dumps its remaining stocks at 0% to
-    # end the game (three untouched falls). Exercises the trajectory
-    # KO/SD classifier on real frames — both kinds, in one file.
+    # Golden events for the whole fixture: port 2 gets genuinely KO'd
+    # (hitstun actions seen airborne), then port 1 — a multishine
+    # practice session — dumps all four stocks as untouched falls,
+    # including one at 27% (damage taken earlier in the stock, but the
+    # fall itself uncaused: the exact high-percent-SD case the old
+    # percent<20 heuristic misread, and the misc_as clause misread
+    # after it). Exercises both classifier kinds on real frames.
     test "the fixture replay produces the golden event sequence" do
       {events, _tracker} =
         @fixture
@@ -152,7 +154,7 @@ defmodule Melee.GameEventsTest do
       assert [
                {:game_start, %{players: %{1 => 1, 2 => 24}, stage: 25}},
                {:stock_lost, %{port: 2, kind: :ko, remaining: 3, percent_before: p2}},
-               {:stock_lost, %{port: 1, kind: :ko, remaining: 3, percent_before: 27.0}},
+               {:stock_lost, %{port: 1, kind: :sd, remaining: 3, percent_before: 27.0}},
                {:stock_lost, %{port: 1, kind: :sd, remaining: 2, percent_before: sd1}},
                {:stock_lost, %{port: 1, kind: :sd, remaining: 1, percent_before: sd2}},
                {:stock_lost, %{port: 1, kind: :sd, remaining: 0, percent_before: sd3}}
