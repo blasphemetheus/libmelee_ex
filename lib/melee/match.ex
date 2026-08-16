@@ -131,6 +131,64 @@ defmodule Melee.Match do
   end
 
   @doc """
+  End the running game from one port with the standard LRAS quit-out
+  (hold L+R+A+Start), stepping the session until the game exits.
+
+  The fast way to end an episode: a quit-out drops straight back to
+  the character select screen (no postgame scores), against ~15+
+  seconds of burning stocks. Note Melee disables pausing during the
+  pre-GO countdown (frames -123..-1), so a quit requested at match
+  start still takes ~2.3 seconds of game time — it fires on the first
+  pausable frame (measured: frame 0 exactly).
+
+  Follows the same contract as `play/2`: returns `{:ok, gamestate}`
+  with the first non-in-game frame, `{:error, :timeout}` after
+  `:timeout_frames` (default `400`), or the session's error.
+  """
+  @spec quit(GenServer.server(), GenServer.server(), keyword()) ::
+          {:ok, GameState.t()} | {:error, term()}
+  def quit(session, controller, opts \\ []) do
+    timeout_frames = Keyword.get(opts, :timeout_frames, 400)
+    result = quit_loop(session, controller, timeout_frames)
+    Melee.Controller.release_all(controller)
+    result
+  end
+
+  defp quit_loop(_session, _controller, 0), do: {:error, :timeout}
+
+  defp quit_loop(session, controller, frames_left) do
+    # L+R+A are held; Start is PULSED (2 on, 6 off — the cadence
+    # verified live). The quit-out is edges, not a chord: a Start press
+    # pauses, and the exit needs a FRESH Start edge with L+R+A down —
+    # a continuous hold of all four never quits (found live: it timed
+    # out), and the pulse also rides out the pre-GO pause lockout.
+    Enum.each([:l, :r, :a], &Melee.Controller.press_button(controller, &1))
+
+    if rem(frames_left, 8) in [0, 1],
+      do: Melee.Controller.press_button(controller, :start),
+      else: Melee.Controller.release_button(controller, :start)
+
+    case Session.step(session) do
+      {:ok, gamestate} ->
+        if GameState.in_game?(gamestate),
+          do: quit_loop(session, controller, frames_left - 1),
+          else: {:ok, gamestate}
+
+      nil ->
+        # A PAUSED game emits no spectator frames, so nil steps are the
+        # normal state mid-quit — and the pulse is keyed on frames_left,
+        # so nil MUST consume budget too. A version that didn't
+        # deadlocked: silence began during the pulse's release phase,
+        # the frozen counter held Start released forever, and the pause
+        # never resolved.
+        quit_loop(session, controller, frames_left - 1)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  @doc """
   Has this port finished configuring at the CSS — the right character
   locked in, plus level and CPU status when a `:cpu_level` was asked
   for?

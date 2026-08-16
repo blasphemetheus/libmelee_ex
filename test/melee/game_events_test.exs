@@ -153,12 +153,13 @@ defmodule Melee.GameEventsTest do
                {:game_start, %{players: %{1 => 1, 2 => 24}, stage: 25}},
                {:stock_lost, %{port: 2, kind: :ko, remaining: 3, percent_before: p2}},
                {:stock_lost, %{port: 1, kind: :ko, remaining: 3, percent_before: 27.0}},
-               {:stock_lost, %{port: 1, kind: :sd, remaining: 2, percent_before: 0.0}},
-               {:stock_lost, %{port: 1, kind: :sd, remaining: 1, percent_before: 0.0}},
-               {:stock_lost, %{port: 1, kind: :sd, remaining: 0, percent_before: 0.0}}
+               {:stock_lost, %{port: 1, kind: :sd, remaining: 2, percent_before: sd1}},
+               {:stock_lost, %{port: 1, kind: :sd, remaining: 1, percent_before: sd2}},
+               {:stock_lost, %{port: 1, kind: :sd, remaining: 0, percent_before: sd3}}
              ] = events
 
       assert_in_delta p2, 21.0, 0.001
+      assert Enum.all?([sd1, sd2, sd3], &(&1 == 0.0))
     end
 
     # A semantic edge worth pinning: :game_end fires on the in-game ->
