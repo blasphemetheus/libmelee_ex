@@ -148,14 +148,30 @@ defmodule Melee.MenuHelperTest do
       assert wrote == "RELEASE START\nRELEASE A\n" <> set_main(1.0, 0.5)
     end
 
-    test "presses A when the cursor is over the target character", ctx do
+    test "presses A when over the target AND the game's hover confirms it", ctx do
       {pid, path} = file_controller(ctx)
-      players = %{1 => player(cursor: cursor(-22, 11.5))}
+      # The hover byte (`character`) must read the target: pressing A on
+      # position alone ping-ponged live (portrait hitboxes don't fill
+      # the grid cell — Roy's corner read as LINK).
+      players = %{1 => player(cursor: cursor(-22, 11.5), character: @fox)}
       gamestate = gs(menu_state: @character_select, frame: 1, players: players)
 
       {_state, wrote} = step_frame(MenuHelper.new(), gamestate, pid, path, base_opts())
 
       assert wrote == "RELEASE START\n" <> set_main(0.5, 0.5) <> "PRESS A\n"
+    end
+
+    test "in-band but hover elsewhere: tightens to center instead of pressing A", ctx do
+      {pid, path} = file_controller(ctx)
+      # In wiggleroom of Fox's portrait (-22, 11.5) but the game reads
+      # the hand as hovering nothing (0xFF) — no A press; steer closer.
+      players = %{1 => player(cursor: cursor(-21.0, 12.4), character: 0xFF)}
+      gamestate = gs(menu_state: @character_select, frame: 1, players: players)
+
+      {_state, wrote} = step_frame(MenuHelper.new(), gamestate, pid, path, base_opts())
+
+      refute wrote =~ "PRESS A"
+      assert wrote =~ "SET MAIN"
     end
 
     test "releases all when our port has no player", ctx do

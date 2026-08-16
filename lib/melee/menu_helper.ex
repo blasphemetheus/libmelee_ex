@@ -1354,13 +1354,25 @@ defmodule Melee.MenuHelper do
               Controller.press_button(controller, :b)
               Controller.release_button(controller, :a)
 
-            # Press A to select our character
-            true ->
+            # Press A to select our character — but only once the game's
+            # own hover byte reads the target. The portrait hitboxes do
+            # not fill the whole grid cell: within wiggleroom of Roy at
+            # (21.4, 5.8) the game reported LINK, the portrait a full
+            # row above (found live by the roster sweep), and Python's
+            # blind A press ping-pongs placing and reclaiming the coin
+            # there forever.
+            correct_character ->
               if prev.button.a == false do
                 Controller.press_button(controller, :a)
               else
                 Controller.release_button(controller, :a)
               end
+
+            # In-band but the hover reads another portrait or nothing:
+            # tighten onto the exact center until the game agrees.
+            true ->
+              Controller.release_button(controller, :a)
+              steer_toward(controller, ai_state.cursor, target_x, target_y, 0.4)
           end
         else
           # Move in — straight line to the portrait (steer_toward), not
