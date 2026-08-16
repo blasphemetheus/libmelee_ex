@@ -46,6 +46,25 @@ unless it says otherwise.
   `docs/behavior-testing.md` (capability catalog, semantic edges,
   improvement roadmap) added and wired into ex_doc.
 
+## Addendum 2026-08-16 (third session): the smoke-test sweep
+
+Nine new windowless ExiAI smoke tests (catalog in getting-started.md):
+`dolphin_roster` (25/25 portraits + Sheik + Frozen paths), `dolphin_replay`
+(live game == Slippi's own recording, 74 shines both sides),
+`dolphin_pool` (3 concurrent matches, 3.2s), `dolphin_projectiles`
+(fox lasers live), `dolphin_ics` (Nana 300/300 frames), `dolphin_analog`
+(round-trip is the IDENTITY — Melee's calibration inverts
+fix_analog_stick; deadzone = sent [0.4, 0.6] -> exact neutral),
+`dolphin_4p` (four ports in-game + live Session|>GameEvents pipeline),
+`dolphin_cpu` (slider 1..9 up and 9->3 down), `dolphin_stages`/`dolphin_tech`
+from the prior batch. Three real bugs found by writing them:
+portrait hitboxes don't fill the grid cell (Roy read as LINK;
+select_character now requires hover confirmation before pressing A);
+:costume is Slippi-online-CSS-only (documented; local CSS ignores it);
+and the KO/SD classifier's hitstun_frames_left clause misread misc_as
+union junk as hitstun (action states are now the only signal — the
+fixture's 27% death correctly reclassifies to :sd).
+
 ## Addendum 2026-08-16 (second session): the capability batch
 
 Six queued items, all landed:
