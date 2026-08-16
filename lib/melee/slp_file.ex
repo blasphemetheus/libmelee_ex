@@ -45,7 +45,8 @@ defmodule Melee.SlpFile do
           cursor: non_neg_integer(),
           sizes: %{non_neg_integer() => pos_integer()},
           manual_bookends: boolean(),
-          last_frame: integer() | nil
+          last_frame: integer() | nil,
+          seen: MapSet.t()
         }
 
   defstruct [
@@ -56,7 +57,11 @@ defmodule Melee.SlpFile do
     cursor: 0,
     sizes: %{},
     manual_bookends: false,
-    last_frame: nil
+    last_frame: nil,
+    # {command, port, follower} tuples seen for the frame currently
+    # accumulating (manual bookends only) — a repeat means a rollback
+    # re-simulation of the same frame, which is its own frame boundary.
+    seen: MapSet.new()
   ]
 
   @doc """
@@ -210,21 +215,42 @@ defmodule Melee.SlpFile do
     end
   end
 
-  # On a pre-2.2.0 file, a PRE/POST_FRAME whose frame number is higher
-  # than the one we are accumulating means the previous frame is over.
-  # Complete it BEFORE feeding this event, exactly as libmelee's streamer
-  # synthesizes a `frame_end` message.
+  # On a pre-2.2.0 file, a frame boundary has to be inferred, exactly as
+  # libmelee's streamer synthesizes a `frame_end` message:
+  #
+  #   * a PRE/POST_FRAME with a HIGHER frame number than the one
+  #     accumulating means the previous frame is over;
+  #   * a REPEAT of an already-seen (event, port, follower) for the SAME
+  #     frame — or a LOWER frame number — means a rollback re-simulation
+  #     is starting (observed in the wild: an early-rollback-era
+  #     pre-2.2.0 replay carried frame 6176 twice; the peppi
+  #     differential caught the merge). Completing the frame lets
+  #     `Events.frame_bookend` apply its normal rollback semantics:
+  #     re-simulations are dropped under `skip_rollback_frames: true`
+  #     (the first simulation wins, as live) and emitted under `false`.
+  #
+  # The dedup key includes the follower byte: Ice Climbers emit a second
+  # PRE/POST for the same port every frame (Nana), which must NOT read
+  # as a re-simulation.
   defp maybe_manual_bookend(%__MODULE__{manual_bookends: false} = file, _event),
     do: {:manual, file}
 
-  defp maybe_manual_bookend(file, <<command, frame::big-signed-32, _::binary>>)
+  defp maybe_manual_bookend(file, <<command, frame::big-signed-32, port, rest::binary>>)
        when command in [@pre_frame, @post_frame] do
+    follower =
+      case rest do
+        <<f, _::binary>> -> f
+        _ -> 0
+      end
+
+    key = {command, port, follower}
+
     cond do
       file.last_frame == nil ->
-        {:manual, %{file | last_frame: frame}}
+        {:manual, %{file | last_frame: frame, seen: MapSet.new([key])}}
 
-      frame > file.last_frame ->
-        file = %{file | last_frame: frame}
+      frame > file.last_frame or frame < file.last_frame or MapSet.member?(file.seen, key) ->
+        file = %{file | last_frame: frame, seen: MapSet.new()}
 
         case Events.complete_frame(file.parser) do
           {:frame_complete, gamestate, parser} ->
@@ -233,11 +259,13 @@ defmodule Melee.SlpFile do
              %{file | parser: parser, cursor: file.cursor - event_size(file, command)}}
 
           {_other, parser} ->
-            {:manual, %{file | parser: parser}}
+            # Nothing to emit (or a skipped rollback re-simulation):
+            # keep going, with this event opening the new accumulation.
+            {:manual, %{file | parser: parser, seen: MapSet.new([key])}}
         end
 
       true ->
-        {:manual, %{file | last_frame: frame}}
+        {:manual, %{file | seen: MapSet.put(file.seen, key)}}
     end
   end
 

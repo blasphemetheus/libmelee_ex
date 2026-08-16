@@ -182,6 +182,73 @@ defmodule Melee.SlpFileTest do
 
       <<"{U", 3, "raw[$U#l", byte_size(raw)::big-unsigned-32>> <> raw <> rest
     end
+
+    # Splice extra pre/post events into the raw element after the
+    # events of `after_frame`, fixing up the container length.
+    defp splice_after_frame(
+           <<"{U", 3, "raw[$U#l", len::big-unsigned-32, raw::binary-size(len), rest::binary>>,
+           after_frame,
+           extra
+         ) do
+      # The synthetic frames are fixed-size and consecutive from 1, so
+      # the insertion point is computable: payloads table + game start +
+      # after_frame * (pre + post).
+      sizes = %{0x35 => 4 * 3 + 2, 0x36 => 0x2ED, 0x37 => 0x41, 0x38 => 0x85}
+      cut = sizes[0x35] + sizes[0x36] + after_frame * (sizes[0x37] + sizes[0x38])
+
+      raw =
+        binary_part(raw, 0, cut) <> extra <> binary_part(raw, cut, byte_size(raw) - cut)
+
+      <<"{U", 3, "raw[$U#l", byte_size(raw)::big-unsigned-32>> <> raw <> rest
+    end
+
+    defp pre_post(frame, x, follower \\ 0) do
+      event(0x37, 0x41, %{0x1 => <<frame::big-signed-32>>, 0x5 => <<0>>, 0x6 => <<follower>>}) <>
+        event(0x38, 0x85, %{
+          0x1 => <<frame::big-signed-32>>,
+          0x5 => <<0>>,
+          0x6 => <<follower>>,
+          0x7 => <<0x1>>,
+          0x8 => <<14::big-unsigned-16>>,
+          0xA => <<x * 1.0::big-float-32>>
+        })
+    end
+
+    test "a re-simulated frame is a boundary, with rollback semantics", ctx do
+      # An early-rollback-era pre-2.2.0 replay can carry the same frame
+      # TWICE (observed in the wild: the peppi differential caught frame
+      # 6176 duplicated). A repeat of an already-seen (event, port) for
+      # the same frame must complete the frame, after which the codec's
+      # normal rollback semantics apply.
+      path = write_old_replay(ctx, 8)
+      File.write!(path, splice_after_frame(File.read!(path), 5, pre_post(5, 55.0)))
+
+      # Default: the re-simulation is dropped; the FIRST simulation
+      # wins, exactly as the live bookend path behaves. (The old merge
+      # behavior silently kept the re-simulation's values.)
+      frames = path |> SlpFile.stream!() |> Enum.to_list()
+      assert Enum.map(frames, & &1.frame) == Enum.to_list(1..8)
+      assert Enum.find(frames, &(&1.frame == 5)).players[1].position.x == 5.0
+
+      # skip_rollback_frames: false surfaces both simulations, aligned
+      # with what peppi reports.
+      both = path |> SlpFile.stream!(skip_rollback_frames: false) |> Enum.to_list()
+      assert Enum.map(both, & &1.frame) == [1, 2, 3, 4, 5, 5, 6, 7, 8]
+
+      assert both |> Enum.filter(&(&1.frame == 5)) |> Enum.map(& &1.players[1].position.x) ==
+               [5.0, 55.0]
+    end
+
+    test "an Ice Climbers follower is NOT a re-simulation", ctx do
+      # Nana emits a second pre/post for the same port every frame; the
+      # dedup key includes the follower byte so this never reads as a
+      # frame boundary.
+      path = write_old_replay(ctx, 4)
+      File.write!(path, splice_after_frame(File.read!(path), 2, pre_post(2, 22.0, 1)))
+
+      frames = path |> SlpFile.stream!(skip_rollback_frames: false) |> Enum.to_list()
+      assert Enum.map(frames, & &1.frame) == [1, 2, 3, 4]
+    end
   end
 
   describe "next_frame/1" do
