@@ -200,6 +200,7 @@ export MELEE_DOLPHIN_PATH=...
 | Many games, one emulator (training-loop shape) | `mix test --only dolphin_multigame` | ExiAI headless | ~22s, no window; 3 full games, same Dolphin pid, ~4.7s of menus between games |
 | CSS geometry, ports 2-4 (name-box spacing, tag-list columns, CPU config) | `mix test --only dolphin_css` | ExiAI headless | ~5s, no window; columns at exactly -9.8 / 5.6 / 21.0 |
 | Full roster (25 portraits), Sheik transform, Frozen Stadium paths | `mix test --only dolphin_roster` | ExiAI headless | ~10s, no window; 25/25 locked in, Sheik in-game via the Zelda pick |
+| Replay round-trip: Slippi's recording of our game decodes identically | `mix test --only dolphin_replay` | ExiAI headless | ~8s, no window; 74 shines live == 74 in the written .slp |
 | Dolphin process management | `mix test --only dolphin` (includes all of these) | per test | — |
 | Nametag select, CPU config, full match start (seeded card) | `mix test --only nametag_select` | ExiAI headless | `select: ~5s`, no window, match starts with the EXPH tag and Falco at CPU 9 |
 | Nametag creation from a wiped home (card provisioning + boot prompt) | `mix test --only nametag_create` | netplay (window appears; it ignores headless, and only it shows the boot prompt) | `create: ~10s` and a `.gci` written |
