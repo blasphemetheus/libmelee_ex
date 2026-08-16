@@ -46,6 +46,33 @@ unless it says otherwise.
   `docs/behavior-testing.md` (capability catalog, semantic edges,
   improvement roadmap) added and wired into ex_doc.
 
+## Addendum 2026-08-16 (second session): the capability batch
+
+Six queued items, all landed:
+
+1. **Multishine smoke test** (`--only dolphin_tech`): frame-perfect
+   input proven live — 74 shines / 600 frames at the theoretical
+   8-frame cycle, deterministic. Enemy matters: idle human dummy, not
+   a CPU (a level-1 walked over and broke the loop).
+2. **`Melee.Match` + `Melee.Bot`**: the high-level API. `Match.play/2`
+   = boot-to-match with every coordination gate encoded; `Melee.Bot` =
+   one-callback bots; `--only dolphin_match` plays a full game through
+   the public API alone. `examples/multishine_bot.exs`.
+3. **Savestate spike: dead end** on current builds (no CLI flag on
+   ExiAI/netplay; mainline has `-s` but is windowed-only). Menus, not
+   boot, are the remaining overhead (ExiAI boots in ~0.2s).
+4. **Multi-game** (`--only dolphin_multigame`): 3 games, one Dolphin,
+   ~4.7s of menus between games.
+5. **Stage-select coverage** (`--only dolphin_stages`): all six legal
+   stages live-verified (previously only FD), via `Match.quit/3` — the
+   LRAS quit-out API. Three live-found facts: the quit is Start EDGES
+   with L+R+A held (a chord hold never fires); pause is locked out
+   until frame 0; a paused game emits NO spectator frames, so nil
+   polling steps are normal mid-quit and must consume the frame budget
+   (a frozen pulse counter deadlocked).
+6. **Event streams**: `GameEvents.stream/1` (finish flush built in) +
+   `Session.stream/2` — replay-or-live scoring as one pipeline.
+
 ## Addendum 2026-08-16
 
 - **Peppi differential extended to pre-2.2.0 replays** (exphil

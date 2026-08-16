@@ -20,7 +20,7 @@ unit/golden tested, not separately proven live).
 | Per-frame game snapshot (positions, actions, percent, stocks, shield, hitstun, projectiles) | `Melee.GameState` via `Melee.Console` | live-verified; differential vs peppi: 2,625 replays, ~1.34B field comparisons, zero divergences |
 | Menu-state visibility (scene, submenu, cursors) | `Melee.Events.Menu` + gecko code | live-verified (all menu work depends on it) |
 | Rollback-aware frame delivery (skip or surface rollback frames) | `Melee.Console` | ported + unit-tested (`rollback_test.exs`) |
-| Typed gameplay events (KO vs SD by trajectory, shield breaks, game boundaries) | `Melee.GameEvents` | unit-tested; KO/SD classifier is trajectory-based (hitstun-since-last-safe), not the percent heuristic |
+| Typed gameplay events (KO vs SD by trajectory, shield breaks, game boundaries) | `Melee.GameEvents` | unit-tested; trajectory-based KO/SD classifier, golden-tested on a real replay; `stream/1` composes with `Melee.SlpFile.stream!/2` and `Melee.Session.stream/2` |
 | Replay files through the live decoder, incl. pre-2.2.0 | `Melee.SlpFile` | verified 400/400 old replays; bulk parsing stays peppi's job |
 | Attack/hitbox/frame-data queries | `Melee.FrameData` | ported (framedata.py) |
 
@@ -33,6 +33,10 @@ unit/golden tested, not separately proven live).
 | Full menu navigation: boot screens → CSS → stage select → match | `Melee.MenuHelper` | live-verified end-to-end |
 | Character select on any port, human or CPU, incl. CPU level slider | `Melee.MenuHelper` | live-verified on ports 1-4; the measurements are codified as a rerunnable test (`--only dolphin_css`) |
 | In-game nametag create + select, persisted to a real save | `Melee.MenuHelper` + `memory_card: :folder` | live-verified (`--only dolphin_nametag`) |
+| Match coordination, boot -> in-game in one call | `Melee.Match.play/2` | live-verified (`--only dolphin_match`, `dolphin_multigame`, `dolphin_stages`) |
+| Fast episode end (LRAS quit-out, straight to CSS) | `Melee.Match.quit/3` | live-verified on all six legal stages |
+| Stage select, all six legal stages | `Melee.MenuHelper` | live-verified (`--only dolphin_stages`) — previously only FD |
+| One-callback bots | `Melee.Bot` | live-verified (`--only dolphin_match` plays a full game through it) |
 | Slippi Direct connect-code entry and netplay matchmaking | `Melee.MenuHelper`, `Melee.Dolphin` (user.json) | live-verified both sides (`--only netplay_direct`) |
 | Frozen Stadium toggle | `Melee.MenuHelper` | live-verified (edge-driven) |
 
