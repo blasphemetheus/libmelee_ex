@@ -46,6 +46,61 @@ unless it says otherwise.
   `docs/behavior-testing.md` (capability catalog, semantic edges,
   improvement roadmap) added and wired into ex_doc.
 
+## Addendum 2026-08-17: doubles shipped; rules menu IN FLIGHT
+
+**Doubles is done, three layers deep** (commits through `5287c01`):
+`Melee.Cursor` (steering + settled-press primitives, promoted from
+Probe); `Match.play(teams: true, pN: [team: :blue])` (phased flow:
+coins down -> mode toggle -> color chips -> ready_to_start gate);
+`Bot.run_many/2` (several bots in one match, each with its own
+act/3 + controller; any bot returning `:quit` LRAS-ends the episode);
+`GameState.allies/2`/`enemies/2`. All live-verified in
+`--only dolphin_teams` (2v2s via Match.play, Bot.run, and two bots via
+run_many). Teams mechanics in melee-menus.md "Team Battle". Speed
+facts: windowed = exactly 59.9fps (the "slowness" at match start is
+the game's pre-GO countdown, frames -123..-1); headless ~450fps with
+blocking pipes and the BEAM handshake (~2.2ms/frame) is the ceiling —
+emulation_speed is irrelevant under blocking. The nix
+cargo/rustc/gcc wrapper is NOT needed for anything (plain mix works).
+
+**IN FLIGHT: the rules menu** (nothing committed yet, probes in
+repo tmp/ — rules_probe.exs / rules_windowed.exs (the session scratchpad dies with the session)). Goal: set Team
+Attack (user plays it ON; game defaults OFF), stock count (1-stock =
+~4x RL episode throughput), timer, items. Facts established so far:
+
+- VS Mode menu (menu 5, submenu 2) rows by menu_selection: 0 Melee,
+  1 Tournament Melee, 2 Special Melee, 3 CUSTOM RULES, 4 Name Entry;
+  wraps. List navigation = stick-down EDGES (2 frames tilt, ~12
+  release); Melee list menus act on edges, key-repeat after ~15f.
+- A on row 3 ENTERS Custom Rules: `menu=5, submenu=13` (the
+  custom_rules_submenu enum id!) with menu_selection tracking rows —
+  so rules NAVIGATION is fully observable headless. Row values are
+  presumably NOT in the gamestate; plan was: set values open-loop
+  (left/right edges), verify via GAME_START (stocks/timer are in the
+  game-info block; find the team-attack bit empirically by diffing a
+  written replay's GAME_START bytes with the setting on vs off, then
+  expose it like is_frozen_ps). Screenshots of the rules screen are in
+  repo tmp/rw2_rules*.png — READ THEM FIRST, they were taken but
+  never inspected before the context handoff.
+- **DISCOVERY: the game runs in DEBUG MODE — DBLEVEL: MASTER.** VS
+  menu row 1 ("Tournament Melee") opens Melee's debug menu (raw scene
+  0x0006: DATE FEB 13 2002, VERSUS MODE >, MODE TEAM TEST >, GLOBAL
+  DATA EDIT >, DBLEVEL MASTER). This finally explains the "4-man
+  survival test!" CSS banner (debug-mode label). Why DBLEVEL is
+  MASTER is unexplained (both builds, plain gecko set) — worth
+  understanding; the debug VERSUS MODE submenu is itself a rich match
+  config surface (and possibly a way to turn debug off).
+
+Working style that works: headless for verification/regression,
+WINDOWED for UI discovery with the user watching — they guide in real
+time and repeatedly cracked what blind probing could not (the token
+rule, the toggle location, "you're too far left"). Ask before
+windows; warn what will appear.
+
+Next after rules: Hex publish; tech-skill primitives (Melee.Tech);
+richer GameEvents (combos/openings); EXI direct channel exploration;
+real-hardware support (the one Python-libmelee parity gap).
+
 ## Addendum 2026-08-16 (third session): the smoke-test sweep
 
 Nine new windowless ExiAI smoke tests (catalog in getting-started.md):
