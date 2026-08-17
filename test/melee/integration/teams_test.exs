@@ -144,6 +144,93 @@ defmodule Melee.Integration.TeamsTest do
     end
   end
 
+  defmodule FoxLead do
+    use Melee.Bot
+
+    # Dashes right; quits the episode past frame 240, recording what
+    # allies/enemies looked like from its seat.
+    @impl true
+    def act(me, gamestate, controller) do
+      if gamestate.frame > 240 do
+        Agent.update(:two_bot_probe, fn probe ->
+          Map.put(probe, :fox, %{
+            allies: Melee.GameState.allies(gamestate, 1) |> Enum.map(&elem(&1, 0)),
+            enemies: Melee.GameState.enemies(gamestate, 1) |> Enum.map(&elem(&1, 0)),
+            x: me.position.x
+          })
+        end)
+
+        :quit
+      else
+        Melee.Controller.tilt_analog(controller, :main, 1.0, 0.5)
+      end
+    end
+  end
+
+  defmodule FalcoAlly do
+    use Melee.Bot
+
+    # Dashes left, recording its own travel so the test can prove BOTH
+    # bots' inputs reached the game.
+    @impl true
+    def act(me, gamestate, controller) do
+      if gamestate.frame > 240 do
+        Agent.update(:two_bot_probe, &Map.put(&1, :falco_x, me.position.x))
+      else
+        Melee.Controller.tilt_analog(controller, :main, 0.0, 0.5)
+      end
+    end
+  end
+
+  test "run_many: two bots share one doubles match", ctx do
+    if ctx[:skip] do
+      IO.puts("\n[dolphin] skipped: #{ctx.skip}")
+    else
+      File.rm_rf!(@home)
+      windowed? = System.get_env("MELEE_WINDOWED") == "1"
+      {:ok, _} = Agent.start_link(fn -> %{} end, name: :two_bot_probe)
+
+      result =
+        Melee.Bot.run_many(
+          [
+            {FoxLead, port: 1, character: :fox, team: :red},
+            {FalcoAlly, port: 2, character: :falco, team: :red}
+          ],
+          teams: true,
+          p3: [character: :marth, team: :blue],
+          p4: [character: :peach, team: :blue],
+          stage: :final_destination,
+          path: ctx.path,
+          iso_path: ctx.iso,
+          home: @home,
+          slippi_port: 51_581,
+          headless: not windowed?,
+          gfx_backend: if(windowed?, do: "OGL", else: "Null"),
+          console: [polling_mode: true, polling_timeout: 100]
+        )
+
+      assert {:ok, %{frames: frames, last: last}} = result
+      assert frames > 240
+      refute Melee.GameState.in_game?(last)
+
+      probe = Agent.get(:two_bot_probe, & &1)
+
+      # Team-aware helpers, seen from inside a live doubles match.
+      assert probe.fox.allies == [2]
+      assert probe.fox.enemies == [3, 4]
+
+      # Both bots' inputs reached the game: fox went right of spawn,
+      # falco left of its spawn (P2 spawns at -20 on FD).
+      assert probe.fox.x > -50
+      assert probe.falco_x < -25
+
+      IO.puts(
+        "\n[dolphin] run_many doubles: quit at #{frames}, fox_x=#{Float.round(probe.fox.x, 1)} " <>
+          "falco_x=#{Float.round(probe.falco_x, 1)}"
+      )
+    end
+  end
+
   defp safe_stop(session) do
     Session.stop(session)
   catch

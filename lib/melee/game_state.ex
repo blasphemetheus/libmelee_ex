@@ -146,6 +146,65 @@ defmodule Melee.GameState do
     do: Map.get(players, port)
 
   @doc """
+  The ports fighting alongside `port`, as `{port, player}` pairs sorted
+  by port — teammates in a Team Battle, `[]` otherwise (in singles and
+  free-for-alls nobody is on your side).
+
+  ## Examples
+
+      iex> alias Melee.{GameState, PlayerState}
+      iex> gs = %GameState{is_teams: true, players: %{
+      ...>   1 => %PlayerState{team_id: 0}, 2 => %PlayerState{team_id: 0},
+      ...>   3 => %PlayerState{team_id: 1}, 4 => %PlayerState{team_id: 1}}}
+      iex> GameState.allies(gs, 1) |> Enum.map(&elem(&1, 0))
+      [2]
+      iex> GameState.allies(%{gs | is_teams: false}, 1)
+      []
+  """
+  @spec allies(t(), port_number()) :: [{port_number(), PlayerState.t()}]
+  def allies(%__MODULE__{is_teams: false}, _port), do: []
+
+  def allies(%__MODULE__{players: players} = gamestate, port) do
+    case player(gamestate, port) do
+      nil ->
+        []
+
+      %{team_id: team} ->
+        for {p, pl} <- Enum.sort_by(players, &elem(&1, 0)),
+            p != port,
+            pl != nil,
+            pl.team_id == team,
+            do: {p, pl}
+    end
+  end
+
+  @doc """
+  The ports fighting against `port`, as `{port, player}` pairs sorted
+  by port — the other teams in a Team Battle, everyone else otherwise.
+
+  ## Examples
+
+      iex> alias Melee.{GameState, PlayerState}
+      iex> gs = %GameState{is_teams: true, players: %{
+      ...>   1 => %PlayerState{team_id: 0}, 2 => %PlayerState{team_id: 0},
+      ...>   3 => %PlayerState{team_id: 1}, 4 => %PlayerState{team_id: 1}}}
+      iex> GameState.enemies(gs, 1) |> Enum.map(&elem(&1, 0))
+      [3, 4]
+      iex> GameState.enemies(%{gs | is_teams: false}, 1) |> Enum.map(&elem(&1, 0))
+      [2, 3, 4]
+  """
+  @spec enemies(t(), port_number()) :: [{port_number(), PlayerState.t()}]
+  def enemies(%__MODULE__{players: players, is_teams: teams?} = gamestate, port) do
+    my_team = if teams?, do: (player(gamestate, port) || %{team_id: nil}).team_id
+
+    for {p, pl} <- Enum.sort_by(players, &elem(&1, 0)),
+        p != port,
+        pl != nil,
+        not teams? or pl.team_id != my_team,
+        do: {p, pl}
+  end
+
+  @doc """
   Autodiscover which port the given character/costume pair is on.
 
   Slippi Online assigns a random port when playing online. Returns the

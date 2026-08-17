@@ -36,7 +36,7 @@ unit/golden tested, not separately proven live).
 | Match coordination, boot -> in-game in one call | `Melee.Match.play/2` | live-verified (`--only dolphin_match`, `dolphin_multigame`, `dolphin_stages`) |
 | Fast episode end (LRAS quit-out, straight to CSS) | `Melee.Match.quit/3` | live-verified on all six legal stages |
 | Stage select, all six legal stages | `Melee.MenuHelper` | live-verified (`--only dolphin_stages`) — previously only FD |
-| One-callback bots | `Melee.Bot` | live-verified (`--only dolphin_match` plays a full game through it) |
+| One-callback bots, incl. several per match | `Melee.Bot` `run/2` + `run_many/2`, `:quit` episode control | live-verified (`--only dolphin_match`, `dolphin_teams`) |
 | Slippi Direct connect-code entry and netplay matchmaking | `Melee.MenuHelper`, `Melee.Dolphin` (user.json) | live-verified both sides (`--only netplay_direct`) |
 | Frozen Stadium toggle | `Melee.MenuHelper` | live-verified both directions via `is_frozen_ps` |
 | Doubles: Team Battle 2v2 from boot | `Melee.Match.play/2` with `teams: true` + per-port `team:` (`Melee.Cursor` primitives) | live-verified (`--only dolphin_teams`) |

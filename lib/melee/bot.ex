@@ -27,9 +27,14 @@ defmodule Melee.Bot do
   `c:act/3` once per in-game frame until the game ends. The `me`
   argument is the bot's own `Melee.PlayerState` for the frame.
 
+  Several bots can share one match — teammates in doubles, or a full
+  bot free-for-all — via `run_many/2`, which fans the same frame out
+  to each bot with its own controller.
+
   `act` is called with the controller already flushed for the frame —
   set the inputs you want and return; do not sleep, and remember the
-  controller latches (not pressing is not releasing).
+  controller latches (not pressing is not releasing). In a Team Battle,
+  `Melee.GameState.allies/2` and `enemies/2` split the field for you.
   """
 
   alias Melee.{GameState, Match, Session}
@@ -38,7 +43,8 @@ defmodule Melee.Bot do
   Decide the bot's inputs for one frame.
 
   Called once per in-game frame with the bot's own player state, the
-  full gamestate, and the bot's controller.
+  full gamestate, and the bot's controller. Return `:quit` to end the
+  episode with the LRAS quit-out; any other return value is ignored.
   """
   @callback act(
               me :: Melee.PlayerState.t(),
@@ -60,71 +66,105 @@ defmodule Melee.Bot do
     * `:character` (atom or id, required), `:stage` (required)
     * `:port` — the bot's GC port, default `1`
     * `:nametag` / `:nametag_mode` — see `Melee.MenuHelper`
+    * `:team` — the bot's Team Battle color (with `teams: true`)
+    * `:teams` — Team Battle (see `Melee.Match` "Doubles")
     * `:opponent` — a `Melee.Match` port spec for the other panel
       (default `[character: :falco]`, an idle human dummy; add
       `cpu_level:` for a CPU)
     * `:opponent_port` — default `2`
+    * `:p1`..`:p4` — explicit `Melee.Match` port specs for the other
+      panels; when any are given they replace the `:opponent` sugar
     * `:match_timeout_frames` — menu budget, default `20_000`
-
-  ## Doubles
-
-  Pass `teams: true`, the bot's own `:team`, and explicit `p2:`/`p3:`/
-  `p4:` port specs (which replace the `:opponent` sugar):
-
-      Melee.Bot.run(MyBot,
-        teams: true,
-        character: :fox,
-        team: :red,
-        p2: [character: :falco, cpu_level: 3, team: :red],
-        p3: [character: :marth, cpu_level: 3, team: :blue],
-        p4: [character: :peach, cpu_level: 3, team: :blue],
-        stage: :battlefield,
-        path: ..., iso_path: ..., home: ...
-      )
-
-  The bot still controls exactly one port; teammates and opponents are
-  CPUs or idle humans. See `Melee.Match` "Doubles" for the mechanics
-  and the fresh-session caveat.
-
-  ## Ending an episode early
-
-  `c:act/3` may return `:quit`: the game is ended with the LRAS
-  quit-out (`Melee.Match.quit/3` — note the pre-GO pause lockout means
-  a quit in the first ~2s of a match lands at frame 0). Any other
-  return value is ignored.
 
   Everything else is passed to `Melee.Session.start_link/1` (`:path`
   and `:iso_path` at minimum; `blocking_input: true` is defaulted —
   frame-accurate bots need it, and the ExiAI build requires it for
   in-game input at all).
 
-  Returns `{:ok, %{frames: n, last: gamestate}}` after the game ends,
-  or `{:error, reason}`.
+  Returns `{:ok, %{frames: n, last: gamestate}}` after the game ends
+  (or after any bot returns `:quit`), or `{:error, reason}`.
   """
   @spec run(module(), keyword()) ::
           {:ok, %{frames: non_neg_integer(), last: GameState.t()}} | {:error, term()}
   def run(bot, opts) do
-    {bot_opts, session_opts} =
-      Keyword.split(opts, [
-        :character,
-        :stage,
-        :port,
-        :nametag,
-        :nametag_mode,
-        :team,
-        :teams,
-        :opponent,
-        :opponent_port,
-        :p1,
-        :p2,
-        :p3,
-        :p4,
-        :match_timeout_frames
-      ])
-
+    {bot_opts, rest} = Keyword.split(opts, [:character, :port, :nametag, :nametag_mode, :team])
     port = Keyword.get(bot_opts, :port, 1)
-    port_specs = port_specs(bot_opts, port)
-    ports = port_specs |> Enum.map(fn {key, _} -> port_number(key) end) |> Enum.sort()
+
+    {sugar, rest} = Keyword.split(rest, [:opponent, :opponent_port])
+
+    rest =
+      if Enum.any?([:p1, :p2, :p3, :p4], &Keyword.has_key?(rest, &1)) do
+        rest
+      else
+        opp_port = Keyword.get(sugar, :opponent_port, 2)
+        opponent = Keyword.get(sugar, :opponent, character: :falco)
+        Keyword.put(rest, :"p#{opp_port}", opponent)
+      end
+
+    run_many([{bot, Keyword.put(bot_opts, :port, port)}], rest)
+  end
+
+  @doc """
+  Run SEVERAL bots in one match — doubles teammates, or a full bot
+  free-for-all.
+
+  `bots` is a list of `{module, spec}`: each spec needs `:port` and
+  `:character`, plus any `Melee.Match` port-spec keys (`:team`,
+  `:nametag`, ...). Non-bot panels come from `:p1`..`:p4` specs in
+  `opts` (CPUs or idle humans); `opts` otherwise matches `run/2`
+  (`:teams`, `:stage`, `:match_timeout_frames`, session options).
+
+      Melee.Bot.run_many(
+        [
+          {FoxBot, port: 1, character: :fox, team: :red},
+          {AllyBot, port: 2, character: :falco, team: :red}
+        ],
+        teams: true,
+        p3: [character: :marth, cpu_level: 3, team: :blue],
+        p4: [character: :peach, cpu_level: 3, team: :blue],
+        stage: :battlefield,
+        path: ..., iso_path: ..., home: ...
+      )
+
+  Each in-game frame every bot's `c:act/3` runs with its own player
+  state and controller. Any bot returning `:quit` ends the episode for
+  everyone.
+  """
+  @spec run_many([{module(), keyword()}], keyword()) ::
+          {:ok, %{frames: non_neg_integer(), last: GameState.t()}} | {:error, term()}
+  def run_many(bots, opts) when is_list(bots) and bots != [] do
+    {match_extra, rest} = Keyword.split(opts, [:teams, :p1, :p2, :p3, :p4])
+    {control, session_opts} = Keyword.split(rest, [:stage, :match_timeout_frames])
+
+    bot_ports =
+      for {_mod, spec} <- bots do
+        Keyword.fetch!(spec, :port)
+      end
+
+    if Enum.uniq(bot_ports) != bot_ports do
+      raise ArgumentError, "two bots share a port: #{inspect(bot_ports)}"
+    end
+
+    bot_specs =
+      for {_mod, spec} <- bots do
+        port = Keyword.fetch!(spec, :port)
+        {:"p#{port}", Keyword.drop(spec, [:port])}
+      end
+
+    other_specs =
+      for key <- [:p1, :p2, :p3, :p4], spec = Keyword.get(match_extra, key) do
+        port = port_number(key)
+
+        if port in bot_ports do
+          raise ArgumentError,
+                "#{key} collides with a bot's port; configure that bot in the bots list"
+        end
+
+        {key, spec}
+      end
+
+    ports =
+      (bot_ports ++ Enum.map(other_specs, fn {key, _} -> port_number(key) end)) |> Enum.sort()
 
     session_opts =
       session_opts
@@ -134,16 +174,22 @@ defmodule Melee.Bot do
     with {:ok, session} <- Session.start_link(session_opts) do
       try do
         match_opts =
-          port_specs ++
+          bot_specs ++
+            other_specs ++
             [
-              {:teams, Keyword.get(bot_opts, :teams, false)},
-              {:stage, Keyword.fetch!(bot_opts, :stage)},
-              {:timeout_frames, Keyword.get(bot_opts, :match_timeout_frames, 20_000)}
+              {:teams, Keyword.get(match_extra, :teams, false)},
+              {:stage, Keyword.fetch!(control, :stage)},
+              {:timeout_frames, Keyword.get(control, :match_timeout_frames, 20_000)}
             ]
 
         with {:ok, first} <- Match.play(session, match_opts) do
-          controller = Session.controller(session, port)
-          game_loop(bot, session, port, controller, first, 0)
+          runners =
+            for {mod, spec} <- bots do
+              port = Keyword.fetch!(spec, :port)
+              {mod, port, Session.controller(session, port)}
+            end
+
+          game_loop(runners, session, first, 0)
         end
       after
         Session.stop(session)
@@ -151,57 +197,33 @@ defmodule Melee.Bot do
     end
   end
 
-  # The bot's own spec first (it is the Match leader), then explicit
-  # p1..p4 specs, then — only when no explicit specs were given — the
-  # 1v1 :opponent sugar.
-  defp port_specs(bot_opts, port) do
-    bot_key = :"p#{port}"
-    bot_spec = Keyword.take(bot_opts, [:character, :nametag, :nametag_mode, :team])
-
-    explicit =
-      for key <- [:p1, :p2, :p3, :p4], spec = Keyword.get(bot_opts, key) do
-        if key == bot_key do
-          raise ArgumentError,
-                "#{key} collides with the bot's own port; configure the bot via " <>
-                  ":character/:team, not a port spec"
-        end
-
-        {key, spec}
-      end
-
-    others =
-      if explicit == [] do
-        opp_port = Keyword.get(bot_opts, :opponent_port, 2)
-        [{:"p#{opp_port}", Keyword.get(bot_opts, :opponent, character: :falco)}]
-      else
-        explicit
-      end
-
-    [{bot_key, bot_spec} | others]
-  end
-
   defp port_number(key), do: key |> Atom.to_string() |> String.last() |> String.to_integer()
 
-  defp game_loop(bot, session, port, controller, gamestate, frames) do
+  defp game_loop(runners, session, gamestate, frames) do
     if GameState.in_game?(gamestate) do
-      decision =
-        case gamestate.players[port] do
-          nil -> :cont
-          me -> bot.act(me, gamestate, controller)
+      quit? =
+        Enum.reduce(runners, false, fn {mod, port, controller}, quit? ->
+          decision =
+            case gamestate.players[port] do
+              nil -> :cont
+              me -> mod.act(me, gamestate, controller)
+            end
+
+          quit? or decision == :quit
+        end)
+
+      if quit? do
+        {_mod, _port, controller} = hd(runners)
+
+        with {:ok, last} <- Match.quit(session, controller) do
+          {:ok, %{frames: frames, last: last}}
         end
-
-      case decision do
-        :quit ->
-          with {:ok, last} <- Match.quit(session, controller) do
-            {:ok, %{frames: frames, last: last}}
-          end
-
-        _ ->
-          case Session.step(session) do
-            {:ok, next} -> game_loop(bot, session, port, controller, next, frames + 1)
-            nil -> game_loop(bot, session, port, controller, gamestate, frames)
-            {:error, reason} -> {:error, reason}
-          end
+      else
+        case Session.step(session) do
+          {:ok, next} -> game_loop(runners, session, next, frames + 1)
+          nil -> game_loop(runners, session, gamestate, frames)
+          {:error, reason} -> {:error, reason}
+        end
       end
     else
       {:ok, %{frames: frames, last: gamestate}}
