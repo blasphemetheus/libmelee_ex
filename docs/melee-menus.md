@@ -246,6 +246,36 @@ re-picks the character name, NAME ENTRY opens the keyboard. Pressing A on
 the name box again toggles the list shut, which is a usable "start over"
 if a press seems to have missed.
 
+## Team Battle (doubles)
+
+Measured 2026-08-17, windowed discovery with a human spotter, then
+verified headless on both builds (`--only dolphin_teams` is the
+rerunnable form). Nothing about teams is visible in the menu events —
+the readbacks are `ready_to_start` at the CSS and
+`is_teams`/`team_id` at GAME_START.
+
+| Target | Coordinates | Notes |
+| --- | --- | --- |
+| Mode toggle (MELEE / TEAM BATTLE text) | `(-29.7, 24.2)` | one A per flip; misses at `(-32.7, 24.8)` and right of `(-27.3, 23.7)` |
+| Team color chip | `(-25.7 + 15.82*(N-1), -1.9)` | right of the HMN tab; cycles RED -> BLUE -> GREEN per press; `(-27.0, -1.3)` misses, `(-25.7, -1.9)` hits |
+
+Rules that cost the discovery session several rounds:
+
+- **A held token cannot press UI buttons.** The hand starts every CSS
+  visit carrying its token, and A with a token held tries to PLACE it.
+  Put the token down first (pick a character, wait for `coin_down` —
+  hover is not enough) before pressing the mode toggle or a chip.
+- **A press straight after arriving is swallowed.** Settle the hand
+  (~60 frames) between arriving at a button and pressing A; unsettled
+  presses were eaten with nothing observable to show for it.
+- **Every port defaults to RED**, so a fresh Team Battle cannot start:
+  `ready_to_start` stays false until the colors form >= 2 teams —
+  which makes it the headless "teams are valid" signal.
+- The toggle and chips have **no CSS readback at all**; the mode
+  persists across matches in the session like the frozen-stadium flag.
+  Verify after the fact via `gamestate.is_teams` and per-player
+  `team_id` (0 red, 1 blue, 2 green).
+
 ## The name-entry keyboard
 
 The same screen `enter_direct_code/4` drives: `submenu == 18`,

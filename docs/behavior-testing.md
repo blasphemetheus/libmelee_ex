@@ -38,7 +38,8 @@ unit/golden tested, not separately proven live).
 | Stage select, all six legal stages | `Melee.MenuHelper` | live-verified (`--only dolphin_stages`) — previously only FD |
 | One-callback bots | `Melee.Bot` | live-verified (`--only dolphin_match` plays a full game through it) |
 | Slippi Direct connect-code entry and netplay matchmaking | `Melee.MenuHelper`, `Melee.Dolphin` (user.json) | live-verified both sides (`--only netplay_direct`) |
-| Frozen Stadium toggle | `Melee.MenuHelper` | live-verified (edge-driven) |
+| Frozen Stadium toggle | `Melee.MenuHelper` | live-verified both directions via `is_frozen_ps` |
+| Doubles: Team Battle toggle + team colors, 2v2 from boot | measured coordinates (see melee-menus.md "Team Battle") | live-verified (`--only dolphin_teams`); not yet a Match.play option |
 
 ### Running the emulator
 
