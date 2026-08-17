@@ -39,7 +39,7 @@ unit/golden tested, not separately proven live).
 | One-callback bots | `Melee.Bot` | live-verified (`--only dolphin_match` plays a full game through it) |
 | Slippi Direct connect-code entry and netplay matchmaking | `Melee.MenuHelper`, `Melee.Dolphin` (user.json) | live-verified both sides (`--only netplay_direct`) |
 | Frozen Stadium toggle | `Melee.MenuHelper` | live-verified both directions via `is_frozen_ps` |
-| Doubles: Team Battle toggle + team colors, 2v2 from boot | measured coordinates (see melee-menus.md "Team Battle") | live-verified (`--only dolphin_teams`); not yet a Match.play option |
+| Doubles: Team Battle 2v2 from boot | `Melee.Match.play/2` with `teams: true` + per-port `team:` (`Melee.Cursor` primitives) | live-verified (`--only dolphin_teams`) |
 
 ### Running the emulator
 

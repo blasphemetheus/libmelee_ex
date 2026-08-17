@@ -183,6 +183,30 @@ defmodule Melee.Enums.ControllerStatus do
   )
 end
 
+defmodule Melee.Enums.Team do
+  @moduledoc """
+  Team Battle colors, as GAME_START's per-player `team_id` reports them.
+
+  The ids double as the number of A-presses a team-color chip needs
+  from the RED default (the CSS cycle is red -> blue -> green).
+
+  ## Examples
+
+      iex> Melee.Enums.Team.to_id(:blue)
+      1
+
+      iex> Melee.Enums.Team.from_id(2)
+      :green
+  """
+  require Melee.Enums.Builder
+
+  Melee.Enums.Builder.int_enum(
+    red: 0,
+    blue: 1,
+    green: 2
+  )
+end
+
 defmodule Melee.Enums.ControllerType do
   @moduledoc """
   Types a controller can be in the Dolphin config.

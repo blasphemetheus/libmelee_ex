@@ -64,5 +64,24 @@ defmodule Melee.MatchTest do
         Match.play(self(), stage: :final_destination)
       end
     end
+
+    test "a :team without teams: true raises" do
+      assert_raise ArgumentError, ~r/:team but the match is not teams/, fn ->
+        Match.play(self(),
+          p1: [character: :fox, team: :blue],
+          stage: :final_destination
+        )
+      end
+    end
+
+    test "an unknown team color raises" do
+      assert_raise ArgumentError, ~r/team must be/, fn ->
+        Match.play(self(),
+          teams: true,
+          p1: [character: :fox, team: :yellow],
+          stage: :final_destination
+        )
+      end
+    end
   end
 end

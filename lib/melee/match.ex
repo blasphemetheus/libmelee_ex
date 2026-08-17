@@ -33,11 +33,37 @@ defmodule Melee.Match do
   first port listed is the LEADER: it presses START and owns the
   nametag. Every port in the spec must be in the session's `:ports`.
 
+  ## Doubles
+
+  Pass `teams: true` and per-port `team:` colors for a Team Battle:
+
+      Melee.Match.play(session,
+        teams: true,
+        p1: [character: :fox],
+        p2: [character: :falco],
+        p3: [character: :marth, team: :blue],
+        p4: [character: :peach, team: :blue],
+        stage: :battlefield
+      )
+
+  The flow encodes the measured mechanics (docs/melee-menus.md "Team
+  Battle"): all picks land first (coins DOWN — a held token cannot
+  press UI), the leader's empty hand toggles the mode, each port taps
+  its color chip the counted number of times (`:red` default -> 0,
+  `:blue` 1, `:green` 2), and `ready_to_start` gates the start — an
+  all-one-team spec fails with `{:error, :teams_never_ready}` instead
+  of hanging.
+
+  CAVEAT: the mode and colors PERSIST across matches in a Dolphin
+  session and have no CSS readback, so teams plays are deterministic
+  from a FRESH session; verify after the fact with `gamestate.is_teams`
+  and per-player `team_id`.
+
   Returns `{:ok, gamestate}` with the first in-game frame — hand the
   loop to your bot from there (or use `Melee.Bot`, which wraps this).
   """
 
-  alias Melee.{Enums, GameState, MenuHelper, Session}
+  alias Melee.{Cursor, Enums, GameState, MenuHelper, Session}
 
   @controller_cpu Enums.ControllerStatus.to_id(:controller_cpu)
 
@@ -46,13 +72,15 @@ defmodule Melee.Match do
           | {:cpu_level, 1..9}
           | {:nametag, String.t()}
           | {:nametag_mode, :create | :select}
+          | {:team, :red | :blue | :green}
         ]
 
   @doc """
   Drive the session's menus until a match is running.
 
   Options: `:p1`..`:p4` port specs (at least one), `:stage` (atom or
-  id, required), `:timeout_frames` (default `20_000`).
+  id, required), `:teams` (default `false` — see "Doubles"),
+  `:timeout_frames` (default `20_000`).
 
   Returns `{:ok, gamestate}` (first in-game frame),
   `{:error, {:timeout, gamestate}}` if the match never starts, or
@@ -60,14 +88,22 @@ defmodule Melee.Match do
   """
   @spec play(GenServer.server(), keyword()) ::
           {:ok, GameState.t()} | {:error, term()}
+  # Team Battle coordinates, measured live 2026-08-17 (see
+  # docs/melee-menus.md "Team Battle").
+  @teams_toggle {-29.7, 24.2}
+  @team_chip_x -25.7
+  @team_chip_y -1.9
+  @panel_spacing 15.82
+
   def play(session, opts) do
     stage = resolve!(Enums.Stage, Keyword.fetch!(opts, :stage))
     timeout_frames = Keyword.get(opts, :timeout_frames, 20_000)
+    teams? = Keyword.get(opts, :teams, false)
 
     specs =
       for {key, gc_port} <- [p1: 1, p2: 2, p3: 3, p4: 4],
           spec = Keyword.get(opts, key),
-          do: {gc_port, normalize_spec(spec, gc_port, stage)}
+          do: {gc_port, normalize_spec(spec, gc_port, stage, teams?)}
 
     if specs == [], do: raise(ArgumentError, "Melee.Match.play/2 needs at least one port spec")
 
@@ -76,7 +112,110 @@ defmodule Melee.Match do
 
     helpers = Map.new(specs, fn {gc_port, _} -> {gc_port, MenuHelper.new()} end)
 
-    loop(session, specs, controllers, helpers, timeout_frames)
+    if teams? do
+      play_teams(session, specs, controllers, helpers, timeout_frames)
+    else
+      loop(session, specs, controllers, helpers, timeout_frames)
+    end
+  end
+
+  # The Team Battle flow, phased: every cross-hand action needs an
+  # EMPTY hand (a held token gets placed instead of pressing) and a
+  # settled press, so the picks must fully land (coins DOWN, not just
+  # hovered) before the mode toggle and the color chips are touched.
+  defp play_teams(session, [{leader, _} | _] = specs, controllers, helpers, timeout_frames) do
+    with {:ok, helpers, _gs} <-
+           drive_until(
+             session,
+             specs,
+             controllers,
+             helpers,
+             fn gs -> Enum.all?(specs, &coin_placed?(gs, &1)) end,
+             timeout_frames,
+             :teams_picks_never_landed
+           ),
+         {tx, ty} = @teams_toggle,
+         {:ok, _} <- Cursor.goto(session, controllers[leader], leader, tx, ty),
+         {:ok, _} <- Cursor.settled_tap(session, controllers[leader], :a),
+         :ok <- set_team_colors(session, specs, controllers),
+         # All ports default RED, so ready_to_start doubles as the
+         # "teams are valid" signal — if the asked-for colors cannot
+         # form two teams, this times out rather than hanging later.
+         {:ok, helpers, _gs} <-
+           drive_until(
+             session,
+             specs,
+             controllers,
+             helpers,
+             & &1.ready_to_start,
+             timeout_frames,
+             :teams_never_ready
+           ) do
+      loop(session, specs, controllers, helpers, timeout_frames)
+    end
+  end
+
+  defp coin_placed?(gamestate, {port, spec}) do
+    case Map.get(gamestate.players || %{}, port) do
+      nil ->
+        false
+
+      player ->
+        character_ok? = player.character == Keyword.fetch!(spec, :character)
+
+        case Keyword.get(spec, :cpu_level) do
+          nil -> character_ok? and player.coin_down
+          level -> character_ok? and player.cpu_level == level
+        end
+    end
+  end
+
+  defp set_team_colors(session, specs, controllers) do
+    Enum.reduce_while(specs, :ok, fn {port, spec}, :ok ->
+      taps = spec |> Keyword.get(:team, :red) |> Enums.Team.to_id()
+
+      with true <- taps > 0,
+           x = @team_chip_x + @panel_spacing * (port - 1),
+           {:ok, _} <- Cursor.goto(session, controllers[port], port, x, @team_chip_y),
+           :ok <- tap_chip(session, controllers[port], taps) do
+        {:cont, :ok}
+      else
+        false -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, {:team_color, port, reason}}}
+      end
+    end)
+  end
+
+  defp tap_chip(session, controller, taps) do
+    Enum.reduce_while(1..taps, :ok, fn _i, :ok ->
+      case Cursor.settled_tap(session, controller, :a) do
+        {:ok, _} -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  # Drive the menu helpers (autostart withheld) until `done?` holds on
+  # the gamestate.
+  defp drive_until(_session, _specs, _controllers, _helpers, _done?, 0, why),
+    do: {:error, why}
+
+  defp drive_until(session, specs, controllers, helpers, done?, frames_left, why) do
+    case Session.step(session) do
+      {:ok, gamestate} ->
+        if done?.(gamestate) do
+          {:ok, helpers, gamestate}
+        else
+          helpers = drive_ports(gamestate, specs, controllers, helpers, false)
+          drive_until(session, specs, controllers, helpers, done?, frames_left - 1, why)
+        end
+
+      nil ->
+        drive_until(session, specs, controllers, helpers, done?, frames_left, why)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
   defp loop(_session, _specs, _controllers, _helpers, 0), do: {:error, :timeout}
@@ -87,7 +226,7 @@ defmodule Melee.Match do
         if GameState.in_game?(gamestate) do
           {:ok, gamestate}
         else
-          helpers = drive_ports(gamestate, specs, controllers, helpers)
+          helpers = drive_ports(gamestate, specs, controllers, helpers, true)
           loop(session, specs, controllers, helpers, frames_left - 1)
         end
 
@@ -101,13 +240,13 @@ defmodule Melee.Match do
     end
   end
 
-  defp drive_ports(gamestate, [{leader, _} | _] = specs, controllers, helpers) do
+  defp drive_ports(gamestate, [{leader, _} | _] = specs, controllers, helpers, autostart?) do
     others = for {gc_port, spec} <- specs, gc_port != leader, do: spec
 
     Map.new(specs, fn {gc_port, spec} ->
       helper_opts =
         if gc_port == leader,
-          do: leader_opts(spec, gamestate, others),
+          do: leader_opts(spec, gamestate, others, autostart?),
           else: spec
 
       helper = MenuHelper.step(helpers[gc_port], gamestate, controllers[gc_port], helper_opts)
@@ -118,13 +257,15 @@ defmodule Melee.Match do
   # The leader's cross-port gates. Both only bite AT the CSS — past it
   # the gamestate stops reporting the fields the gates read, and
   # MenuHelper needs :autostart to navigate the stage select at all.
-  defp leader_opts(spec, gamestate, others) do
+  # `autostart?` false (the teams setup phases) withholds START
+  # entirely while still letting the picks proceed.
+  defp leader_opts(spec, gamestate, others, autostart?) do
     others_ready? =
       not at_character_select?(gamestate) or
         Enum.all?(others, &port_configured?(gamestate, &1))
 
     spec
-    |> Keyword.put(:autostart, others_ready?)
+    |> Keyword.put(:autostart, autostart? and others_ready?)
     |> then(fn spec ->
       if others_ready?, do: spec, else: Keyword.drop(spec, [:nametag, :nametag_mode])
     end)
@@ -226,7 +367,18 @@ defmodule Melee.Match do
     ]
   end
 
-  defp normalize_spec(spec, gc_port, stage) do
+  defp normalize_spec(spec, gc_port, stage, teams?) do
+    if not teams? and Keyword.has_key?(spec, :team) do
+      raise ArgumentError,
+            "p#{gc_port} has a :team but the match is not teams: true"
+    end
+
+    team = Keyword.get(spec, :team, :red)
+
+    if team not in [:red, :blue, :green] do
+      raise ArgumentError, "p#{gc_port} team must be :red, :blue or :green, got #{inspect(team)}"
+    end
+
     spec
     |> Keyword.put(:port, gc_port)
     |> Keyword.put(:stage, stage)
