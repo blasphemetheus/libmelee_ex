@@ -73,10 +73,13 @@ Melee.Bot.run(HoldRight,
 ```
 
 `act/3` runs once per in-game frame; `run/2` returns when the game
-ends. `examples/multishine_bot.exs` is the same shape doing
-frame-perfect multishines. `Melee.Match.play/2` is the middle layer —
-menus-to-match on a session you manage yourself, with every cross-port
-coordination gate (autostart, nametag sequencing) encoded.
+ends, or when `act` returns `:quit` (the LRAS quit-out — the fast
+episode ender). `examples/multishine_bot.exs` is the same shape doing
+frame-perfect multishines. For doubles, pass `teams: true`, the bot's
+`team:`, and explicit `p2:`/`p3:`/`p4:` port specs. `Melee.Match.play/2`
+is the middle layer — menus-to-match on a session you manage yourself,
+with every cross-port coordination gate (autostart, nametag
+sequencing, the Team Battle flow) encoded.
 
 The sections below are the layer underneath, for when a bot needs more
 control than the callback offers.
@@ -207,7 +210,7 @@ export MELEE_DOLPHIN_PATH=...
 | Analog round-trip: sent stick == readback, deadzone pinned | `mix test --only dolphin_analog` | ExiAI headless | ~7s, no window; 12 identity round-trips, [0.4, 0.6] collapses to neutral |
 | Four-port match, costume selection, live event pipeline | `mix test --only dolphin_4p` | ExiAI headless | ~3s, no window; 4 bodies in-game, costume 2 lands, the SD reported live |
 | CPU slider, levels 1-9 up and back down | `mix test --only dolphin_cpu` | ExiAI headless | ~1s, no window; all ten configurations land exactly |
-| Doubles: `Match.play(teams: true, p3: [team: :blue], ...)` | `mix test --only dolphin_teams` | ExiAI headless | ~3s, no window; 2v2 via the public API, `team_id`s red/red/blue/blue in-game |
+| Doubles via the public API (`Match.play` and `Bot.run`, `teams: true`) | `mix test --only dolphin_teams` | ExiAI headless | ~10s, no window; 2v2s start, a bot plays one and self-quits, `team_id`s verified in-game |
 | Dolphin process management | `mix test --only dolphin` (includes all of these) | per test | — |
 | Nametag select, CPU config, full match start (seeded card) | `mix test --only nametag_select` | ExiAI headless | `select: ~5s`, no window, match starts with the EXPH tag and Falco at CPU 9 |
 | Nametag creation from a wiped home (card provisioning + boot prompt) | `mix test --only nametag_create` | netplay (window appears; it ignores headless, and only it shows the boot prompt) | `create: ~10s` and a `.gci` written |

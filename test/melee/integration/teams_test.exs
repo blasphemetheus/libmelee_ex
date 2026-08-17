@@ -85,6 +85,65 @@ defmodule Melee.Integration.TeamsTest do
     end
   end
 
+  defmodule DoublesBot do
+    use Melee.Bot
+
+    # Holds right; after frame 240 records what it saw and quits.
+    @impl true
+    def act(_me, gamestate, controller) do
+      if gamestate.frame > 240 do
+        teams = Map.new(gamestate.players, fn {p, pl} -> {p, pl.team_id} end)
+        Agent.update(:doubles_bot_probe, fn _ -> {gamestate.is_teams, teams} end)
+        :quit
+      else
+        Melee.Controller.tilt_analog(controller, :main, 1.0, 0.5)
+      end
+    end
+  end
+
+  test "Bot.run plays doubles and can quit the episode", ctx do
+    if ctx[:skip] do
+      IO.puts("\n[dolphin] skipped: #{ctx.skip}")
+    else
+      File.rm_rf!(@home)
+      windowed? = System.get_env("MELEE_WINDOWED") == "1"
+      {:ok, _} = Agent.start_link(fn -> nil end, name: :doubles_bot_probe)
+
+      result =
+        Melee.Bot.run(DoublesBot,
+          path: ctx.path,
+          iso_path: ctx.iso,
+          home: @home,
+          slippi_port: 51_582,
+          headless: not windowed?,
+          gfx_backend: if(windowed?, do: "OGL", else: "Null"),
+          console: [polling_mode: true, polling_timeout: 100],
+          teams: true,
+          character: :fox,
+          team: :red,
+          p2: [character: :falco, team: :red],
+          p3: [character: :marth, team: :blue],
+          p4: [character: :peach, team: :blue],
+          stage: :final_destination
+        )
+
+      assert {:ok, %{frames: frames, last: last}} = result
+      assert frames > 240
+      refute Melee.GameState.in_game?(last)
+
+      assert {true, teams} = Agent.get(:doubles_bot_probe, & &1)
+
+      assert teams == %{
+               1 => Enums.Team.to_id(:red),
+               2 => Enums.Team.to_id(:red),
+               3 => Enums.Team.to_id(:blue),
+               4 => Enums.Team.to_id(:blue)
+             }
+
+      IO.puts("\n[dolphin] bot doubles: quit at frame #{frames}, teams=#{inspect(teams)}")
+    end
+  end
+
   defp safe_stop(session) do
     Session.stop(session)
   catch
