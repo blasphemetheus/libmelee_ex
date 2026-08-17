@@ -62,10 +62,8 @@ defmodule Melee.Cursor do
     linger = Keyword.get(opts, :linger_frames, 30)
 
     with {:ok, _} <- idle(session, controller, settle),
-         {:ok, _} <- pump(session, hold, fn -> Controller.press_button(controller, button) end),
-         {:ok, gs} <-
-           pump(session, linger, fn -> Controller.release_button(controller, button) end) do
-      {:ok, gs}
+         {:ok, _} <- pump(session, hold, fn -> Controller.press_button(controller, button) end) do
+      pump(session, linger, fn -> Controller.release_button(controller, button) end)
     end
   end
 

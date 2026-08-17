@@ -26,8 +26,8 @@ defmodule Melee.MenuHelper do
   """
 
   alias Melee.{Controller, GameState}
-  alias Melee.Events.Menu, as: MenuEvents
   alias Melee.Enums.{Character, Stage}
+  alias Melee.Events.Menu, as: MenuEvents
 
   require Logger
 
