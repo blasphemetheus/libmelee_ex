@@ -129,7 +129,7 @@ defmodule Melee.Integration.RosterTest do
     end
   end
 
-  test "Pokemon Stadium with frozen_stadium: false (the no-toggle path)", ctx do
+  test "Frozen Stadium: the toggle provably lands, both directions", ctx do
     if ctx[:skip] do
       IO.puts("\n[dolphin] skipped: #{ctx.skip}")
     else
@@ -137,18 +137,40 @@ defmodule Melee.Integration.RosterTest do
 
       {:ok, session} = start_session(ctx, 51_590)
       on_exit(fn -> safe_stop(session) end)
+      controller = Session.controller(session, 1)
 
-      {:ok, first} =
-        Match.play(session,
-          p1: [character: :fox, frozen_stadium: false],
-          p2: [character: :falco],
-          stage: :pokemon_stadium
-        )
+      # The game's own GAME_START block records whether the stage is
+      # frozen (gamestate.is_frozen_ps) — the authoritative readback
+      # for MenuHelper's Z-toggle. The actual transformations start too
+      # late to watch in a smoke test (none within 9,000 frames
+      # measured), but the live 0x41 decode path is still asserted via
+      # the baseline state broadcast Stadium emits at match start.
+      #
+      # ORDER MATTERS: the frozen flag PERSISTS across matches within a
+      # session, and MenuHelper toggles blind (no readback exists at
+      # the stage select) — found live when [true, false] left game 2
+      # frozen. From a fresh session the state is known (off), so
+      # false-then-true is deterministic.
+      for frozen? <- [false, true] do
+        {:ok, first} =
+          Match.play(session,
+            p1: [character: :fox, frozen_stadium: frozen?],
+            p2: [character: :falco],
+            stage: :pokemon_stadium
+          )
 
-      assert GameState.in_game?(first)
-      assert first.stage == Enums.Stage.to_id(:pokemon_stadium)
+        assert GameState.in_game?(first)
+        assert first.stage == Enums.Stage.to_id(:pokemon_stadium)
 
-      IO.puts("\n[dolphin] frozen_stadium: false path ok")
+        assert first.is_frozen_ps == frozen?,
+               "asked frozen_stadium: #{frozen?}, GAME_START recorded #{first.is_frozen_ps}"
+
+        assert %Melee.StadiumTransformation{} = first.stadium_transformation
+
+        {:ok, _} = Match.quit(session, controller)
+      end
+
+      IO.puts("\n[dolphin] frozen_stadium: toggle verified both ways via is_frozen_ps")
       assert :ok = Session.stop(session)
     end
   end

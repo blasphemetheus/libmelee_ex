@@ -78,11 +78,8 @@ defmodule Melee.Integration.FourPlayerTest do
         assert player.stock == 4
       end
 
-      # :costume is a Slippi-online-CSS-only flow (ported Python
-      # semantics) — the local CSS ignores it, so the field reads the
-      # default here. Verified live: asking for costume 2 locally
-      # still enters with 0. (Documented in MenuHelper.)
-      assert first.players[1].costume == 0
+      # Local-CSS costume selection: counted post-lock Y presses.
+      assert first.players[1].costume == 2
 
       # Live event pipeline: hold right on port 1 (the lemming), and the
       # stream must report the self-destruct as it happens.

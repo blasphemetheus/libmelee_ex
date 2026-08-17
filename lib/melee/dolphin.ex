@@ -515,8 +515,41 @@ defmodule Melee.Dolphin do
   def watch(%__MODULE__{port: port} = dolphin, subscriber \\ nil) when is_port(port) do
     subscriber = subscriber || self()
     watcher = spawn_link(fn -> watch_loop(dolphin, subscriber, "") end)
-    Port.connect(port, watcher)
-    watcher
+
+    try do
+      Port.connect(port, watcher)
+      watcher
+    rescue
+      ArgumentError ->
+        # Dolphin already exited: the port is closed and its messages —
+        # captured output and the :exit_status — are sitting in the
+        # CALLER's mailbox (we were still the owner). Drain them here,
+        # synchronously, so a fast death is reported exactly like a
+        # slow one. (Found as a race in the unit test: a stub script
+        # can exit before Port.connect runs.)
+        Process.unlink(watcher)
+        Process.exit(watcher, :kill)
+        drain_dead_port(dolphin, subscriber, "")
+        self()
+    end
+  end
+
+  defp drain_dead_port(%__MODULE__{port: port} = dolphin, subscriber, tail) do
+    receive do
+      {^port, {:data, data}} ->
+        drain_dead_port(dolphin, subscriber, output_tail(tail <> data))
+
+      {^port, {:exit_status, status}} ->
+        report_exit(dolphin, subscriber, status, tail)
+    after
+      # The exit_status is enqueued before the port closes, so it should
+      # already be here; a short grace covers scheduler timing.
+      1_000 ->
+        Logger.warning(
+          "Melee.Dolphin: Dolphin (os pid #{dolphin.os_pid}) port closed " <>
+            "with no exit status" <> format_tail(tail)
+        )
+    end
   end
 
   defp watch_loop(%__MODULE__{port: port} = dolphin, subscriber, tail) do
@@ -532,21 +565,25 @@ defmodule Melee.Dolphin do
         do_watch(dolphin, subscriber, output_tail(tail <> data), ref)
 
       {^port, {:exit_status, status}} ->
-        level = if status == 0, do: :info, else: :warning
-
-        Logger.log(
-          level,
-          "Melee.Dolphin: Dolphin (os pid #{dolphin.os_pid}) exited " <>
-            "with status #{status}" <> format_tail(tail)
-        )
-
-        send(subscriber, {:dolphin_exited, dolphin.os_pid, status})
+        report_exit(dolphin, subscriber, status, tail)
 
       {:DOWN, ^ref, :port, ^port, _reason} ->
         # Closed by stop/1 (or the owner died): an intentional
         # shutdown, not a death worth alarming anyone about.
         :ok
     end
+  end
+
+  defp report_exit(dolphin, subscriber, status, tail) do
+    level = if status == 0, do: :info, else: :warning
+
+    Logger.log(
+      level,
+      "Melee.Dolphin: Dolphin (os pid #{dolphin.os_pid}) exited " <>
+        "with status #{status}" <> format_tail(tail)
+    )
+
+    send(subscriber, {:dolphin_exited, dolphin.os_pid, status})
   end
 
   defp output_tail(tail) when byte_size(tail) <= @output_tail_bytes, do: tail

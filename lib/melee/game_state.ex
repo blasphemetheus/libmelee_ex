@@ -86,6 +86,7 @@ defmodule Melee.GameState do
           menu_state: integer(),
           raw_scene: integer() | nil,
           submenu: integer(),
+          is_frozen_ps: boolean(),
           players: %{port_number() => PlayerState.t()},
           projectiles: [Projectile.t()],
           ready_to_start: boolean(),
@@ -119,6 +120,8 @@ defmodule Melee.GameState do
             projectiles: [],
             ready_to_start: false,
             is_teams: false,
+            # GAME_START's frozen-Pokemon-Stadium flag (replay v2.0+).
+            is_frozen_ps: false,
             distance: 0.0,
             menu_selection: 0,
             startAt: "",

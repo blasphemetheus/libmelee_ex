@@ -107,7 +107,8 @@ defmodule Melee.MenuHelper do
           stalled_frames: non_neg_integer(),
           stuck_reported: boolean(),
           slippi_css_frames: non_neg_integer(),
-          logged_scenes: MapSet.t()
+          logged_scenes: MapSet.t(),
+          costume_presses: non_neg_integer()
         }
 
   defstruct name_tag_index: 0,
@@ -124,7 +125,10 @@ defmodule Melee.MenuHelper do
             stalled_frames: 0,
             stuck_reported: false,
             slippi_css_frames: 0,
-            logged_scenes: nil
+            logged_scenes: nil,
+            # Local-CSS costume: Y edges sent so far (open loop, no
+            # readback at the CSS — verified in-game via GAME_START).
+            costume_presses: 0
 
   @doc """
   Fresh menu-navigation state.
@@ -167,14 +171,23 @@ defmodule Melee.MenuHelper do
       use it); an explicit `""` still drives the direct-code keyboard —
       the nil/"" distinction matches upstream v0.47 semantics.
     * `:cpu_level` — CPU level to configure, `0` (default) for human/bot
-    * `:costume` — costume index (default `0`). NOTE: applied on the
-      Slippi ONLINE CSS only (Y presses after lock-in, ported Python
-      semantics); the local CSS ignores it — verified live, a port
-      always enters with costume 0 locally.
+    * `:costume` — costume index (default `0`). On the Slippi online
+      CSS this is a feedback loop (the online menu event reports the
+      costume). On the LOCAL CSS it is open-loop: the costume is cycled
+      with counted post-lock Y presses (measured live — pre-lock
+      presses do nothing, and the local CSS has no costume readback),
+      then verified in-game via GAME_START. One flow per helper
+      instance; use a fresh helper per match.
     * `:autostart` — press START when the match is ready (default `false`)
     * `:swag` — what it sounds like (default `false`)
     * `:frozen_stadium` — toggle Frozen Stadium at stage select
-      (default `true`, matching Python; only meaningful with autostart)
+      (default `true`, matching Python; only meaningful with autostart).
+      NOTE the flag PERSISTS across matches within a Dolphin session
+      and there is no readback at the stage select, so the helper
+      toggles blind: it turns freezing ON when asked and Stadium is
+      selected, but cannot turn it back OFF once another match froze
+      it. `gamestate.is_frozen_ps` (from GAME_START) is the
+      authoritative after-the-fact readback.
     * `:port` — the controller port we are driving (default `1`).
       Python reads this off the `Controller` object; ours doesn't carry
       a port, so pass it here when not on port 1.
@@ -1137,7 +1150,8 @@ defmodule Melee.MenuHelper do
           {target_x, target_y, wiggleroom},
           correct_character,
           slippi_css?,
-          start
+          start,
+          costume
         )
     end
   end
@@ -1301,7 +1315,8 @@ defmodule Melee.MenuHelper do
          {target_x, target_y, wiggleroom},
          correct_character,
          slippi_css?,
-         start
+         start,
+         costume
        ) do
     %{x: cursor_x, y: cursor_y} = ai_state.cursor
     coin_down = ai_state.coin_down
@@ -1316,21 +1331,40 @@ defmodule Melee.MenuHelper do
       # Don't hold down on B, since we'll quit the menu if we do
       prev.button.b ->
         Controller.release_button(controller, :b)
+        state
 
       # If character is selected, and we're in the area, and coin is down,
       # then we're good
       correct_character and coin_down ->
         cond do
+          # Local-CSS costume: POST-LOCK Y presses cycle the costume
+          # (measured live: 3 Y edges after the coin dropped landed
+          # costume 3; pre-lock presses do nothing). Counted open-loop —
+          # the local CSS exposes no costume readback — one edge per
+          # press-frame, before START is allowed. The online CSS has its
+          # own feedback flow further up.
+          not slippi_css? and state.costume_presses < costume ->
+            if Integer.mod(gamestate.frame, 2) == 0 do
+              Controller.press_button(controller, :y)
+              %{state | costume_presses: state.costume_presses + 1}
+            else
+              Controller.release_button(controller, :y)
+              state
+            end
+
           Integer.mod(gamestate.frame, 2) == 0 ->
             Controller.release_all(controller)
+            state
 
           # Python checks `ready_to_start == 0` on the raw byte; our
           # GameState carries the boolean "ready banner is up".
           start and gamestate.ready_to_start ->
             Controller.press_button(controller, :start)
+            state
 
           true ->
             Controller.release_all(controller)
+            state
         end
 
       true ->
@@ -1392,9 +1426,9 @@ defmodule Melee.MenuHelper do
               Controller.release_all(controller)
           end
         end
-    end
 
-    state
+        state
+    end
   end
 
   ## Stage select

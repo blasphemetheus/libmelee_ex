@@ -449,7 +449,8 @@ defmodule Melee.Events do
     gamestate = %{
       parser.gamestate
       | stage: parser.current_stage,
-        is_teams: parser.is_teams
+        is_teams: parser.is_teams,
+        is_frozen_ps: parser.is_frozen_ps
     }
 
     {player, gamestate} = fetch_player(gamestate, port)
