@@ -91,6 +91,9 @@ defmodule Melee.GameState do
           projectiles: [Projectile.t()],
           ready_to_start: boolean(),
           is_teams: boolean(),
+          is_team_attack: boolean(),
+          pause_enabled: boolean(),
+          timer: non_neg_integer(),
           distance: float(),
           menu_selection: integer(),
           startAt: String.t(),
@@ -120,6 +123,14 @@ defmodule Melee.GameState do
             projectiles: [],
             ready_to_start: false,
             is_teams: false,
+            # Custom Rules settings from GAME_START (see Melee.Events):
+            # Team Attack (ally damage in a Team Battle — these Dolphin
+            # builds default it ON), whether pausing is allowed (the
+            # LRAS quit-out needs it), and the starting match timer in
+            # seconds (0 = no time limit).
+            is_team_attack: false,
+            pause_enabled: true,
+            timer: 0,
             # GAME_START's frozen-Pokemon-Stadium flag (replay v2.0+).
             is_frozen_ps: false,
             distance: 0.0,

@@ -215,6 +215,44 @@ defmodule Melee.EventsTest do
       refute parser.game_started
     end
 
+    test "game start parses Custom Rules fields and keeps the raw event" do
+      # Offsets found by byte-diffing live GAME_STARTs with one menu
+      # row flipped at a time and pinning each bit behaviorally
+      # (2026-08-17): Team Attack is bit 0 at 0x6 (1 = ON), Pause
+      # bit 3 at 0x7 (set = DISABLED), the starting timer the u32
+      # seconds at 0x15. 0x86/480s are the live fresh-session values.
+      parser = Events.new()
+      {:continue, parser} = Events.handle_game_event(parser, payloads(@sizes))
+
+      raw = game_start([{0x6, u8(1)}, {0x7, u8(0x8E)}, {0x15, i32(480)}])
+      {:continue, parser} = Events.handle_game_event(parser, raw)
+
+      assert parser.is_team_attack
+      refute parser.pause_enabled
+      assert parser.timer == 480
+      assert parser.game_start_raw == raw
+
+      assert {:frame_complete, gs, _} = full_frame(parser, 0)
+      assert gs.is_team_attack
+      refute gs.pause_enabled
+      assert gs.timer == 480
+    end
+
+    test "game start with Team Attack off and Pause on reads both back" do
+      parser = Events.new()
+      {:continue, parser} = Events.handle_game_event(parser, payloads(@sizes))
+
+      {:continue, parser} =
+        Events.handle_game_event(
+          parser,
+          game_start([{0x6, u8(0)}, {0x7, u8(0x86)}, {0x15, i32(480)}])
+        )
+
+      refute parser.is_team_attack
+      assert parser.pause_enabled
+      assert parser.timer == 480
+    end
+
     test "rollback frames are kept when skip_rollback_frames: false" do
       parser = %{connected_parser() | skip_rollback_frames: false}
       assert {:frame_complete, _, parser} = full_frame(parser, 100)

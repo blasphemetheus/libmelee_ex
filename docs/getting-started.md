@@ -214,6 +214,7 @@ export MELEE_DOLPHIN_PATH=...
 | Four-port match, costume selection, live event pipeline | `mix test --only dolphin_4p` | ExiAI headless | ~3s, no window; 4 bodies in-game, costume 2 lands, the SD reported live |
 | CPU slider, levels 1-9 up and back down | `mix test --only dolphin_cpu` | ExiAI headless | ~1s, no window; all ten configurations land exactly |
 | Doubles: `Match.play`, `Bot.run`, and TWO bots via `Bot.run_many` | `mix test --only dolphin_teams` | ExiAI headless | ~15s, no window; 2v2s start, both bots demonstrably act, `allies`/`enemies` verified in-game |
+| Custom Rules: stocks, timer, Team Attack (behaviorally), Pause | `mix test --only dolphin_rules` | ExiAI headless | ~25s, no window; stock=1/timer=300s from GAME_START, ally damage 9% vs 0.0% across the toggle, pause-off refuses the LRAS quit |
 | Dolphin process management | `mix test --only dolphin` (includes all of these) | per test | — |
 | Nametag select, CPU config, full match start (seeded card) | `mix test --only nametag_select` | ExiAI headless | `select: ~5s`, no window, match starts with the EXPH tag and Falco at CPU 9 |
 | Nametag creation from a wiped home (card provisioning + boot prompt) | `mix test --only nametag_create` | netplay (window appears; it ignores headless, and only it shows the boot prompt) | `create: ~10s` and a `.gci` written |

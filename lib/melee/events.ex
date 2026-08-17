@@ -80,6 +80,10 @@ defmodule Melee.Events do
             current_stage: integer(),
             is_teams: boolean(),
             is_frozen_ps: boolean(),
+            is_team_attack: boolean(),
+            pause_enabled: boolean(),
+            timer: non_neg_integer(),
+            game_start_raw: binary() | nil,
             costumes: tuple(),
             cpu_levels: tuple(),
             team_ids: tuple(),
@@ -102,6 +106,10 @@ defmodule Melee.Events do
               current_stage: 0,
               is_teams: false,
               is_frozen_ps: false,
+              is_team_attack: false,
+              pause_enabled: true,
+              timer: 0,
+              game_start_raw: nil,
               costumes: {0, 0, 0, 0},
               cpu_levels: {0, 0, 0, 0},
               team_ids: {0, 0, 0, 0},
@@ -307,6 +315,23 @@ defmodule Melee.Events do
 
     is_teams = read_u16(event, 0xD, 0) != 0
 
+    # Custom Rules settings, found by byte-diffing GAME_STARTs with one
+    # Additional Rules row flipped at a time and then pinning each bit
+    # BEHAVIORALLY (2026-08-17, tmp/rules_diff.exs + tmp/ta_probe.exs;
+    # the only other moving bytes were the random seed at 0x13D):
+    #   - Team Attack is bit 0 at 0x6 (1 = ally damage ON — verified by
+    #     an ally dash-attack dealing 9% with it set, 0% cleared; these
+    #     Dolphin builds DEFAULT it ON, and note Fox's reflector hits
+    #     allies even with it off, one of Melee's TA-off exceptions).
+    #   - Pause is bit 3 at 0x7 (SET = pause DISABLED: 0x86 -> 0x8E
+    #     made the LRAS quit-out time out, since the quit rides the
+    #     pause menu).
+    #   - The starting timer in seconds is the u32 at 0x15: the Stock
+    #     Time Limit row moved it 480 -> 540 (one right-tap = +1:00).
+    is_team_attack = (read_u8(event, 0x6, 0) &&& 0x01) != 0
+    pause_enabled = (read_u8(event, 0x7, 0) &&& 0x08) == 0
+    timer = read_u32(event, 0x15, 0)
+
     read4 = fn base, stride ->
       List.to_tuple(for i <- 0..3, do: read_u8(event, base + stride * i, 0))
     end
@@ -369,10 +394,18 @@ defmodule Melee.Events do
       | slp_version: version,
         current_stage: current_stage,
         is_teams: is_teams,
+        is_team_attack: is_team_attack,
+        pause_enabled: pause_enabled,
+        timer: timer,
         costumes: costumes,
         cpu_levels: cpu_levels,
         team_ids: team_ids,
         is_frozen_ps: is_frozen_ps,
+        # The raw event, kept for empirical work: menu settings such as
+        # Team Attack have no parsed field yet, and byte-diffing two
+        # GAME_STARTs with a setting flipped is how their offsets get
+        # found (docs/melee-menus.md "How to work out a new screen").
+        game_start_raw: event,
         nametags: nametags,
         display_names: display_names,
         connect_codes: connect_codes,
@@ -450,6 +483,9 @@ defmodule Melee.Events do
       parser.gamestate
       | stage: parser.current_stage,
         is_teams: parser.is_teams,
+        is_team_attack: parser.is_team_attack,
+        pause_enabled: parser.pause_enabled,
+        timer: parser.timer,
         is_frozen_ps: parser.is_frozen_ps
     }
 

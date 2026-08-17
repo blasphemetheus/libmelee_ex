@@ -4,6 +4,41 @@ Written 2026-08-05, at the end of the session that built the port. Read
 this first; it is the live resume point. Everything below is verified
 unless it says otherwise.
 
+## Addendum 2026-08-17 (second session): rules menu SHIPPED
+
+The in-flight rules work below is done, entirely headless (no windowed
+session needed — the never-read screenshots plus `menu_selection`
+sufficed). `Match.play(rules: [stock: 1, time_limit: 5,
+team_attack: false, pause: false])` sets the Custom Rules screen on
+the way in; `--only dolphin_rules` (3 tests, ~24s) proves it; the full
+mechanics + GAME_START offsets are in melee-menus.md "Custom Rules".
+New GameState fields: `timer`, `is_team_attack`, `pause_enabled`
+(+ `Events.Parser.game_start_raw` for future byte-diff discovery).
+
+Corrections to the notes below, all found behaviorally
+(`tmp/ta_probe.exs`):
+
+- **Team Attack defaults ON on these builds** (not OFF as assumed;
+  vanilla Melee defaults OFF — maybe the debug-mode state). It is
+  Additional Rules row 1, GAME_START 0x6 bit 0. The first "verify by
+  ally damage" attempt used Fox's shine, which hits allies for 5%
+  even with TA OFF (a real Melee exception, like grabs) — a normal
+  hitbox (dash attack: 9% vs 0.0%) discriminates it.
+- Additional Rules row 2 is **Pause**, 0x7 bit 3 (set = disabled).
+  Turning it off breaks `Match.quit` (LRAS rides the pause menu) —
+  that's how it was identified, and it's now a documented rules
+  option for stray-START-proof training episodes.
+- The rules screens (submenu 13; sub-screens report 0xFF) wrap both
+  ways and navigate cleanly headless; values are set open-loop from
+  fresh-session defaults (STOCK mode / 4 stocks / 8:00 / TA ON /
+  Pause ON) and verified from GAME_START. Rules persist per session:
+  `rules:` on the FIRST play only (else `:rules_need_fresh_menu`).
+
+Items (the Item Switch sub-screen) remain unproductized — same
+open-loop technique should work; item frequency/bitfields live around
+0xE/0x28 in GAME_START. The debug-menu (DBLEVEL MASTER) question is
+still open.
+
 ## Addendum 2026-08-14
 
 - **CSS coordinates measured live for ports 2-4** (`Melee.Probe`

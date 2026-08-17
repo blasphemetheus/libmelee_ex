@@ -59,6 +59,40 @@ defmodule Melee.Match do
   from a FRESH session; verify after the fact with `gamestate.is_teams`
   and per-player `team_id`.
 
+  ## Custom Rules
+
+  Pass `rules:` to set the VS Custom Rules screen on the way in:
+
+      Melee.Match.play(session,
+        rules: [stock: 1, time_limit: 5, team_attack: true],
+        p1: [character: :fox],
+        p2: [character: :falco, cpu_level: 9],
+        stage: :final_destination)
+
+    * `:stock` — stock count, 1..99 (fresh-session default 4);
+    * `:time_limit` — Stock Time Limit in minutes, 1..99 (default 8);
+    * `:team_attack` — ally damage in a Team Battle. These Dolphin
+      builds default it ON (vanilla Melee defaults OFF — measured
+      otherwise here, and behaviorally verified: an ally dash-attack
+      deals 9% by default and 0% with `team_attack: false`). Note
+      Fox's reflector hits allies even when OFF, one of Melee's
+      TA-off exceptions alongside grabs;
+    * `:pause` — `false` disables mid-game pausing (useful under
+      training so a stray START cannot freeze the frame stream), BUT
+      the LRAS quit-out rides the pause menu, so `Melee.Match.quit/3`
+      times out in a pause-disabled game — the episode then has to
+      end by stocks or timer.
+
+  Row navigation is closed-loop on `menu_selection`, but the VALUES
+  have no menu readback, so they are set open-loop by counted taps
+  from the fresh-session defaults — the same caveat as teams: rules
+  persist across matches in a Dolphin session, so pass `rules:` on the
+  FIRST `play/2` of a session only (later plays in a session keep
+  them; a `play/2` asked for rules past the VS menu returns
+  `{:error, :rules_need_fresh_menu}`). Verify after the fact from
+  GAME_START: `players[n].stock`, `gamestate.timer` (seconds),
+  `gamestate.is_team_attack` and `gamestate.pause_enabled`.
+
   Returns `{:ok, gamestate}` with the first in-game frame — hand the
   loop to your bot from there (or use `Melee.Bot`, which wraps this).
   """
@@ -75,12 +109,20 @@ defmodule Melee.Match do
           | {:team, :red | :blue | :green}
         ]
 
+  @type rules_spec :: [
+          {:stock, 1..99}
+          | {:time_limit, 1..99}
+          | {:team_attack, boolean()}
+          | {:pause, boolean()}
+        ]
+
   @doc """
   Drive the session's menus until a match is running.
 
   Options: `:p1`..`:p4` port specs (at least one), `:stage` (atom or
   id, required), `:teams` (default `false` — see "Doubles"),
-  `:timeout_frames` (default `20_000`).
+  `:rules` (default `[]` — see "Custom Rules"), `:timeout_frames`
+  (default `20_000`).
 
   Returns `{:ok, gamestate}` (first in-game frame),
   `{:error, {:timeout, gamestate}}` if the match never starts, or
@@ -112,10 +154,231 @@ defmodule Melee.Match do
 
     helpers = Map.new(specs, fn {gc_port, _} -> {gc_port, MenuHelper.new()} end)
 
-    if teams? do
-      play_teams(session, specs, controllers, helpers, timeout_frames)
-    else
-      loop(session, specs, controllers, helpers, timeout_frames)
+    rules = Keyword.get(opts, :rules, [])
+
+    with {:ok, helpers} <- set_rules(session, specs, controllers, helpers, rules, timeout_frames) do
+      if teams? do
+        play_teams(session, specs, controllers, helpers, timeout_frames)
+      else
+        loop(session, specs, controllers, helpers, timeout_frames)
+      end
+    end
+  end
+
+  # ------------------------------------------------------------------
+  # Custom Rules (menu 5, submenu 13 — mapped headless 2026-08-17,
+  # tmp/rules_map.exs / tmp/rules_diff.exs). Row NAVIGATION is fully
+  # observable via `menu_selection` (rows 0-6, wrapping; Additional
+  # Rules is its own screen behind row 6, submenu reading 0xFF, rows
+  # 0-5). Row VALUES are invisible in the gamestate, so they are set
+  # OPEN-LOOP by counted left/right taps from the fresh-session
+  # defaults (stock 4, Stock Time Limit 8:00, Team Attack ON, Pause
+  # ON) and verified after the fact from GAME_START
+  # (`players[n].stock`, `gamestate.timer`, `gamestate.is_team_attack`,
+  # `gamestate.pause_enabled`).
+  #
+  # Melee list menus act on stick EDGES: 2 frames of tilt, ~10 of
+  # release (the same cadence MenuHelper's choose_versus_mode uses).
+
+  @vs_row_custom_rules 3
+  @custom_rules_submenu 13
+  @vs_mode_submenu 2
+  @main_menu 5
+  @rules_row_stock 1
+  @rules_row_additional 6
+  @additional_row_time_limit 0
+  # Rows pinned BEHAVIORALLY (tmp/ta_probe.exs): a right-tap on row 1
+  # made an ally dash-attack deal 0% instead of 9% (Team Attack
+  # ON -> OFF), and a right-tap on row 2 made the LRAS quit-out time
+  # out (Pause ON -> OFF — the quit rides the pause menu).
+  @additional_row_team_attack 1
+  @additional_row_pause 2
+  # Fresh-session defaults the open-loop taps count from. Team Attack
+  # and Pause both default ON on these Dolphin builds (vanilla Melee
+  # defaults Team Attack OFF; measured otherwise here).
+  @default_stock 4
+  @default_time_limit_min 8
+
+  defp set_rules(_session, _specs, _controllers, helpers, [], _timeout), do: {:ok, helpers}
+
+  defp set_rules(session, [{leader, _} | _] = specs, controllers, helpers, rules, timeout_frames) do
+    stock_taps =
+      case Keyword.get(rules, :stock) do
+        nil ->
+          0
+
+        n when n in 1..99 ->
+          n - @default_stock
+
+        other ->
+          raise ArgumentError, "rules: :stock must be 1..99, got #{inspect(other)}"
+      end
+
+    time_taps =
+      case Keyword.get(rules, :time_limit) do
+        nil ->
+          0
+
+        n when n in 1..99 ->
+          n - @default_time_limit_min
+
+        other ->
+          raise ArgumentError, "rules: :time_limit must be 1..99 minutes, got #{inspect(other)}"
+      end
+
+    # Team Attack and Pause default ON, so only `false` needs a tap.
+    team_attack_taps = if Keyword.get(rules, :team_attack, true), do: 0, else: 1
+    pause_taps = if Keyword.get(rules, :pause, true), do: 0, else: 1
+    controller = controllers[leader]
+
+    # Ride the helpers to the VS Mode menu — but no further. The done?
+    # check runs on each frame BEFORE the helpers act on it, so the
+    # first frame reporting submenu 2 stops the drive before the
+    # leader's helper can press A into the CSS.
+    with {:ok, helpers, gamestate} <-
+           drive_until(
+             session,
+             specs,
+             controllers,
+             helpers,
+             fn gs -> vs_mode_menu?(gs) or at_character_select?(gs) end,
+             timeout_frames,
+             :rules_menu_never_reached
+           ),
+         # Values are counted from the fresh-session defaults, and the
+         # CSS has no path back that this flow drives — a session that
+         # is already past the VS menu (a second game, say) keeps the
+         # rules it already has; ask for them on the FIRST play.
+         :ok <- if(vs_mode_menu?(gamestate), do: :ok, else: {:error, :rules_need_fresh_menu}),
+         # The helper may be mid-press when the drive stops; start the
+         # edge-tap sequence from a clean controller.
+         Melee.Controller.release_all(controller),
+         :ok <- seek_row(session, controller, @vs_row_custom_rules),
+         :ok <- menu_tap(session, controller, :a),
+         :ok <- await(session, &(&1.submenu == @custom_rules_submenu), :rules_screen),
+         :ok <- adjust_row(session, controller, @rules_row_stock, stock_taps),
+         :ok <-
+           set_additional_rules(session, controller, time_taps, team_attack_taps, pause_taps),
+         :ok <- menu_tap(session, controller, :b),
+         :ok <- await(session, &vs_mode_menu?/1, :rules_exit) do
+      {:ok, helpers}
+    end
+  end
+
+  # Additional Rules (behind row 6): Stock Time Limit row 0, Team
+  # Attack row 1, Pause row 2. Entering it is only observable as
+  # menu_selection resetting to 0 under submenu 0xFF, so the entry is
+  # confirmed by awaiting selection 0 after the A press.
+  defp set_additional_rules(_session, _controller, 0, 0, 0), do: :ok
+
+  defp set_additional_rules(session, controller, time_taps, team_attack_taps, pause_taps) do
+    with :ok <- seek_row(session, controller, @rules_row_additional),
+         :ok <- menu_tap(session, controller, :a),
+         :ok <- await(session, &(&1.menu_selection == 0), :additional_rules_screen),
+         :ok <- adjust_row(session, controller, @additional_row_time_limit, time_taps),
+         :ok <- adjust_row(session, controller, @additional_row_team_attack, team_attack_taps),
+         :ok <- adjust_row(session, controller, @additional_row_pause, pause_taps),
+         :ok <- menu_tap(session, controller, :b) do
+      await(session, &(&1.submenu == @custom_rules_submenu), :additional_rules_exit)
+    end
+  end
+
+  defp vs_mode_menu?(%GameState{menu_state: @main_menu, submenu: @vs_mode_submenu}), do: true
+  defp vs_mode_menu?(%GameState{}), do: false
+
+  defp adjust_row(_session, _controller, _row, 0), do: :ok
+
+  defp adjust_row(session, controller, row, taps) do
+    dir = if taps > 0, do: :right, else: :left
+
+    with :ok <- seek_row(session, controller, row) do
+      Enum.reduce_while(1..abs(taps), :ok, fn _i, :ok ->
+        case menu_nudge(session, controller, dir) do
+          :ok -> {:cont, :ok}
+          error -> {:halt, error}
+        end
+      end)
+    end
+  end
+
+  # Down-nudge until menu_selection reads `row` (every rules list
+  # wraps, so down-only reaches any row from any row).
+  defp seek_row(session, controller, row, attempts \\ 10)
+
+  defp seek_row(_session, _controller, row, 0), do: {:error, {:rules_row_never_reached, row}}
+
+  defp seek_row(session, controller, row, attempts) do
+    case step_frame(session) do
+      {:ok, %GameState{menu_selection: ^row}} ->
+        :ok
+
+      {:ok, _gamestate} ->
+        with :ok <- menu_nudge(session, controller, :down),
+             do: seek_row(session, controller, row, attempts - 1)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp menu_nudge(session, controller, dir) do
+    {x, y} =
+      case dir do
+        :down -> {0.5, 0.0}
+        :left -> {0.0, 0.5}
+        :right -> {1.0, 0.5}
+      end
+
+    with :ok <-
+           input_frames(session, 2, fn ->
+             Melee.Controller.tilt_analog(controller, :main, x, y)
+           end) do
+      input_frames(session, 10, fn -> Melee.Controller.release_all(controller) end)
+    end
+  end
+
+  defp menu_tap(session, controller, button) do
+    with :ok <-
+           input_frames(session, 2, fn -> Melee.Controller.press_button(controller, button) end) do
+      input_frames(session, 10, fn -> Melee.Controller.release_button(controller, button) end)
+    end
+  end
+
+  defp input_frames(_session, 0, _input), do: :ok
+
+  defp input_frames(session, frames, input) do
+    input.()
+
+    case Session.step(session) do
+      {:error, reason} -> {:error, reason}
+      _frame_or_nil -> input_frames(session, frames - 1, input)
+    end
+  end
+
+  @rules_await_frames 300
+
+  defp await(session, done?, why, frames_left \\ @rules_await_frames)
+
+  defp await(_session, _done?, why, 0), do: {:error, {:rules_timeout, why}}
+
+  defp await(session, done?, why, frames_left) do
+    case step_frame(session) do
+      {:ok, gamestate} ->
+        if done?.(gamestate), do: :ok, else: await(session, done?, why, frames_left - 1)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  # One step that always yields a gamestate: a polling console can hand
+  # back nil, and the menus stream every frame, so nil just means "ask
+  # again".
+  defp step_frame(session) do
+    case Session.step(session) do
+      {:ok, gamestate} -> {:ok, gamestate}
+      nil -> step_frame(session)
+      {:error, reason} -> {:error, reason}
     end
   end
 

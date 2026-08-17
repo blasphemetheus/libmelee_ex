@@ -276,6 +276,69 @@ Rules that cost the discovery session several rounds:
   Verify after the fact via `gamestate.is_teams` and per-player
   `team_id` (0 red, 1 blue, 2 green).
 
+## Custom Rules (VS Mode -> Custom Rules)
+
+Mapped headless 2026-08-17 (`Melee.Match.play/2`'s `rules:` option is
+the productized form; `--only dolphin_rules` the rerunnable proof).
+Unlike the CSS, this screen's NAVIGATION is fully observable:
+`menu_state == 5`, `submenu == 13` (the `custom_rules_submenu` enum id)
+with `menu_selection` tracking the row. VS-menu rows by selection:
+0 Melee, 1 Tournament Melee, 2 Special Melee, **3 Custom Rules**,
+4 Name Entry — every list here wraps in both directions and acts on
+stick EDGES (2 frames of tilt, ~10-12 of release; key-repeat only
+after a ~15f hold).
+
+Custom Rules rows (selection 0-6): 0 Rules (TIME/STOCK/COIN mode),
+1 Stock, 2 Handicap, 3 Damage Ratio, 4 Stage Selection, 5 Item
+Switch, 6 Additional Rules. A on rows 5/6 enters a sub-screen that
+reports `submenu` 0xFF but keeps `menu_selection` live (Additional
+Rules: rows 0-5); B backs out one level, preserving the parent's row.
+
+Row VALUES are invisible in the gamestate — left/right taps change
+nothing observable — so values are set OPEN-LOOP by counted taps from
+the fresh-session defaults and verified from GAME_START. Fresh-session
+defaults on both Dolphin builds: STOCK mode, 4 stocks, Stock Time
+Limit 8:00, Team Attack ON, Pause ON.
+
+The GAME_START offsets, found by byte-diffing runs with one row
+flipped at a time (`tmp/rules_diff.exs`; the only noise was the
+random seed at 0x13D-0x140), then pinned behaviorally
+(`tmp/ta_probe.exs`):
+
+| Setting | Additional Rules row | GAME_START (event offset) | Behavioral proof |
+| --- | --- | --- | --- |
+| Stock Time Limit | 0 | u32 seconds at 0x15 (480 default; one tap = ±1:00) | `gamestate.timer` 300 after 3 left-taps |
+| Team Attack | 1 | bit 0 at 0x6 (1 = ON) | ally dash-attack: 9% with it on, 0.0% after one right-tap |
+| Pause | 2 | bit 3 at 0x7 (SET = disabled) | LRAS quit-out times out after one right-tap (the quit rides the pause menu) |
+| Self-Destructs | 4 | i8 at 0x11 (-1 default) | not productized |
+| rows 3, 5 | — | leave no trace in GAME_START | Score Display / (unidentified) |
+
+Stock count is row 1 of the MAIN screen (per-player stocks at
+GAME_START `0x67 + 0x24*(port-1)`, or just `players[n].stock`).
+
+Traps, each found live:
+
+- **Team Attack defaults ON here.** Vanilla Melee defaults it OFF;
+  these builds (both of them, plain gecko set — possibly the debug
+  DBLEVEL MASTER state) start it ON. Open-loop tap counts must count
+  from ON, and "turn team attack on" for doubles is a no-op.
+- **Fox's reflector hits allies even with Team Attack OFF** (5% per
+  shine, measured) — one of Melee's TA-off exceptions alongside
+  grabs. A behavioral probe for the setting must use a normal hitbox
+  (the dash-attack script above); shine cannot discriminate it.
+- **Pause OFF kills the LRAS quit-out**: `Melee.Match.quit/3` pulses
+  Start against the pause menu, so a `pause: false` game can only end
+  by stocks or timer. The flip side is useful for training — a stray
+  START can no longer freeze the frame stream.
+- **Rules persist across matches in a session** (like the teams mode
+  toggle), and the flow only runs from the VS menu — so `rules:`
+  belongs on the FIRST `Match.play/2` of a session; later plays keep
+  them, and asking again returns `{:error, :rules_need_fresh_menu}`
+  rather than double-applying open-loop taps.
+- The raw 0x36 payload is kept on the parser
+  (`Melee.Events.Parser.game_start_raw`) precisely so future settings
+  can be found the same way: flip one row, diff the bytes.
+
 ## The name-entry keyboard
 
 The same screen `enter_direct_code/4` drives: `submenu == 18`,
