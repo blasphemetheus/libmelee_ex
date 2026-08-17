@@ -19,7 +19,9 @@ Corrections to the notes below, all found behaviorally
 (`tmp/ta_probe.exs`):
 
 - **Team Attack defaults ON on these builds** (not OFF as assumed;
-  vanilla Melee defaults OFF — maybe the debug-mode state). It is
+  vanilla Melee defaults OFF — expected on reflection: competitive
+  doubles is always played TA ON, so Slippi shipping that default
+  makes sense). It is
   Additional Rules row 1, GAME_START 0x6 bit 0. The first "verify by
   ally damage" attempt used Fox's shine, which hits allies for 5%
   even with TA OFF (a real Melee exception, like grabs) — a normal
@@ -354,15 +356,64 @@ property — `pre_frame`/`post_frame` read the port from a `u8` and index
 down mid-game. Fixed by dropping events with a port outside `1..4`, with
 a regression test. A good advertisement for keeping the fuzz property.
 
-## Next work
+## Next work — the queue (set with the user 2026-08-17)
 
-**All six queued items are done** (see below). Fresh ideas, roughly by
-value: publish to Hex + HexDocs; extend the peppi differential to
-pre-2.2.0 files now that `Melee.SlpFile` can read them; port `MenuHelper`
-coordinate measurement to ports 2-4 (only port 1 was measured live — see
-`docs/melee-menus.md`); a `Melee.Session`-based rewrite of exphil's
-`MeleePort` internals; and fixing the exphil peppi NIF character-id bug
-(Roy -> -1) once the rustc/ethnum build issue is resolved.
+Hex publish is deliberately DEFERRED — not shipping yet. Priorities,
+in the order agreed:
+
+1. **Training throughput (protocol work).** The measured ceiling is
+   ~450fps: blocking pipes + the BEAM handshake at ~2.2ms/frame, with
+   emulation_speed irrelevant under blocking. Attack the per-frame
+   round-trip: batching/cheaper serialization on the spectator + pipe
+   path, and explore the **EXI direct channel** (the reason the ExiAI
+   build exists) as a possible bypass of the Slippi spectator socket
+   entirely. Measure before/after with the existing latency bench
+   (`exphil/scripts/bridge_latency_bench.exs` pattern).
+2. **Card-seeded rules.** Rules live in Melee save data and the
+   memory-card seeding machinery already exists
+   (`memory_card: {:folder, seed: path}`, built for nametags). Create
+   a card with the training rules baked in (1 stock, pause off, items
+   off, time limit), commit the `.gci` as a fixture, and boots start
+   pre-configured with ZERO menu taps. Verify via GAME_START readback
+   that a seeded fresh session skips the whole rules flow.
+3. **`Melee.Tech` — tech-skill primitives.** Frame-perfect building
+   blocks on the proven multishine machinery: wavedash, L-cancel,
+   shine OOS, ledgedash, short-hop laser... NOTE: much of this is
+   CHARACTER-SPECIFIC (jumpsquat frames, shine mechanics), so design
+   it per-character from the start — `Melee.FrameData` already has
+   the per-character frame tables to key off.
+4. **Richer `GameEvents`.** Combo/conversion/neutral segmentation in
+   the Slippi-stats mold (openings, punishes, kill moves, tech
+   situations, L-cancel rate, recovery outcomes) as pure functions
+   over the existing replay-or-live stream pipeline. Purpose: dense
+   reward shaping, corpus filtering for imitation, and bot evals
+   beyond win rate. Differential-test against slippi-js stats where
+   definitions overlap.
+5. **Special Melee (VS menu row 2).** Map it with the now-routine
+   method (menu_selection + GAME_START byte-diff + behavioral pin):
+   lightning/giant/tiny/fixed-camera etc. as `Match.play` options.
+6. **DBLEVEL MASTER mystery.** Why is the debug flag MASTER on both
+   builds, what does the debug VERSUS MODE submenu offer (it looked
+   like a direct match-config surface — possibly a menu-free path to
+   a configured match), and can debug be toggled off? (The Team
+   Attack ON default is NOT part of the mystery: competitive doubles
+   is always played TA ON, so the Slippi builds shipping that default
+   is expected — the user confirmed this.)
+7. **RNG control, focused.** The GAME_START random seed sits at
+   0x13D-0x140 (the one noise source every byte-diff had to mask).
+   Goal: deterministic episodes — find what sets the seed (boot RNG?
+   debug menu? memory write via a gecko/EXI poke?) and whether fixing
+   it makes two identical input schedules produce identical games.
+8. **Real hardware support** (eventually). The one remaining
+   Python-libmelee parity gap: GC adapter passthrough / console
+   spectate.
+
+Standing non-goal for now: Hex/HexDocs release (revisit after the
+throughput work lands).
+
+Older still-open smalls: `Session`-based rewrite of exphil's
+`MeleePort` internals; exphil peppi NIF character-id bug (Roy -> -1)
+blocked on rustc/ethnum.
 
 ### Completed queue (for history)
 

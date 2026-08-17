@@ -319,9 +319,10 @@ GAME_START `0x67 + 0x24*(port-1)`, or just `players[n].stock`).
 Traps, each found live:
 
 - **Team Attack defaults ON here.** Vanilla Melee defaults it OFF;
-  these builds (both of them, plain gecko set — possibly the debug
-  DBLEVEL MASTER state) start it ON. Open-loop tap counts must count
-  from ON, and "turn team attack on" for doubles is a no-op.
+  these builds (both of them, plain gecko set) start it ON — which is
+  the expected Slippi default, since competitive doubles is always
+  played TA ON. Open-loop tap counts must count from ON, and "turn
+  team attack on" for doubles is a no-op.
 - **Fox's reflector hits allies even with Team Attack OFF** (5% per
   shine, measured) — one of Melee's TA-off exceptions alongside
   grabs. A behavioral probe for the setting must use a normal hitbox
