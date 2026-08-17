@@ -224,18 +224,35 @@ defmodule Melee.EventsTest do
       parser = Events.new()
       {:continue, parser} = Events.handle_game_event(parser, payloads(@sizes))
 
-      raw = game_start([{0x6, u8(1)}, {0x7, u8(0x8E)}, {0x15, i32(480)}])
+      # Item Switch: frequency i8 at 0x10 (2 = medium), mask at
+      # 0x28..0x2C with bit index == item id (poke-ball-only here:
+      # containers 0-3 always set, plus bit 0x22).
+      mask = [
+        {0x28, u8(0x04)},
+        {0x29, u8(0x00)},
+        {0x2A, u8(0x00)},
+        {0x2B, u8(0x00)},
+        {0x2C, u8(0x0F)}
+      ]
+
+      raw =
+        game_start([{0x6, u8(1)}, {0x7, u8(0x8E)}, {0x10, u8(2)}, {0x15, i32(480)}] ++ mask)
+
       {:continue, parser} = Events.handle_game_event(parser, raw)
 
       assert parser.is_team_attack
       refute parser.pause_enabled
       assert parser.timer == 480
+      assert parser.item_frequency == 2
+      assert parser.item_bitfield == 0x04_0000_000F
       assert parser.game_start_raw == raw
 
       assert {:frame_complete, gs, _} = full_frame(parser, 0)
       assert gs.is_team_attack
       refute gs.pause_enabled
       assert gs.timer == 480
+      assert gs.item_frequency == 2
+      assert gs.item_bitfield == 0x04_0000_000F
     end
 
     test "game start with Team Attack off and Pause on reads both back" do
@@ -251,6 +268,12 @@ defmodule Melee.EventsTest do
       refute parser.is_team_attack
       assert parser.pause_enabled
       assert parser.timer == 480
+      # 0x10 defaulted to 0 by the fixture builder = frequency very_low;
+      # 0xFF is what "items off" reads as.
+      {:continue, parser} =
+        Events.handle_game_event(parser, game_start([{0x10, u8(0xFF)}]))
+
+      assert parser.item_frequency == nil
     end
 
     test "rollback frames are kept when skip_rollback_frames: false" do

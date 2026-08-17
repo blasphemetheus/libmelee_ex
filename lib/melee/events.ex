@@ -83,6 +83,8 @@ defmodule Melee.Events do
             is_team_attack: boolean(),
             pause_enabled: boolean(),
             timer: non_neg_integer(),
+            item_frequency: 0..4 | nil,
+            item_bitfield: non_neg_integer(),
             game_start_raw: binary() | nil,
             costumes: tuple(),
             cpu_levels: tuple(),
@@ -109,6 +111,8 @@ defmodule Melee.Events do
               is_team_attack: false,
               pause_enabled: true,
               timer: 0,
+              item_frequency: nil,
+              item_bitfield: 0xFF_FFFF_FFFF,
               game_start_raw: nil,
               costumes: {0, 0, 0, 0},
               cpu_levels: {0, 0, 0, 0},
@@ -315,23 +319,6 @@ defmodule Melee.Events do
 
     is_teams = read_u16(event, 0xD, 0) != 0
 
-    # Custom Rules settings, found by byte-diffing GAME_STARTs with one
-    # Additional Rules row flipped at a time and then pinning each bit
-    # BEHAVIORALLY (2026-08-17, tmp/rules_diff.exs + tmp/ta_probe.exs;
-    # the only other moving bytes were the random seed at 0x13D):
-    #   - Team Attack is bit 0 at 0x6 (1 = ally damage ON — verified by
-    #     an ally dash-attack dealing 9% with it set, 0% cleared; these
-    #     Dolphin builds DEFAULT it ON, and note Fox's reflector hits
-    #     allies even with it off, one of Melee's TA-off exceptions).
-    #   - Pause is bit 3 at 0x7 (SET = pause DISABLED: 0x86 -> 0x8E
-    #     made the LRAS quit-out time out, since the quit rides the
-    #     pause menu).
-    #   - The starting timer in seconds is the u32 at 0x15: the Stock
-    #     Time Limit row moved it 480 -> 540 (one right-tap = +1:00).
-    is_team_attack = (read_u8(event, 0x6, 0) &&& 0x01) != 0
-    pause_enabled = (read_u8(event, 0x7, 0) &&& 0x08) == 0
-    timer = read_u32(event, 0x15, 0)
-
     read4 = fn base, stride ->
       List.to_tuple(for i <- 0..3, do: read_u8(event, base + stride * i, 0))
     end
@@ -394,9 +381,6 @@ defmodule Melee.Events do
       | slp_version: version,
         current_stage: current_stage,
         is_teams: is_teams,
-        is_team_attack: is_team_attack,
-        pause_enabled: pause_enabled,
-        timer: timer,
         costumes: costumes,
         cpu_levels: cpu_levels,
         team_ids: team_ids,
@@ -413,6 +397,42 @@ defmodule Melee.Events do
         game_started: true
     }
     |> Map.merge(stage_state)
+    |> Map.merge(custom_rules(event))
+  end
+
+  # Custom Rules / Item Switch settings, found by byte-diffing
+  # GAME_STARTs with one menu row flipped at a time and then pinning
+  # each bit BEHAVIORALLY (2026-08-17, tmp/rules_diff.exs +
+  # tmp/ta_probe.exs + tmp/items_spawn.exs; the only other moving
+  # bytes were the random seed at 0x13D):
+  #   - Team Attack is bit 0 at 0x6 (1 = ally damage ON — an ally
+  #     dash-attack dealt 9% with it set, 0% cleared; these Dolphin
+  #     builds DEFAULT it ON, and Fox's reflector hits allies even
+  #     with it off, one of Melee's TA-off exceptions).
+  #   - Pause is bit 3 at 0x7 (SET = pause DISABLED: 0x86 -> 0x8E made
+  #     the LRAS quit-out time out — the quit rides the pause menu).
+  #   - The starting timer in seconds is the u32 at 0x15: the Stock
+  #     Time Limit row moved it 480 -> 540 (one right-tap = +1:00).
+  #   - The item frequency dial writes the i8 at 0x10 (0 very_low ..
+  #     4 very_high; 0xFF = items OFF, the fresh-session default), and
+  #     each Item Switch cell toggles one bit of the 5-byte mask at
+  #     0x28..0x2C with bit index == item id (isolated cells spawned
+  #     exactly food/bob-omb/metal box as the mapping predicted).
+  defp custom_rules(event) do
+    item_frequency =
+      case read_u8(event, 0x10, 0xFF) do
+        0xFF -> nil
+        frequency -> frequency
+      end
+
+    %{
+      is_team_attack: (read_u8(event, 0x6, 0) &&& 0x01) != 0,
+      pause_enabled: (read_u8(event, 0x7, 0) &&& 0x08) == 0,
+      timer: read_u32(event, 0x15, 0),
+      item_frequency: item_frequency,
+      item_bitfield:
+        Enum.reduce(0x28..0x2C, 0, fn off, acc -> acc * 256 + read_u8(event, off, 0xFF) end)
+    }
   end
 
   ## PRE_FRAME (0x37)
@@ -486,6 +506,8 @@ defmodule Melee.Events do
         is_team_attack: parser.is_team_attack,
         pause_enabled: parser.pause_enabled,
         timer: parser.timer,
+        item_frequency: parser.item_frequency,
+        item_bitfield: parser.item_bitfield,
         is_frozen_ps: parser.is_frozen_ps
     }
 

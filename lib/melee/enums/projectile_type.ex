@@ -13,15 +13,51 @@ defmodule Melee.Enums.ProjectileType do
       iex> Melee.Enums.ProjectileType.to_id(:turnip)
       0x63
 
-      iex> Melee.Enums.ProjectileType.from_id(0x01)
-      {:unknown, 0x01}
+      iex> Melee.Enums.ProjectileType.from_id(0x23)
+      {:unknown, 0x23}
   """
   require Melee.Enums.Builder
 
   Melee.Enums.Builder.int_enum(
+    # Common items, 0x00-0x22 — the same id space the VS Item Switch
+    # mask uses (GAME_START 0x28..0x2C, bit index == item id; verified
+    # live 2026-08-17 by isolating one Item Switch cell at a time and
+    # watching what spawned: food 0x12, bob-omb 0x06, metal box 0x20).
+    capsule: 0x00,
+    box: 0x01,
+    barrel: 0x02,
+    egg: 0x03,
+    party_ball: 0x04,
+    barrel_cannon: 0x05,
     bob_omb: 0x06,
     mr_saturn: 0x07,
+    heart_container: 0x08,
+    maxim_tomato: 0x09,
+    starman: 0x0A,
+    home_run_bat: 0x0B,
     beamsword: 0x0C,
+    parasol: 0x0D,
+    green_shell: 0x0E,
+    red_shell: 0x0F,
+    ray_gun: 0x10,
+    freezie: 0x11,
+    food: 0x12,
+    motion_sensor_bomb: 0x13,
+    flipper: 0x14,
+    super_scope: 0x15,
+    star_rod: 0x16,
+    lips_stick: 0x17,
+    fan: 0x18,
+    fire_flower: 0x19,
+    super_mushroom: 0x1A,
+    poison_mushroom: 0x1B,
+    hammer: 0x1C,
+    warp_star: 0x1D,
+    screw_attack: 0x1E,
+    bunny_hood: 0x1F,
+    metal_box: 0x20,
+    cloaking_device: 0x21,
+    poke_ball: 0x22,
     mario_fireball: 0x30,
     dr_mario_capsule: 0x31,
     kirby_cutter: 0x32,

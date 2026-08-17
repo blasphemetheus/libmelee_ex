@@ -81,7 +81,19 @@ defmodule Melee.Match do
       training so a stray START cannot freeze the frame stream), BUT
       the LRAS quit-out rides the pause menu, so `Melee.Match.quit/3`
       times out in a pause-disabled game — the episode then has to
-      end by stocks or timer.
+      end by stocks or timer;
+    * `:item_frequency` — `:none` (the fresh-session default: items
+      never spawn) or `:very_low` / `:low` / `:medium` / `:high` /
+      `:very_high`. Read back as `gamestate.item_frequency`
+      (`nil` = off, 0..4 otherwise);
+    * `:items` — the ONLY items allowed to spawn, as
+      `Melee.Enums.ProjectileType` atoms or raw ids
+      (`items: [:poke_ball]` for a Poke Ball-only match); every other
+      Item Switch cell is toggled off. Containers (capsule / box /
+      barrel / egg) are not in the switch and keep spawning — holding
+      whatever is enabled. Read back as `gamestate.item_bitfield`
+      (bit index == item id). Only meaningful with an
+      `:item_frequency` above `:none`.
 
   Row navigation is closed-loop on `menu_selection`, but the VALUES
   have no menu readback, so they are set open-loop by counted taps
@@ -114,6 +126,8 @@ defmodule Melee.Match do
           | {:time_limit, 1..99}
           | {:team_attack, boolean()}
           | {:pause, boolean()}
+          | {:item_frequency, :none | :very_low | :low | :medium | :high | :very_high}
+          | {:items, [atom() | integer()]}
         ]
 
   @doc """
@@ -185,7 +199,66 @@ defmodule Melee.Match do
   @vs_mode_submenu 2
   @main_menu 5
   @rules_row_stock 1
+  @rules_row_items 5
   @rules_row_additional 6
+  # The Item Switch grid is two 16-tall columns (left cells 0-15,
+  # right 16-30; a right-nudge moves +16 within a row) with the
+  # frequency dial reachable below the left column as selection 31
+  # (and above the right column as 32 — same dial). The dial cycles
+  # very_low(0)..very_high(4), none; a LEFT tap from the none default
+  # lands very_low, a RIGHT tap very_high.
+  @item_switch_frequency_row 31
+
+  # Item Switch cell (selection id) per item id, from the full one-A-
+  # tap-per-cell GAME_START byte-diff sweep (tmp/items_cells.exs) plus
+  # spawn identification of three isolated cells (tmp/items_spawn.exs):
+  # the mask bit index IS the item id, so each diffed bit named its
+  # cell. Ids are Melee.Enums.ProjectileType's common-item block;
+  # containers (capsule/box/barrel/egg, 0-3) are not in the switch.
+  @item_cell_by_id %{
+    0x04 => 30,
+    0x05 => 29,
+    0x06 => 19,
+    0x07 => 17,
+    0x08 => 2,
+    0x09 => 1,
+    0x0A => 23,
+    0x0B => 10,
+    0x0C => 9,
+    0x0D => 24,
+    0x0E => 13,
+    0x0F => 14,
+    0x10 => 4,
+    0x11 => 16,
+    0x12 => 0,
+    0x13 => 20,
+    0x14 => 15,
+    0x15 => 5,
+    0x16 => 8,
+    0x17 => 7,
+    0x18 => 11,
+    0x19 => 6,
+    0x1A => 21,
+    0x1B => 22,
+    0x1C => 12,
+    0x1D => 3,
+    0x1E => 25,
+    0x1F => 27,
+    0x20 => 26,
+    0x21 => 28,
+    0x22 => 18
+  }
+
+  # Frequency dial taps from the fresh-session `none` default; right
+  # walks very_high(4), high(3)...; left walks very_low(0), low(1)...
+  @item_frequency_taps %{
+    none: 0,
+    very_low: -1,
+    low: -2,
+    medium: -3,
+    high: 2,
+    very_high: 1
+  }
   @additional_row_time_limit 0
   # Rows pinned BEHAVIORALLY (tmp/ta_probe.exs): a right-tap on row 1
   # made an ally dash-attack deal 0% instead of 9% (Team Attack
@@ -202,33 +275,7 @@ defmodule Melee.Match do
   defp set_rules(_session, _specs, _controllers, helpers, [], _timeout), do: {:ok, helpers}
 
   defp set_rules(session, [{leader, _} | _] = specs, controllers, helpers, rules, timeout_frames) do
-    stock_taps =
-      case Keyword.get(rules, :stock) do
-        nil ->
-          0
-
-        n when n in 1..99 ->
-          n - @default_stock
-
-        other ->
-          raise ArgumentError, "rules: :stock must be 1..99, got #{inspect(other)}"
-      end
-
-    time_taps =
-      case Keyword.get(rules, :time_limit) do
-        nil ->
-          0
-
-        n when n in 1..99 ->
-          n - @default_time_limit_min
-
-        other ->
-          raise ArgumentError, "rules: :time_limit must be 1..99 minutes, got #{inspect(other)}"
-      end
-
-    # Team Attack and Pause default ON, so only `false` needs a tap.
-    team_attack_taps = if Keyword.get(rules, :team_attack, true), do: 0, else: 1
-    pause_taps = if Keyword.get(rules, :pause, true), do: 0, else: 1
+    taps = rules_taps!(rules)
     controller = controllers[leader]
 
     # Ride the helpers to the VS Mode menu — but no further. The done?
@@ -256,12 +303,145 @@ defmodule Melee.Match do
          :ok <- seek_row(session, controller, @vs_row_custom_rules),
          :ok <- menu_tap(session, controller, :a),
          :ok <- await(session, &(&1.submenu == @custom_rules_submenu), :rules_screen),
-         :ok <- adjust_row(session, controller, @rules_row_stock, stock_taps),
+         :ok <- adjust_row(session, controller, @rules_row_stock, taps.stock),
+         :ok <- set_item_rules(session, controller, taps.item_frequency, taps.item_off_cells),
          :ok <-
-           set_additional_rules(session, controller, time_taps, team_attack_taps, pause_taps),
+           set_additional_rules(session, controller, taps.time, taps.team_attack, taps.pause),
          :ok <- menu_tap(session, controller, :b),
          :ok <- await(session, &vs_mode_menu?/1, :rules_exit) do
       {:ok, helpers}
+    end
+  end
+
+  # Translate the rules keyword into tap counts (negative = left) from
+  # the fresh-session defaults, raising on out-of-range values. Team
+  # Attack and Pause default ON, so only `false` needs a tap.
+  defp rules_taps!(rules) do
+    %{
+      stock: counted_taps!(rules, :stock, @default_stock),
+      time: counted_taps!(rules, :time_limit, @default_time_limit_min),
+      team_attack: if(Keyword.get(rules, :team_attack, true), do: 0, else: 1),
+      pause: if(Keyword.get(rules, :pause, true), do: 0, else: 1),
+      item_frequency: item_frequency_taps!(rules),
+      item_off_cells: item_off_cells!(rules)
+    }
+  end
+
+  defp counted_taps!(rules, key, default) do
+    case Keyword.get(rules, key) do
+      nil ->
+        0
+
+      n when n in 1..99 ->
+        n - default
+
+      other ->
+        raise ArgumentError, "rules: #{inspect(key)} must be 1..99, got #{inspect(other)}"
+    end
+  end
+
+  defp item_frequency_taps!(rules) do
+    case Keyword.get(rules, :item_frequency) do
+      nil ->
+        0
+
+      frequency when is_map_key(@item_frequency_taps, frequency) ->
+        @item_frequency_taps[frequency]
+
+      other ->
+        raise ArgumentError,
+              "rules: :item_frequency must be one of " <>
+                "#{inspect(Map.keys(@item_frequency_taps))}, got #{inspect(other)}"
+    end
+  end
+
+  defp item_off_cells!(rules) do
+    case Keyword.get(rules, :items) do
+      nil ->
+        []
+
+      items when is_list(items) ->
+        keep =
+          MapSet.new(items, fn item ->
+            id = resolve!(Enums.ProjectileType, item)
+
+            Map.get(@item_cell_by_id, id) ||
+              raise ArgumentError,
+                    "rules: :items entry #{inspect(item)} is not a switchable item"
+          end)
+
+        for cell <- Map.values(@item_cell_by_id), cell not in keep, do: cell
+
+      other ->
+        raise ArgumentError, "rules: :items must be a list of items, got #{inspect(other)}"
+    end
+  end
+
+  # The Item Switch screen (behind row 5): toggle the asked-off cells
+  # walking the grid row by row (left cell, right +16, back, down —
+  # only moves verified live; the columns are 16 and 15 tall), then
+  # set the frequency dial below the left column. Entry is confirmed
+  # the same way as Additional Rules: selection resetting to 0 under
+  # submenu 0xFF.
+  defp set_item_rules(_session, _controller, 0, []), do: :ok
+
+  defp set_item_rules(session, controller, frequency_taps, off_cells) do
+    with :ok <- seek_row(session, controller, @rules_row_items),
+         :ok <- menu_tap(session, controller, :a),
+         :ok <- await(session, &(&1.menu_selection == 0), :item_switch_screen),
+         :ok <- toggle_item_cells(session, controller, off_cells),
+         :ok <- set_item_frequency(session, controller, frequency_taps),
+         :ok <- menu_tap(session, controller, :b) do
+      await(session, &(&1.submenu == @custom_rules_submenu), :item_switch_exit)
+    end
+  end
+
+  defp toggle_item_cells(_session, _controller, []), do: :ok
+
+  defp toggle_item_cells(session, controller, off_cells) do
+    off = MapSet.new(off_cells)
+
+    tap_if_off = fn cell ->
+      if cell in off, do: menu_tap(session, controller, :a), else: :ok
+    end
+
+    walk_row = fn row ->
+      with :ok <- expect_selection(session, row),
+           :ok <- tap_if_off.(row),
+           :ok <- menu_nudge(session, controller, :right),
+           :ok <- expect_selection(session, row + 16),
+           :ok <- tap_if_off.(row + 16),
+           :ok <- menu_nudge(session, controller, :left),
+           :ok <- expect_selection(session, row) do
+        menu_nudge(session, controller, :down)
+      end
+    end
+
+    with :ok <-
+           Enum.reduce_while(0..14, :ok, fn row, :ok ->
+             case walk_row.(row) do
+               :ok -> {:cont, :ok}
+               error -> {:halt, error}
+             end
+           end),
+         :ok <- expect_selection(session, 15) do
+      tap_if_off.(15)
+    end
+  end
+
+  defp set_item_frequency(_session, _controller, 0), do: :ok
+
+  defp set_item_frequency(session, controller, taps) do
+    with :ok <- seek_row(session, controller, @item_switch_frequency_row, 20) do
+      adjust_row(session, controller, @item_switch_frequency_row, taps)
+    end
+  end
+
+  defp expect_selection(session, want) do
+    case step_frame(session) do
+      {:ok, %GameState{menu_selection: ^want}} -> :ok
+      {:ok, gamestate} -> {:error, {:rules_grid_lost, want, gamestate.menu_selection}}
+      {:error, reason} -> {:error, reason}
     end
   end
 

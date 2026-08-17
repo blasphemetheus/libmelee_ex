@@ -118,6 +118,60 @@ defmodule Melee.Integration.RulesTest do
     end
   end
 
+  test "items: a Poke-Ball-only match spawns poke balls and nothing else", ctx do
+    if ctx[:skip] do
+      IO.puts("\n[dolphin] skipped: #{ctx.skip}")
+    else
+      {:ok, session} = start_session(ctx, "items", 51_609)
+      on_exit(fn -> safe_stop(session) end)
+
+      {:ok, first} =
+        Match.play(session,
+          rules: [item_frequency: :very_high, items: [:poke_ball]],
+          p1: [character: :fox],
+          p2: [character: :falco],
+          stage: :final_destination
+        )
+
+      assert GameState.in_game?(first)
+      assert first.item_frequency == 4
+      # Bit index == item id: containers 0-3 (not in the switch) plus
+      # the poke ball (0x22) stay set, every switchable id 4..0x21 is
+      # cleared — and the UNUSED bits 35-39 keep their all-ones
+      # default (the mask starts 0xFFFFFFFFFF).
+      assert first.item_bitfield == 0xFC_0000_000F
+
+      types = collect_item_types(session, first, MapSet.new(), 2_500)
+      poke_ball = Melee.Enums.ProjectileType.to_id(:poke_ball)
+
+      assert poke_ball in types, "no poke ball spawned: #{inspect(Enum.sort(types))}"
+
+      # Nothing else from the switchable block may spawn — containers
+      # (0-3) and whatever they release aside, every id in 4..0x21 was
+      # toggled off.
+      illegal = Enum.filter(types, &(&1 in 4..0x21))
+      assert illegal == [], "disabled items spawned: #{inspect(illegal)}"
+
+      IO.puts("\n[dolphin] items: poke-ball-only, spawned types #{inspect(Enum.sort(types))}")
+      safe_stop(session)
+    end
+  end
+
+  defp collect_item_types(_session, _gamestate, types, 0), do: types
+
+  defp collect_item_types(session, gamestate, types, frames_left) do
+    types =
+      if GameState.in_game?(gamestate),
+        do: Enum.reduce(gamestate.projectiles, types, &MapSet.put(&2, &1.type)),
+        else: types
+
+    case Session.step(session) do
+      {:ok, next} -> collect_item_types(session, next, types, frames_left - 1)
+      nil -> collect_item_types(session, gamestate, types, frames_left - 1)
+      {:error, _} -> types
+    end
+  end
+
   defp ally_damage_run(ctx, team_attack?, slippi_port) do
     name = if team_attack?, do: "ta_on", else: "ta_off"
     {:ok, session} = start_session(ctx, name, slippi_port, [1, 2, 3])

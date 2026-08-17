@@ -94,6 +94,8 @@ defmodule Melee.GameState do
           is_team_attack: boolean(),
           pause_enabled: boolean(),
           timer: non_neg_integer(),
+          item_frequency: 0..4 | nil,
+          item_bitfield: non_neg_integer(),
           distance: float(),
           menu_selection: integer(),
           startAt: String.t(),
@@ -131,6 +133,12 @@ defmodule Melee.GameState do
             is_team_attack: false,
             pause_enabled: true,
             timer: 0,
+            # Item Switch settings from GAME_START: spawn frequency
+            # (0 very_low .. 4 very_high; nil = items OFF, the
+            # fresh-session default) and the 5-byte enabled-items mask
+            # (all-ones default; see Melee.Events for the offsets).
+            item_frequency: nil,
+            item_bitfield: 0xFF_FFFF_FFFF,
             # GAME_START's frozen-Pokemon-Stadium flag (replay v2.0+).
             is_frozen_ps: false,
             distance: 0.0,

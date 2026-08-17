@@ -339,6 +339,42 @@ Traps, each found live:
   (`Melee.Events.Parser.game_start_raw`) precisely so future settings
   can be found the same way: flip one row, diff the bytes.
 
+### The Item Switch sub-screen (row 5)
+
+Mapped and productized 2026-08-17 (`Match.play/2` `rules:
+[item_frequency: ..., items: [...]]`; the Poke-Ball-only game in
+`--only dolphin_rules` is the rerunnable proof). Geometry, all read
+from `menu_selection`:
+
+- Two columns: LEFT cells 0-15 top to bottom, RIGHT cells 16-30. A
+  right-nudge moves +16 within a row (rows 0-14 only), left comes
+  back; down wraps the left column through 31 (0..15 -> 31 -> 0).
+- Selection **31** (below the left column) and **32** (above the
+  right column) are the SAME frequency dial: right-taps on either
+  write the same GAME_START byte.
+- The dial cycles `very_low(0), low(1), medium(2), high(3),
+  very_high(4), none(0xFF)` — from the `none` fresh-session default,
+  one LEFT tap lands very_low and one RIGHT tap very_high. It writes
+  the i8 at GAME_START 0x10. **Items are OFF by default** on these
+  builds — why training games never see one.
+- A on a cell toggles its item; each cell clears/sets one bit of the
+  5-byte mask at 0x28..0x2C, and the full 31-cell byte-diff sweep
+  (`tmp/items_cells.exs`) plus spawn-identification of isolated cells
+  (`tmp/items_spawn.exs`: food, bob-omb, metal box each spawned alone
+  as predicted) proved **bit index == item id** — the same common-item
+  id space `Projectile.type` uses (`Melee.Enums.ProjectileType`,
+  which now names the whole 0x00-0x22 block). The cell <-> id table
+  lives in `Melee.Match`'s `@item_cell_by_id`.
+- Cells 0-30 are ids 4..0x22 in a category-grouped screen order
+  (food/heals, then shooters, melee weapons, throwables, specials,
+  containers last). Containers capsule/box/barrel/egg (ids 0-3) are
+  NOT in the switch: they keep spawning and hold whatever is enabled
+  — a Poke-Ball-only game observed exactly `[0, 1, 2, 34]`. The
+  unused mask bits 35-39 stay at their all-ones default.
+
+Everything here persists per session like the rest of the rules
+screen, and the mask only matters once the frequency is above none.
+
 ## The name-entry keyboard
 
 The same screen `enter_direct_code/4` drives: `submenu == 18`,

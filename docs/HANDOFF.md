@@ -34,10 +34,19 @@ Corrections to the notes below, all found behaviorally
   Pause ON) and verified from GAME_START. Rules persist per session:
   `rules:` on the FIRST play only (else `:rules_need_fresh_menu`).
 
-Items (the Item Switch sub-screen) remain unproductized — same
-open-loop technique should work; item frequency/bitfields live around
-0xE/0x28 in GAME_START. The debug-menu (DBLEVEL MASTER) question is
-still open.
+**Items: DONE later the same day.** The Item Switch sub-screen is
+mapped (two columns, cells 0-30; the frequency dial is selection 31
+and 32 — same dial from both columns) and productized:
+`rules: [item_frequency: :very_high, items: [:poke_ball]]`. Key
+facts: items default OFF (frequency 0xFF at GAME_START 0x10); the
+5-byte mask at 0x28..0x2C has **bit index == item id** (proved by a
+31-cell byte-diff sweep + isolated-cell spawn identification: food /
+bob-omb / metal box spawned alone as predicted); containers (ids 0-3)
+aren't switchable; `Melee.Enums.ProjectileType` now names the whole
+common-item block 0x00-0x22; new GameState fields `item_frequency` /
+`item_bitfield`. The Poke-Ball-only integration test observed spawn
+set exactly `[0, 1, 2, 34]`. The debug-menu (DBLEVEL MASTER)
+question is still open.
 
 ## Addendum 2026-08-14
 
