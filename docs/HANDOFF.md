@@ -435,13 +435,17 @@ in the order agreed:
 5. **Special Melee (VS menu row 2).** Map it with the now-routine
    method (menu_selection + GAME_START byte-diff + behavioral pin):
    lightning/giant/tiny/fixed-camera etc. as `Match.play` options.
-6. **DBLEVEL MASTER mystery.** Why is the debug flag MASTER on both
-   builds, what does the debug VERSUS MODE submenu offer (it looked
-   like a direct match-config surface — possibly a menu-free path to
-   a configured match), and can debug be toggled off? (The Team
-   Attack ON default is NOT part of the mystery: competitive doubles
-   is always played TA ON, so the Slippi builds shipping that default
-   is expected — the user confirmed this.)
+6. **DBLEVEL MASTER mystery — SOLVED (2026-08-18).** Two lines in
+   Slippi's `$Required: General Codes` (Sys GALE01r2.ini) remap the
+   Tournament Melee row to Melee's debug menu (`0422D638 38000006` —
+   the immediate is scene 6, exactly the raw_scene observed) with an
+   Achilles patch making exit land at the CSS. DBLEVEL MASTER is the
+   menu's retail-default display, not a debug mode. The debug menu is
+   a gamestate BLACK BOX (menu_selection/submenu freeze — its own
+   cursor variables), so it is useless as a headless config surface;
+   accidental entry is benign (B exits to a fully working CSS —
+   live-verified to a match). Full writeup in melee-menus.md "The
+   debug menu behind Tournament Melee". Nothing to build.
 7. **RNG control — DONE (2026-08-18).** Bit-reproducible episodes via
    `single_core: true` + `custom_rtc: <unix seconds>` (+ lockstep):
    Melee derives its local seed from emulated boot state, so the RTC

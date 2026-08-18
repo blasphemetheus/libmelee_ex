@@ -376,6 +376,39 @@ from `menu_selection`:
 Everything here persists per session like the rest of the rules
 screen, and the mask only matters once the frequency is above none.
 
+## The debug menu behind Tournament Melee (mystery solved)
+
+VS Mode row 1 ("Tournament Melee") opens Melee's DEBUG MENU (raw
+scene `0x0006`: DATE FEB 13 2002 / VERSUS MODE / MODE TEAM TEST /
+GLOBAL DATA EDIT / DBLEVEL MASTER). This puzzled two sessions; the
+answer (2026-08-18) is two lines inside the `$Required: General
+Codes` gecko bundle that every Slippi build enables in its Sys
+`GALE01r2.ini`:
+
+    0422D638 38000006  #Debug Menu [Magus, donny2112]
+    041B0A14 38600002  #Exiting Debug Menu Returns to CSS [Achilles]
+
+The first patches the Tournament row to load scene 6 (the `38000006`
+immediate IS the scene id we observed) — Slippi deliberately recycles
+the netplay-useless Tournament mode as a debug-menu door. The second
+makes exiting it land on the CSS. Consequences, all verified live:
+
+- **`DBLEVEL: MASTER` is not a debug mode** — it is the debug menu's
+  retail-default display. The game is not globally in debug state.
+- **The debug menu is a gamestate BLACK BOX**: menu events keep
+  flowing (raw_scene 6) but `menu_selection` and `submenu` freeze —
+  it uses its own cursor variables, untouched by the Extract Menu
+  Info gecko. Headless navigation is impossible; only pixels would
+  do. Since rules/teams/items all have observable paths already, it
+  has no value as a config surface.
+- **Accidental entry is benign**: B exits to a fully functional CSS
+  (`menu_state 0`, raw 2) — the normal helpers picked characters and
+  started a 4-stock match from it in 2.9s. `MenuHelper`'s
+  unknown-scene B-fallback therefore escapes it correctly.
+- The "4-man survival test!" CSS banner seen in early discovery
+  sessions is the debug-flavored CSS label after wandering through
+  this door — cosmetic.
+
 ## The name-entry keyboard
 
 The same screen `enter_direct_code/4` drives: `submenu == 18`,
