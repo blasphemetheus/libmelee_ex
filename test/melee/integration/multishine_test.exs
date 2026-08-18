@@ -101,6 +101,26 @@ defmodule Melee.Integration.MultishineTest do
     end
   end
 
+  @tag :dolphin_direct_inputs
+  test "the loop stays frame-perfect with lockstep inputs over the channel", ctx do
+    if ctx[:skip] do
+      IO.puts("\n[dolphin] skipped: #{ctx.skip}")
+    else
+      # The whole deep tier at once: events out over the unix socket
+      # AND pads back in over it — Console packs every registered
+      # controller's state into a per-frame batch (Melee.SlippiPad)
+      # that Dolphin's CMD_OVERWRITE_INPUTS handler BLOCKS on (the
+      # lockstep gate) before serving the game's input poll. A
+      # sustained multishine through that path proves batch pads are
+      # bit-equivalent to pipe pads and the gate stays 1:1 with frames.
+      run_multishine(ctx, "direct_in", 51_602,
+        exi_inputs: true,
+        ffw: true,
+        direct_inputs: true
+      )
+    end
+  end
+
   defp run_multishine(ctx, name, slippi_port, extra_opts) do
     windowed? = System.get_env("MELEE_WINDOWED") == "1"
     home = "#{@home}_#{name}"

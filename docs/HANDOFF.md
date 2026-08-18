@@ -391,11 +391,17 @@ in the order agreed:
    on the same Ishiiruka branch, config key SlippiDirectChannelPath).
    p50 192us, ~5058fps solo, ~12.6k aggregate at 4; multishine
    frame-perfect over it (`--only dolphin_direct`), whole test 630ms.
-   REMAINING deep-tier stages: inputs over the same channel serving
-   CMD_OVERWRITE_INPUTS (drop the named pipes) with an optional
-   LOCKSTEP handshake (block the EXI input read until the client
-   commits the frame's inputs — determinism), then shm only if the
-   residual ~190us ever matters. Do NOT
+   STAGE 2 ALSO DONE (same day): `direct_inputs: true` — lockstep pad
+   batches over the channel serving CMD_OVERWRITE_INPUTS (the input
+   poll blocks on a fresh batch); p50 206us, multishine frame-perfect
+   through the duplex path (`--only dolphin_direct_inputs`), analog
+   triggers carry (the old "ExiAI drops analog triggers" gotcha is
+   INVERTED on this build: pipes/SI is the lossy path now — fix
+   exphil GOTCHAS #66 accordingly). Pipes still pace menus; retiring
+   them fully would need menu inputs over the channel — only bother
+   if fifo plumbing ever hurts. Cross-run determinism now hinges on
+   RNG-seed control (item 7): lockstep fixed input alignment. shm
+   remains not-worth-it. Do NOT
    spend effort on BEAM-side protocol changes. The branch is pushed:
    github.com/blasphemetheus/slippi-Ishiiruka `spectator-flush-on-frame`
    (a PR to vladfi1 remains an option). The FULL `--only dolphin`

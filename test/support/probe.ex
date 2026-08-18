@@ -154,11 +154,12 @@ defmodule Melee.Probe do
     # above) also swaps the console onto the raw unix-socket transport,
     # mirroring Melee.Session's wiring.
     console_opts =
-      if Keyword.get(opts, :direct_channel, false) do
+      if Keyword.get(opts, :direct_channel, false) or Keyword.get(opts, :direct_inputs, false) do
         [
           transport: Melee.Transport.Direct,
           protocol: :raw,
-          transport_opts: [path: Dolphin.direct_channel_path(dolphin.home)]
+          transport_opts: [path: Dolphin.direct_channel_path(dolphin.home)],
+          direct_inputs: Keyword.get(opts, :direct_inputs, false)
         ] ++ console_opts
       else
         console_opts
@@ -175,7 +176,7 @@ defmodule Melee.Probe do
       Map.new(ports, fn gc_port ->
         {:ok, controller} = Controller.start_link(pipe_path: Dolphin.pipes_path(dolphin, gc_port))
         :ok = Controller.connect(controller, boot_timeout)
-        :ok = Console.register_controller(console, controller)
+        :ok = Console.register_controller(console, controller, gc_port)
         {gc_port, controller}
       end)
 

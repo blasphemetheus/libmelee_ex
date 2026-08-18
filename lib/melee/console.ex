@@ -102,10 +102,17 @@ defmodule Melee.Console do
   def step(console, timeout \\ :infinity),
     do: GenServer.call(console, :step, timeout_plus(timeout))
 
-  @doc "Register a `Melee.Controller` to be flushed by `step/2`."
-  @spec register_controller(GenServer.server(), GenServer.server()) :: :ok
-  def register_controller(console, controller),
-    do: GenServer.call(console, {:register_controller, controller})
+  @doc """
+  Register a `Melee.Controller` to be flushed by `step/2`.
+
+  With a GC `port` number the controller's state is also packed into
+  the per-frame pad batch when the console runs `direct_inputs: true`
+  (the direct channel serving `CMD_OVERWRITE_INPUTS` — see
+  `Melee.SlippiPad`); without one it is pipe-flushed only.
+  """
+  @spec register_controller(GenServer.server(), GenServer.server(), 1..4 | nil) :: :ok
+  def register_controller(console, controller, port \\ nil),
+    do: GenServer.call(console, {:register_controller, controller, port})
 
   @doc """
   Stop flushing a previously registered `Melee.Controller`.
@@ -176,7 +183,11 @@ defmodule Melee.Console do
               # :slippstream (ENet spectator, JSON messages) or :raw
               # (the direct channel: each packet is a raw Slippi event
               # payload, no envelope). See Melee.Transport.Direct.
-              protocol: :slippstream
+              protocol: :slippstream,
+              # Send each frame's controller states over the direct
+              # channel as a pad batch (the lockstep input path).
+              direct_inputs: false,
+              controller_ports: %{}
 
     @type t :: %__MODULE__{}
   end
@@ -196,7 +207,8 @@ defmodule Melee.Console do
       polling_mode: Keyword.get(opts, :polling_mode, false),
       polling_timeout: Keyword.get(opts, :polling_timeout, 0),
       reconnect: normalize_reconnect(Keyword.get(opts, :reconnect, false)),
-      protocol: Keyword.get(opts, :protocol, :slippstream)
+      protocol: Keyword.get(opts, :protocol, :slippstream),
+      direct_inputs: Keyword.get(opts, :direct_inputs, false)
     }
 
     {:ok, state}
@@ -235,11 +247,25 @@ defmodule Melee.Console do
     end
   end
 
-  def handle_call({:register_controller, controller}, _from, state),
-    do: {:reply, :ok, %{state | controllers: state.controllers ++ [controller]}}
+  def handle_call({:register_controller, controller, port}, _from, state) do
+    state = %{
+      state
+      | controllers: state.controllers ++ [controller],
+        controller_ports: Map.put(state.controller_ports, controller, port)
+    }
 
-  def handle_call({:unregister_controller, controller}, _from, state),
-    do: {:reply, :ok, %{state | controllers: state.controllers -- [controller]}}
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:unregister_controller, controller}, _from, state) do
+    state = %{
+      state
+      | controllers: state.controllers -- [controller],
+        controller_ports: Map.delete(state.controller_ports, controller)
+    }
+
+    {:reply, :ok, state}
+  end
 
   def handle_call(:connected?, _from, state), do: {:reply, state.connected, state}
 
@@ -248,7 +274,11 @@ defmodule Melee.Console do
 
   @impl true
   def handle_info({:enet_connected, conn}, %{conn: conn} = state) do
-    :ok = state.transport.send(conn, 0, Slippstream.connect_request(), :reliable)
+    # The direct channel has no handshake — and its client->Dolphin
+    # side carries pad batches, so don't send the JSON request there.
+    if state.protocol != :raw do
+      :ok = state.transport.send(conn, 0, Slippstream.connect_request(), :reliable)
+    end
 
     # The direct channel has no handshake: connected the moment the
     # socket is up (the Slippstream path waits for connect_reply).
@@ -501,7 +531,34 @@ defmodule Melee.Console do
     end
   end
 
-  defp flush_controllers(state), do: drop_dead_controllers(state, &Controller.flush/1)
+  defp flush_controllers(state) do
+    state
+    |> drop_dead_controllers(&Controller.flush/1)
+    |> send_direct_batch()
+  end
+
+  # The direct-inputs commit: pack every port-registered controller's
+  # current state into one pad batch and send it over the channel —
+  # the message Dolphin's lockstep gate waits for. Sent on every flush
+  # (menus included, mirroring the pipe FLUSH cadence: the gate at
+  # match start opens before the first frame's events can tell us we
+  # are in-game; Dolphin drains menu-time batches harmlessly).
+  defp send_direct_batch(%{direct_inputs: true, conn: conn} = state) when conn != nil do
+    pads =
+      for controller <- state.controllers,
+          port = Map.get(state.controller_ports, controller),
+          port != nil do
+        {port, Controller.current(controller)}
+      end
+
+    if pads != [] do
+      state.transport.send(conn, 0, Melee.SlippiPad.batch(pads), :reliable)
+    end
+
+    state
+  end
+
+  defp send_direct_batch(state), do: state
 
   # A controller is a separate process; if it died (a supervisor such as
   # `Melee.Session` will restart and re-register it) the console must not

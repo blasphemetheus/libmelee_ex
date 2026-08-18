@@ -241,10 +241,16 @@ defmodule Melee.Session do
 
     {session_opts, launch_opts} = Keyword.split(opts, @session_keys)
 
-    # :direct_channel stays in launch_opts (Dolphin writes the config
-    # key and creates the socket dir) AND informs console wiring below.
+    # :direct_channel/:direct_inputs stay in launch_opts (Dolphin
+    # writes the config keys and creates the socket dir) AND inform
+    # console wiring below; direct_inputs implies the channel.
     session_opts =
-      Keyword.put(session_opts, :direct_channel, Keyword.get(opts, :direct_channel, false))
+      session_opts
+      |> Keyword.put(:direct_inputs, Keyword.get(opts, :direct_inputs, false))
+      |> Keyword.put(
+        :direct_channel,
+        Keyword.get(opts, :direct_channel, false) or Keyword.get(opts, :direct_inputs, false)
+      )
 
     ports = Keyword.get(session_opts, :ports, [1])
     dolphin_module = Keyword.get(session_opts, :dolphin_module, Melee.Dolphin)
@@ -354,6 +360,7 @@ defmodule Melee.Session do
           path: Melee.Dolphin.direct_channel_path(state.dolphin.home)
         )
         |> Keyword.put_new(:protocol, :raw)
+        |> Keyword.put_new(:direct_inputs, Keyword.get(session_opts, :direct_inputs, false))
       else
         console_opts
       end
@@ -402,7 +409,7 @@ defmodule Melee.Session do
     Enum.reduce_while(state.ports, {:ok, state}, fn gc_port, {:ok, state} ->
       pipe = state.dolphin_module.pipes_path(state.dolphin, gc_port)
 
-      case open_controller(state, pipe) do
+      case open_controller(state, pipe, gc_port) do
         {:ok, pid} ->
           {:cont, {:ok, put_in(state.controllers[gc_port], %{pid: pid, pipe: pipe})}}
 
@@ -414,11 +421,11 @@ defmodule Melee.Session do
 
   # Opening the write end of a fifo blocks until Dolphin opens the read
   # end, so this happens only after Dolphin is running.
-  @spec open_controller(State.t(), Path.t()) :: {:ok, pid()} | {:error, term()}
-  defp open_controller(state, pipe) do
+  @spec open_controller(State.t(), Path.t(), pos_integer()) :: {:ok, pid()} | {:error, term()}
+  defp open_controller(state, pipe, gc_port) do
     with {:ok, pid} <- Controller.start_link(pipe_path: pipe),
          :ok <- Controller.connect(pid, state.controller_connect_timeout),
-         :ok <- Console.register_controller(state.console, pid) do
+         :ok <- Console.register_controller(state.console, pid, gc_port) do
       {:ok, pid}
     end
   end
@@ -436,7 +443,7 @@ defmodule Melee.Session do
     # one so `step/2` never flushes a corpse.
     Console.unregister_controller(state.console, entry.pid)
 
-    case open_controller(state, entry.pipe) do
+    case open_controller(state, entry.pipe, gc_port) do
       {:ok, pid} ->
         {:noreply, put_in(state.controllers[gc_port], %{entry | pid: pid})}
 

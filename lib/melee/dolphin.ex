@@ -144,6 +144,7 @@ defmodule Melee.Dolphin do
           | {:exi_inputs, boolean()}
           | {:ffw, boolean()}
           | {:direct_channel, boolean()}
+          | {:direct_inputs, boolean()}
           | {:extra_args, [String.t()]}
 
   @default_slippi_port 51_441
@@ -281,7 +282,7 @@ defmodule Melee.Dolphin do
 
       # Dolphin binds the direct-channel socket inside <home>/Slippi;
       # make sure the directory exists before it tries.
-      if Keyword.get(opts, :direct_channel, false) do
+      if direct_channel?(opts) do
         File.mkdir_p!(Path.join(home, "Slippi"))
       end
 
@@ -926,8 +927,12 @@ defmodule Melee.Dolphin do
              {"SlippiSaveReplays", bool_str(save_replays)}
            ] ++
              if(replay_dir, do: [{"SlippiReplayDir", replay_dir}], else: []) ++
-             if(Keyword.get(opts, :direct_channel, false),
+             if(direct_channel?(opts),
                do: [{"SlippiDirectChannelPath", direct_channel_path(home)}],
+               else: []
+             ) ++
+             if(Keyword.get(opts, :direct_inputs, false),
+               do: [{"SlippiDirectInputs", "True"}],
                else: []
              ) ++
              if(is_nil(monthly),
@@ -1065,6 +1070,12 @@ defmodule Melee.Dolphin do
   # exi_inputs on any other build is refused up front (when the binary
   # answers --version at all; an unprobeable binary is let through,
   # matching the tolerant autodetection elsewhere in this module).
+  # direct_inputs serves the same CMD_OVERWRITE_INPUTS the exi_inputs
+  # gecko polls, over the direct channel — so it implies the channel.
+  defp direct_channel?(opts) do
+    Keyword.get(opts, :direct_channel, false) or Keyword.get(opts, :direct_inputs, false)
+  end
+
   defp check_exi_opts(opts, exe) do
     exi_inputs? = Keyword.get(opts, :exi_inputs, false)
     ffw? = Keyword.get(opts, :ffw, false)
@@ -1072,6 +1083,9 @@ defmodule Melee.Dolphin do
     cond do
       ffw? and not exi_inputs? ->
         {:error, :ffw_requires_exi_inputs}
+
+      Keyword.get(opts, :direct_inputs, false) and not exi_inputs? ->
+        {:error, :direct_inputs_require_exi_inputs}
 
       not exi_inputs? ->
         :ok

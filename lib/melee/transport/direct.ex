@@ -18,8 +18,9 @@ defmodule Melee.Transport.Direct do
   `direct_channel: true` option).
 
   `connect/4` ignores host/port; the socket path comes from
-  `opts[:path]`. `send/4` is a no-op: the direct channel has no
-  handshake and (so far) carries nothing client-to-Dolphin.
+  `opts[:path]`. `send/4` carries client-to-Dolphin messages — the
+  per-frame pad batches of the direct-inputs path (`Melee.SlippiPad`);
+  there is no connect handshake.
   """
 
   @behaviour Melee.Transport
@@ -48,7 +49,11 @@ defmodule Melee.Transport.Direct do
   end
 
   @impl Melee.Transport
-  def send(_conn, _channel, _data, :reliable), do: :ok
+  def send(conn, _channel, data, :reliable) do
+    GenServer.call(conn, {:send, data})
+  catch
+    :exit, _ -> {:error, :closed}
+  end
 
   @impl Melee.Transport
   def disconnect(conn) do
@@ -60,6 +65,13 @@ defmodule Melee.Transport.Direct do
   @impl GenServer
   def init({socket, owner}) do
     {:ok, %{socket: socket, owner: owner}}
+  end
+
+  @impl GenServer
+  def handle_call({:send, data}, _from, state) do
+    # packet: 4 prepends the u32 length on the way out too — the same
+    # framing Dolphin's channel reader parses.
+    {:reply, :gen_tcp.send(state.socket, data), state}
   end
 
   @impl GenServer

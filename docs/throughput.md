@@ -158,12 +158,37 @@ direct — `--only dolphin_direct` for the last): identical
 74 shines / 73 jumpsquats on all of them, and the direct variant's
 whole test (boot, menus, 600 played frames) completes in ~630ms.
 
-Still open in the deep tier, in order of value: inputs over the same
-channel serving `CMD_OVERWRITE_INPUTS` (replacing the named pipes)
-with an optional **lockstep** handshake — block the EXI input read
-until the client commits inputs for the frame, giving determinism no
-polling scheme can; then shared memory if the remaining ~190us ever
-matters (it is now mostly emulation again).
+### Stage 2: lockstep inputs over the channel (same day)
+
+`direct_inputs: true` (implies the channel; requires `exi_inputs`)
+makes the channel duplex: each `Console.step` packs every
+port-registered controller's state into a pad batch
+(`Melee.SlippiPad` — byte-for-byte what Dolphin's pipe device would
+have produced, unit-pinned against Pipes.cpp) and sends it up the
+socket, where `CMD_OVERWRITE_INPUTS` **blocks until a fresh batch
+arrives** — the lockstep gate: the game's input poll cannot proceed
+until the client commits that frame's pads.
+
+Measured: p50 **206us** (~4732fps) — the batch send + gate costs
+~14us over events-only. The multishine suite's fourth variant
+(`--only dolphin_direct_inputs`) is frame-perfect through the full
+duplex path (74/73 again, whole test 757ms), and analog triggers
+carry: SET L 0.43 over channel pads reads back `l_shoulder = 0.429`
+with the light-shield action — noteworthy because the plain pipe/SI
+path on this build reads 0.0 there (the old "ExiAI drops analog
+triggers" gotcha is INVERTED now: EXI-served inputs are the
+full-fidelity path, pipes-only is the lossy one).
+
+Named pipes still exist and still pace menus (the overwrite gecko
+only polls in-game), and the client keeps flushing them — both gates
+active is belt-and-suspenders, not a conflict. Retiring pipes
+entirely would need menu inputs over the channel too (the gecko does
+not cover menus); do that only if the fifo plumbing ever actually
+hurts. True cross-run determinism additionally needs RNG-seed control
+(roadmap item 7 — the seed at GAME_START 0x13D): lockstep fixes
+input-to-frame alignment, the seed fixes everything else.
+
+Shared memory remains not-worth-it at these numbers.
 
 ## Consequences for the roadmap
 
