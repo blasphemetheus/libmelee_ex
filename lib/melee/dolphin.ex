@@ -930,24 +930,7 @@ defmodule Melee.Dolphin do
              {"SlippiSaveReplays", bool_str(save_replays)}
            ] ++
              if(replay_dir, do: [{"SlippiReplayDir", replay_dir}], else: []) ++
-             if(direct_channel?(opts),
-               do: [{"SlippiDirectChannelPath", direct_channel_path(home)}],
-               else: []
-             ) ++
-             if(Keyword.get(opts, :direct_inputs, false),
-               do: [{"SlippiDirectInputs", "True"}],
-               else: []
-             ) ++
-             case Keyword.get(opts, :rng_seed) do
-               nil ->
-                 []
-
-               seed when is_integer(seed) and seed > 0 ->
-                 [{"SlippiRngSeed", to_string(seed)}]
-
-               other ->
-                 raise ArgumentError, "rng_seed must be a positive integer, got #{inspect(other)}"
-             end ++
+             direct_channel_kvs(opts, home) ++
              if(is_nil(monthly),
                do: [],
                else: [{"SlippiReplayMonthlyFolders", bool_str(monthly)}]
@@ -964,16 +947,7 @@ defmodule Melee.Dolphin do
       [
         {"GFXBackend", gfx_backend},
         {"EmulationSpeed", to_string(emulation_speed)}
-      ] ++
-        memory_card_kvs ++
-        if(Keyword.get(opts, :single_core, false), do: [{"CPUThread", "False"}], else: []) ++
-        case Keyword.get(opts, :custom_rtc) do
-          nil ->
-            []
-
-          unix_seconds when is_integer(unix_seconds) and unix_seconds > 0 ->
-            [{"EnableCustomRTC", "True"}, {"CustomRTCValue", to_string(unix_seconds)}]
-        end
+      ] ++ memory_card_kvs ++ determinism_kvs(opts)
 
     update_ini(ini_path, "Core", core_kvs)
     update_ini(ini_path, "Display", [{"Fullscreen", "False"}])
@@ -989,6 +963,43 @@ defmodule Melee.Dolphin do
 
   defp bool_str(true), do: "True"
   defp bool_str(false), do: "False"
+
+  # The direct channel's Ishiiruka [Core] keys (socket path, lockstep
+  # inputs, the EXI device rng pin).
+  defp direct_channel_kvs(opts, home) do
+    if(direct_channel?(opts),
+      do: [{"SlippiDirectChannelPath", direct_channel_path(home)}],
+      else: []
+    ) ++
+      if(Keyword.get(opts, :direct_inputs, false),
+        do: [{"SlippiDirectInputs", "True"}],
+        else: []
+      ) ++
+      case Keyword.get(opts, :rng_seed) do
+        nil ->
+          []
+
+        seed when is_integer(seed) and seed > 0 ->
+          [{"SlippiRngSeed", to_string(seed)}]
+
+        other ->
+          raise ArgumentError, "rng_seed must be a positive integer, got #{inspect(other)}"
+      end
+  end
+
+  # The reproducible-episodes recipe (docs/throughput.md): single-core
+  # emulation removes dual-core nondeterminism (free under Null video)
+  # and a pinned RTC selects the match seed.
+  defp determinism_kvs(opts) do
+    if(Keyword.get(opts, :single_core, false), do: [{"CPUThread", "False"}], else: []) ++
+      case Keyword.get(opts, :custom_rtc) do
+        nil ->
+          []
+
+        unix_seconds when is_integer(unix_seconds) and unix_seconds > 0 ->
+          [{"EnableCustomRTC", "True"}, {"CustomRTCValue", to_string(unix_seconds)}]
+      end
+  end
 
   ## ------------------------------------------------------------------
   ## Memory card
