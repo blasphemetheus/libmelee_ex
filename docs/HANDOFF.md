@@ -361,14 +361,19 @@ a regression test. A good advertisement for keeping the fuzz property.
 Hex publish is deliberately DEFERRED — not shipping yet. Priorities,
 in the order agreed:
 
-1. **Training throughput (protocol work).** The measured ceiling is
-   ~450fps: blocking pipes + the BEAM handshake at ~2.2ms/frame, with
-   emulation_speed irrelevant under blocking. Attack the per-frame
-   round-trip: batching/cheaper serialization on the spectator + pipe
-   path, and explore the **EXI direct channel** (the reason the ExiAI
-   build exists) as a possible bypass of the Slippi spectator socket
-   entirely. Measure before/after with the existing latency bench
-   (`exphil/scripts/bridge_latency_bench.exs` pattern).
+1. **Training throughput.** PROFILED 2026-08-17 — full numbers and
+   method in `docs/throughput.md`. Verdict: the BEAM side is
+   exonerated (0.03% busy; 2.2us JSON decode; input pre-buffering
+   changes nothing); the 2.1ms blocking frame is Dolphin-side
+   scheduling — every packet arrival is one or two periods of a
+   ~1.06ms clock (the spectator server's ~1ms enet_host_service
+   loop), and blocking always spans two. Remaining moves, in order:
+   (a) scale OUT — sessions stack near-linearly (4 concurrent =
+   1830fps aggregate at ~86% efficiency on 32 cores), so the pool is
+   the cheap win today; (b) patch the ExiAI fork's spectator loop to
+   flush on the frame boundary (est. ~900fps/instance); (c) the EXI
+   direct channel bypass (bigger scope, bigger ceiling). Do NOT spend
+   effort on BEAM-side protocol changes.
 2. **Card-seeded rules.** Rules live in Melee save data and the
    memory-card seeding machinery already exists
    (`memory_card: {:folder, seed: path}`, built for nametags). Create

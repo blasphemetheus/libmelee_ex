@@ -68,13 +68,15 @@ defmodule Melee.MixProject do
         "README.md",
         "docs/getting-started.md",
         "docs/melee-menus.md",
-        "docs/behavior-testing.md"
+        "docs/behavior-testing.md",
+        "docs/throughput.md"
       ],
       groups_for_extras: [
         Guides: [
           "docs/getting-started.md",
           "docs/melee-menus.md",
-          "docs/behavior-testing.md"
+          "docs/behavior-testing.md",
+          "docs/throughput.md"
         ]
       ]
     ]
