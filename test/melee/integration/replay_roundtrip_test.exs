@@ -12,7 +12,7 @@ defmodule Melee.Integration.ReplayRoundtripTest do
   decoder, Slippi's recorder, and the file decoder: the shine count in
   the file must equal the count seen live.
 
-      MELEE_DOLPHIN_PATH=~/.local/share/slippi/exi-ai/dolphin-emu-headless \\
+      MELEE_DOLPHIN_PATH=~/.local/share/slippi/exi-ai-flush/dolphin-emu-headless \\
       MELEE_ISO_PATH=~/isos/melee.iso \\
       mix test --only dolphin_replay
   """

@@ -10,7 +10,7 @@ defmodule Melee.Integration.MultigameTest do
   and Dolphin is never relaunched (asserted by os pid). Per-game
   overhead after the first is menu time alone.
 
-      MELEE_DOLPHIN_PATH=~/.local/share/slippi/exi-ai/dolphin-emu-headless \\
+      MELEE_DOLPHIN_PATH=~/.local/share/slippi/exi-ai-flush/dolphin-emu-headless \\
       MELEE_ISO_PATH=~/isos/melee.iso \\
       mix test --only dolphin_multigame
   """

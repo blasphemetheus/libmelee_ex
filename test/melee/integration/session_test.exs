@@ -8,7 +8,7 @@ defmodule Melee.Integration.SessionTest do
 
   Excluded by default; it launches Dolphin itself:
 
-      MELEE_DOLPHIN_PATH=~/.local/share/slippi/exi-ai/dolphin-emu-headless \\
+      MELEE_DOLPHIN_PATH=~/.local/share/slippi/exi-ai-flush/dolphin-emu-headless \\
       MELEE_ISO_PATH=~/isos/melee.iso \\
       mix test --only dolphin_session
   """

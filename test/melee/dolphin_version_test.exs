@@ -81,7 +81,9 @@ defmodule Melee.DolphinVersionTest do
     test "netplay-stable and ExiAI are told apart" do
       launcher = Path.join([System.user_home!(), ".config", "Slippi Launcher"])
       netplay = Path.join([launcher, "netplay", "Slippi_Online-x86_64.AppImage"])
-      exiai = Path.join([System.user_home!(), ".local/share/slippi/exi-ai/dolphin-emu-headless"])
+
+      exiai =
+        Path.join([System.user_home!(), ".local/share/slippi/exi-ai-flush/dolphin-emu-headless"])
 
       assert {:ok, %Version{mainline?: false, build: :netplay}} = Dolphin.version(netplay)
       assert {:ok, %Version{mainline?: false, build: :exi_ai}} = Dolphin.version(exiai)

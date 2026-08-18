@@ -10,7 +10,7 @@ defmodule Melee.Integration.RulesTest do
   without, which is what pins byte 0x7 bit 3 as the Team Attack flag
   rather than a coincidental toggle.
 
-      MELEE_DOLPHIN_PATH=~/.local/share/slippi/exi-ai/dolphin-emu-headless \\
+      MELEE_DOLPHIN_PATH=~/.local/share/slippi/exi-ai-flush/dolphin-emu-headless \\
       MELEE_ISO_PATH=~/isos/melee.iso \\
       mix test --only dolphin_rules
   """

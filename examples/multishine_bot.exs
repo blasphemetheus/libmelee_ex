@@ -1,6 +1,6 @@
 # A frame-perfect multishine bot, whole thing.
 #
-#   MELEE_DOLPHIN_PATH=~/.local/share/slippi/exi-ai/dolphin-emu-headless \
+#   MELEE_DOLPHIN_PATH=~/.local/share/slippi/exi-ai-flush/dolphin-emu-headless \
 #   MELEE_ISO_PATH=~/isos/melee.iso \
 #   mix run examples/multishine_bot.exs
 #

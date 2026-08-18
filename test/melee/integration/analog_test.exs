@@ -15,7 +15,7 @@ defmodule Melee.Integration.AnalogTest do
   a 21-point sweep; the boundary points 0.35 and 0.65 pass through
   untouched.
 
-      MELEE_DOLPHIN_PATH=~/.local/share/slippi/exi-ai/dolphin-emu-headless \\
+      MELEE_DOLPHIN_PATH=~/.local/share/slippi/exi-ai-flush/dolphin-emu-headless \\
       MELEE_ISO_PATH=~/isos/melee.iso \\
       mix test --only dolphin_analog
   """

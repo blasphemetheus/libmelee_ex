@@ -17,7 +17,7 @@ defmodule Melee.Integration.RosterTest do
       spectator stream — so both tests assert the navigation paths, not
       the frozen-ness itself.
 
-      MELEE_DOLPHIN_PATH=~/.local/share/slippi/exi-ai/dolphin-emu-headless \\
+      MELEE_DOLPHIN_PATH=~/.local/share/slippi/exi-ai-flush/dolphin-emu-headless \\
       MELEE_ISO_PATH=~/isos/melee.iso \\
       mix test --only dolphin_roster
   """

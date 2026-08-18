@@ -9,7 +9,7 @@ defmodule Melee.Integration.CpuLevelsTest do
   feedback controller with the every-other-frame fine tilt is what
   fixed it, and this pins the whole range.
 
-      MELEE_DOLPHIN_PATH=~/.local/share/slippi/exi-ai/dolphin-emu-headless \\
+      MELEE_DOLPHIN_PATH=~/.local/share/slippi/exi-ai-flush/dolphin-emu-headless \\
       MELEE_ISO_PATH=~/isos/melee.iso \\
       mix test --only dolphin_cpu
   """

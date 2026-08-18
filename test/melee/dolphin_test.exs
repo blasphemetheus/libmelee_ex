@@ -65,7 +65,7 @@ defmodule Melee.DolphinTest do
 
     test "everything else falls back to ishiiruka" do
       assert Dolphin.detect_flavor("/x/Slippi Launcher/netplay") == :ishiiruka
-      assert Dolphin.detect_flavor("/x/slippi/exi-ai/dolphin-emu-headless") == :ishiiruka
+      assert Dolphin.detect_flavor("/x/slippi/exi-ai-flush/dolphin-emu-headless") == :ishiiruka
     end
   end
 

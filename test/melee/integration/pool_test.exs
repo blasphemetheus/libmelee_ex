@@ -8,7 +8,7 @@ defmodule Melee.Integration.PoolTest do
   ports, three simultaneous games — the eval-farm shape actually
   exercised, not just unit-tested.
 
-      MELEE_DOLPHIN_PATH=~/.local/share/slippi/exi-ai/dolphin-emu-headless \\
+      MELEE_DOLPHIN_PATH=~/.local/share/slippi/exi-ai-flush/dolphin-emu-headless \\
       MELEE_ISO_PATH=~/isos/melee.iso \\
       mix test --only dolphin_pool
   """

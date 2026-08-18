@@ -265,7 +265,8 @@ devenv shell -- bash -c "EXPHIL_SKIP_NIF_COMPILE=1 mix test"
 | Build | Path | Use for |
 |---|---|---|
 | netplay-stable | `~/.local/share/slippi/netplay/Slippi_Online-x86_64.AppImage` | **Netplay Direct** (the only one where it works), windowed menu work |
-| ExiAI Ishiiruka | `~/.local/share/slippi/exi-ai/dolphin-emu-headless` | headless local games, EXI inputs |
+| ExiAI Ishiiruka (flush-patched — the DEFAULT since 2026-08-18) | `~/.local/share/slippi/exi-ai-flush/dolphin-emu-headless` | headless local games, EXI inputs; ~1.76ms/frame vs stock's 2.1 (docs/throughput.md) |
+| ExiAI Ishiiruka (stock, fallback) | `~/.local/share/slippi/exi-ai/dolphin-emu-headless` | same jobs, unpatched upstream binary |
 | mainline | `~/.local/share/slippi/mainline/dolphin-emu-mainline` | analog-through-pipes; its extracted AppImage lacks a headless Qt plugin |
 
 **Slippi Direct does NOT work on the ExiAI build** — verified against a
@@ -386,8 +387,9 @@ in the order agreed:
    environmental tests (DolphinTest's manual-Dolphin connect test and
    nametag_create's netplay-only boot prompt); nametag_select's
    anti-vacuous floor was retuned to 1s because the patched build
-   finishes the whole flow in 1.2-1.8s (was 2.9s). Remaining:
-   point MELEE_DOLPHIN_PATH at exi-ai-flush by default once trusted.
+   finishes the whole flow in 1.2-1.8s (was 2.9s). DONE 2026-08-18:
+   exi-ai-flush is the default ExiAI path in every doc and test
+   moduledoc; stock remains at `exi-ai/` as fallback.
 2. **Card-seeded rules.** Rules live in Melee save data and the
    memory-card seeding machinery already exists
    (`memory_card: {:folder, seed: path}`, built for nametags). Create

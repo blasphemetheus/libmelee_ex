@@ -14,7 +14,7 @@ defmodule Melee.Bot do
       end
 
       Melee.Bot.run(HoldRight,
-        path: "~/.local/share/slippi/exi-ai/dolphin-emu-headless",
+        path: "~/.local/share/slippi/exi-ai-flush/dolphin-emu-headless",
         iso_path: "~/isos/melee.iso",
         home: "/tmp/holdright",
         character: :fox,

@@ -8,7 +8,7 @@ defmodule Melee.Integration.FourPlayerTest do
   pipeline (`Session.stream/2 |> GameEvents.stream/1`) producing a
   `:stock_lost` while the game runs.
 
-      MELEE_DOLPHIN_PATH=~/.local/share/slippi/exi-ai/dolphin-emu-headless \\
+      MELEE_DOLPHIN_PATH=~/.local/share/slippi/exi-ai-flush/dolphin-emu-headless \\
       MELEE_ISO_PATH=~/isos/melee.iso \\
       mix test --only dolphin_4p
   """

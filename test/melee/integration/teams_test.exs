@@ -12,7 +12,7 @@ defmodule Melee.Integration.TeamsTest do
   docs/melee-menus.md "Team Battle"; `Melee.Cursor` carries the
   promoted steering/settled-press primitives.
 
-      MELEE_DOLPHIN_PATH=~/.local/share/slippi/exi-ai/dolphin-emu-headless \\
+      MELEE_DOLPHIN_PATH=~/.local/share/slippi/exi-ai-flush/dolphin-emu-headless \\
       MELEE_ISO_PATH=~/isos/melee.iso \\
       mix test --only dolphin_teams
   """

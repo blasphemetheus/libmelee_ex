@@ -11,7 +11,7 @@ defmodule Melee.Integration.BotApiTest do
   The bot holds right, so Fox dashes off the right edge and burns all
   four stocks; the game ends on its own.
 
-      MELEE_DOLPHIN_PATH=~/.local/share/slippi/exi-ai/dolphin-emu-headless \\
+      MELEE_DOLPHIN_PATH=~/.local/share/slippi/exi-ai-flush/dolphin-emu-headless \\
       MELEE_ISO_PATH=~/isos/melee.iso \\
       mix test --only dolphin_match
   """

@@ -38,7 +38,8 @@ optional NIF transport).
 | Build | Get it from | Use it for | Caveats |
 |---|---|---|---|
 | Slippi netplay (stable) | slippi.gg launcher | Netplay Direct/Unranked, watching bot games in a window | **Ignores the headless flag — always opens a window** |
-| ExiAI Ishiiruka (`dolphin-emu-headless`) | vladfi1's slippi-ssbm-asm releases | Headless local games (this is what a training loop wants) | Slippi Direct does not work on it |
+| ExiAI Ishiiruka, flush-patched (`exi-ai-flush/dolphin-emu-headless`) | built from blasphemetheus/slippi-Ishiiruka branch `spectator-flush-on-frame` (recipe in `docs/throughput.md`) | Headless local games — **the default**: ~25% lower frame latency than stock (spectator sends on the frame boundary) | Slippi Direct does not work on any ExiAI build |
+| ExiAI Ishiiruka, stock | vladfi1's slippi-Ishiiruka `exi-ai-0.2.0` release | Fallback if you want an unpatched upstream binary | Same Direct caveat; ~2.1ms/frame vs the patch's ~1.76ms |
 | Mainline Slippi | slippi.gg | Analog input over pipes | Extracted AppImage lacks a headless Qt plugin |
 
 Add the library as a dependency (not yet on Hex):
@@ -63,7 +64,7 @@ defmodule HoldRight do
 end
 
 Melee.Bot.run(HoldRight,
-  path: "~/.local/share/slippi/exi-ai/dolphin-emu-headless",
+  path: "~/.local/share/slippi/exi-ai-flush/dolphin-emu-headless",
   iso_path: "~/isos/melee.iso",
   home: "/tmp/holdright",
   character: :fox,
@@ -96,7 +97,7 @@ under a supervisor that dies cleanly with Dolphin.
 ```elixir
 {:ok, session} =
   Melee.Session.start_link(
-    path: "~/.local/share/slippi/exi-ai/dolphin-emu-headless",
+    path: "~/.local/share/slippi/exi-ai-flush/dolphin-emu-headless",
     iso_path: "~/isos/melee.iso",
     home: "/tmp/my_bot_home",          # a private Dolphin user dir
     headless: true,
