@@ -90,6 +90,41 @@ Rebuild recipe: `nix-shell` (the branch carries a `shell.nix`), then
 -DENABLE_PULSEAUDIO=false -DENABLE_EVDEV=false` and
 `make dolphin-nogui`, then copy `Data/Sys` beside the binary.
 
+## EXI inputs + fast-forward (landed 2026-08-18)
+
+The "next lever" predicted below is DONE:
+`Melee.Dolphin.launch(exi_inputs: true, ffw: true)` (passed through by
+`Session`/`Probe`) enables the two gecko codes the ExiAI build ships —
+`$Optional: Allow Bot Input Overrides` (the game pulls pad state over
+the Slippi EXI device, `CMD_OVERWRITE_INPUTS`, instead of Serial
+Interface polling) and `$Optional: FFW VS Mode` (fast-forward, which
+that decoupling makes possible). Semantics mirror Python libmelee:
+`ffw` without `exi_inputs` errors, and `exi_inputs` on a non-ExiAI
+binary is refused via the `--version` probe.
+
+Measured on the flush-patched build:
+
+| | pipes (SI) | exi + ffw |
+| --- | --- | --- |
+| Blocking step p50 | 1755us | **233us** (p99 372us) |
+| Solo fps | ~569 | **~4272** |
+| 4-concurrent aggregate | 2117 | **~11800** (HIGH per-session variance: 552-4529 — at these speeds sessions are CPU-bound and contend) |
+
+Correctness: the multishine suite now runs TWICE (`--only dolphin_tech`
+covers both; `--only dolphin_ffw` the new path alone) — identical
+74 shines / 73 jumpsquats over 600 frames on both input routes, so the
+EXI path is frame-accurate, not merely fast.
+
+Caveats to know:
+
+- **Analog triggers are dropped on the EXI input path** (exphil
+  GOTCHAS #66): digital L/R work, light shield does not.
+- FFW applies to VS gameplay; menus run at the flush-patched pace
+  (~1ms/frame), so per-episode menu overhead is unchanged.
+- Under concurrency the fair-share scheduling is rough (one of four
+  sessions sank to 552fps); a training pool should pin or shard
+  instances if per-env pacing matters.
+
 ## Consequences for the roadmap
 
 1. **Scale OUT, not up, for training throughput today.** Sessions

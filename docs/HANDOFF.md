@@ -378,8 +378,18 @@ in the order agreed:
    p50 2119 -> 1755us, p99 3216 -> 1856us, 4-concurrent 1830 -> 2117
    aggregate, all integration suites green on it. The step is now
    EMULATION-bound, so the next per-instance lever is Fizzi's
-   fast-forward gecko (what slippi-ai uses), not transport; (c) the
-   EXI direct channel bypass (bigger scope, bigger ceiling). Do NOT
+   fast-forward gecko (what slippi-ai uses), not transport. ALSO DONE
+   (2026-08-18): `exi_inputs:`/`ffw:` launch options enable the ExiAI
+   build's Bot-Input-Overrides + FFW geckos — blocking step p50 233us,
+   ~4272fps solo, ~11.8k aggregate at 4 (high variance; see
+   docs/throughput.md), multishine frame-perfect through the EXI input
+   path (`--only dolphin_ffw`); analog triggers are dropped on it;
+   (c) the EXI DIRECT CHANNEL bypass — QUEUED, the user wants this
+   eventually: extend CEXISlippi so events reach the bot at DMAWrite
+   time over shm/unix socket and inputs return on the same channel
+   (optionally a blocking lockstep handshake) — no spectator thread,
+   ENet, JSON, or pipes; the payoff is at FFW speeds where frame times
+   are ~0.23ms and structure matters again, plus determinism. Do NOT
    spend effort on BEAM-side protocol changes. The branch is pushed:
    github.com/blasphemetheus/slippi-Ishiiruka `spectator-flush-on-frame`
    (a PR to vladfi1 remains an option). The FULL `--only dolphin`

@@ -283,6 +283,76 @@ defmodule Melee.DolphinTest do
       refute gecko =~ "{extra_codes}"
     end
 
+    # A fake that answers --version like the real ExiAI Ishiiruka build
+    # (exit 1, version line on stderr) so check_exi_opts can probe it,
+    # and otherwise sleeps like fake_exe.
+    defp fake_exi_ai_exe(dir) do
+      path = Path.join(dir, "dolphin-emu-headless")
+
+      File.write!(path, """
+      #!/bin/sh
+      if [ "$1" = "--version" ]; then
+        echo "Faster Melee - Slippi (3.5.1) - ExiAI" >&2
+        exit 1
+      fi
+      sleep 30
+      """)
+
+      File.chmod!(path, 0o755)
+      path
+    end
+
+    test "exi_inputs + ffw enable the two ExiAI gecko codes", %{tmp_dir: tmp} do
+      exe = fake_exi_ai_exe(tmp)
+      home = Path.join(tmp, "home")
+
+      assert {:ok, _} =
+               Dolphin.prepare_home(
+                 path: exe,
+                 iso_path: "/isos/melee.iso",
+                 home: home,
+                 exi_inputs: true,
+                 ffw: true
+               )
+
+      gecko = File.read!(Path.join([home, "GameSettings", "GALE01r2.ini"]))
+      assert gecko =~ "$Optional: Allow Bot Input Overrides"
+      assert gecko =~ "$Optional: FFW VS Mode"
+    end
+
+    test "ffw without exi_inputs is refused", %{tmp_dir: tmp} do
+      exe = fake_exi_ai_exe(tmp)
+
+      assert {:error, :ffw_requires_exi_inputs} =
+               Dolphin.prepare_home(
+                 path: exe,
+                 iso_path: "/isos/melee.iso",
+                 home: Path.join(tmp, "home"),
+                 ffw: true
+               )
+    end
+
+    test "exi_inputs on a non-ExiAI build is refused", %{tmp_dir: tmp} do
+      # Answers --version like Ishiiruka netplay (exit 255, number on
+      # stdout).
+      path = Path.join(tmp, "dolphin-emu-headless")
+
+      File.write!(
+        path,
+        "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 3.6.4; exit 255; fi\nsleep 30\n"
+      )
+
+      File.chmod!(path, 0o755)
+
+      assert {:error, {:exi_inputs_unsupported, :netplay}} =
+               Dolphin.prepare_home(
+                 path: path,
+                 iso_path: "/isos/melee.iso",
+                 home: Path.join(tmp, "home"),
+                 exi_inputs: true
+               )
+    end
+
     test "setup_gecko_codes: false skips the file", %{tmp_dir: tmp} do
       exe = fake_exe(tmp)
       home = Path.join(tmp, "home")

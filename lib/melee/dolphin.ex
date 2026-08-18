@@ -141,6 +141,8 @@ defmodule Melee.Dolphin do
           | {:replay_dir, Path.t()}
           | {:setup_gecko_codes, boolean()}
           | {:gecko_extra_codes, [String.t()]}
+          | {:exi_inputs, boolean()}
+          | {:ffw, boolean()}
           | {:extra_args, [String.t()]}
 
   @default_slippi_port 51_441
@@ -270,6 +272,7 @@ defmodule Melee.Dolphin do
          {:ok, iso_path} <- resolve_path_opt(opts, :iso_path, info && info.iso_path),
          {:ok, exe, flavor} <- resolve_exe(path, Keyword.get(opts, :flavor, :auto)),
          :ok <- check_spectator_port(opts, slippi_port),
+         :ok <- check_exi_opts(opts, exe),
          {:ok, home, temp_home?} <- setup_home_dir(opts) do
       headless = Keyword.get(opts, :headless, false)
 
@@ -278,7 +281,10 @@ defmodule Melee.Dolphin do
       user_json? = setup_user_json(home, Keyword.get(opts, :user_json_path), info)
 
       if Keyword.get(opts, :setup_gecko_codes, true) do
-        write_gecko_codes(home, Keyword.get(opts, :gecko_extra_codes, []))
+        write_gecko_codes(
+          home,
+          Keyword.get(opts, :gecko_extra_codes, []) ++ exi_gecko_codes(opts)
+        )
       end
 
       # Bot controllers must be wired in BEFORE the process starts —
@@ -1031,6 +1037,51 @@ defmodule Melee.Dolphin do
   ## ------------------------------------------------------------------
   ## Gecko codes (console.py _setup_gecko_codes)
   ## ------------------------------------------------------------------
+
+  # EXI inputs + fast-forward (console.py use_exi_inputs / enable_ffw).
+  #
+  # `exi_inputs: true` enables the game-side gecko that makes Melee ask
+  # Dolphin's Slippi EXI device for pad overrides each frame
+  # (CMD_OVERWRITE_INPUTS, 0xD9) — inputs still come from the same
+  # named pipes, but enter the game over EXI instead of the Serial
+  # Interface polling path. That decoupling is what `ffw: true` (the
+  # FFW VS Mode gecko) needs to fast-forward matches, which is why ffw
+  # without exi_inputs is an error, mirroring Python libmelee. KNOWN
+  # LIMITATION of the EXI path (exphil GOTCHAS #66): analog trigger
+  # values are dropped — digital L/R presses work, light shield does
+  # not. Both codes ship only in the ExiAI builds' Sys ini, so
+  # exi_inputs on any other build is refused up front (when the binary
+  # answers --version at all; an unprobeable binary is let through,
+  # matching the tolerant autodetection elsewhere in this module).
+  defp check_exi_opts(opts, exe) do
+    exi_inputs? = Keyword.get(opts, :exi_inputs, false)
+    ffw? = Keyword.get(opts, :ffw, false)
+
+    cond do
+      ffw? and not exi_inputs? ->
+        {:error, :ffw_requires_exi_inputs}
+
+      not exi_inputs? ->
+        :ok
+
+      true ->
+        case version(exe) do
+          {:ok, %Version{build: :exi_ai}} -> :ok
+          {:ok, %Version{build: build}} -> {:error, {:exi_inputs_unsupported, build}}
+          {:error, _unprobeable} -> :ok
+        end
+    end
+  end
+
+  defp exi_gecko_codes(opts) do
+    List.flatten([
+      if(Keyword.get(opts, :exi_inputs, false),
+        do: ["$Optional: Allow Bot Input Overrides"],
+        else: []
+      ),
+      if(Keyword.get(opts, :ffw, false), do: ["$Optional: FFW VS Mode"], else: [])
+    ])
+  end
 
   defp write_gecko_codes(home, extra_codes) do
     template =

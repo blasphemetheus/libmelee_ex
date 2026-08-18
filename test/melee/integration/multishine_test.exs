@@ -62,14 +62,38 @@ defmodule Melee.Integration.MultishineTest do
     if ctx[:skip] do
       IO.puts("\n[dolphin] skipped: #{ctx.skip}")
     else
-      windowed? = System.get_env("MELEE_WINDOWED") == "1"
+      run_multishine(ctx, "pipes", 51_596, [])
+    end
+  end
 
-      probe =
-        Probe.start!(
+  @tag :dolphin_ffw
+  test "the loop stays frame-perfect under EXI inputs + fast-forward", ctx do
+    if ctx[:skip] do
+      IO.puts("\n[dolphin] skipped: #{ctx.skip}")
+    else
+      # Same inputs, entirely different delivery: with `exi_inputs` the
+      # game pulls pad state over the Slippi EXI device
+      # (CMD_OVERWRITE_INPUTS) instead of Serial Interface polling, and
+      # `ffw` drops the frame pacing (measured: blocking steps fall
+      # from ~1.76ms to ~0.23ms on the flush-patched build). A
+      # sustained multishine through that path proves the EXI input
+      # route is frame-accurate, not merely faster.
+      run_multishine(ctx, "ffw", 51_598, exi_inputs: true, ffw: true)
+    end
+  end
+
+  defp run_multishine(ctx, name, slippi_port, extra_opts) do
+    windowed? = System.get_env("MELEE_WINDOWED") == "1"
+    home = "#{@home}_#{name}"
+    File.rm_rf!(home)
+
+    probe =
+      Probe.start!(
+        [
           path: ctx.path,
           iso_path: ctx.iso,
-          home: @home,
-          slippi_port: 51_596,
+          home: home,
+          slippi_port: slippi_port,
           headless: not windowed?,
           gfx_backend: if(windowed?, do: "OGL", else: "Null"),
           # Load-bearing twice over: the ExiAI build ignores in-game
@@ -78,73 +102,73 @@ defmodule Melee.Integration.MultishineTest do
           # cannot afford coalesced frames.
           blocking_input: true,
           ports: [1, 2]
+        ] ++ extra_opts
+      )
+
+    bot_opts = [
+      port: 1,
+      character: Enums.Character.to_id(:fox),
+      stage: Enums.Stage.to_id(:final_destination)
+    ]
+
+    # Port 2 is an IDLE HUMAN, not a CPU: a level-1 CPU walks over and
+    # breaks the loop (first calibration run: Fox spent 293 of 600
+    # frames dead or respawning). An idle human panel fills the match
+    # and then stands at spawn forever.
+    dummy_opts = [
+      port: 2,
+      character: Enums.Character.to_id(:falco),
+      stage: Enums.Stage.to_id(:final_destination)
+    ]
+
+    try do
+      probe =
+        Probe.drive!(
+          probe,
+          &Probe.at_menu?(&1, :in_game),
+          fn probe ->
+            [
+              bot_opts ++ [autostart: Probe.autostart?(probe, [dummy_opts])],
+              dummy_opts
+            ]
+          end,
+          timeout_frames: 20_000,
+          describe: "the match to start"
         )
 
-      bot_opts = [
-        port: 1,
-        character: Enums.Character.to_id(:fox),
-        stage: Enums.Stage.to_id(:final_destination)
-      ]
+      # Let the entry animation and GO! pass.
+      probe = Probe.idle!(probe, 90)
 
-      # Port 2 is an IDLE HUMAN, not a CPU: a level-1 CPU walks over and
-      # breaks the loop (first calibration run: Fox spent 293 of 600
-      # frames dead or respawning). An idle human panel fills the match
-      # and then stands at spawn forever.
-      dummy_opts = [
-        port: 2,
-        character: Enums.Character.to_id(:falco),
-        stage: Enums.Stage.to_id(:final_destination)
-      ]
+      controller = probe.controllers[1]
 
-      try do
-        probe =
-          Probe.drive!(
-            probe,
-            &Probe.at_menu?(&1, :in_game),
-            fn probe ->
-              [
-                bot_opts ++ [autostart: Probe.autostart?(probe, [dummy_opts])],
-                dummy_opts
-              ]
-            end,
-            timeout_frames: 20_000,
-            describe: "the match to start"
-          )
+      {probe, actions} =
+        Enum.reduce(1..@play_frames, {probe, []}, fn _i, {probe, actions} ->
+          probe =
+            Probe.advance!(probe, 1, fn probe ->
+              multishine(Probe.gamestate(probe).players[1], controller)
+              probe
+            end)
 
-        # Let the entry animation and GO! pass.
-        probe = Probe.idle!(probe, 90)
+          {probe, [Probe.gamestate(probe).players[1].action | actions]}
+        end)
 
-        controller = probe.controllers[1]
+      actions = Enum.reverse(actions)
 
-        {probe, actions} =
-          Enum.reduce(1..@play_frames, {probe, []}, fn _i, {probe, actions} ->
-            probe =
-              Probe.advance!(probe, 1, fn probe ->
-                multishine(Probe.gamestate(probe).players[1], controller)
-                probe
-              end)
+      shines = entries(actions, @shine_states)
+      jumpsquats = entries(actions, MapSet.new([@knee_bend]))
 
-            {probe, [Probe.gamestate(probe).players[1].action | actions]}
-          end)
+      IO.puts(
+        "\n[dolphin] multishine (#{name}): #{Probe.elapsed_ms(probe)}ms " <>
+          "shines=#{shines} jumpsquats=#{jumpsquats} over #{@play_frames} frames"
+      )
 
-        actions = Enum.reverse(actions)
+      assert shines >= @min_shines,
+             "only #{shines} shine entries in #{@play_frames} frames — not a sustained loop"
 
-        shines = entries(actions, @shine_states)
-        jumpsquats = entries(actions, MapSet.new([@knee_bend]))
-
-        IO.puts(
-          "\n[dolphin] multishine: #{Probe.elapsed_ms(probe)}ms " <>
-            "shines=#{shines} jumpsquats=#{jumpsquats} over #{@play_frames} frames"
-        )
-
-        assert shines >= @min_shines,
-               "only #{shines} shine entries in #{@play_frames} frames — not a sustained loop"
-
-        assert jumpsquats >= @min_jumpsquats,
-               "only #{jumpsquats} jumpsquat entries — shines were not jump-cancelled"
-      after
-        Probe.stop(probe)
-      end
+      assert jumpsquats >= @min_jumpsquats,
+             "only #{jumpsquats} jumpsquat entries — shines were not jump-cancelled"
+    after
+      Probe.stop(probe)
     end
   end
 
