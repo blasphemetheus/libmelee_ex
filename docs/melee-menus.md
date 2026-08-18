@@ -340,6 +340,42 @@ Traps, each found live:
   (`Melee.Events.Parser.game_start_raw`) precisely so future settings
   can be found the same way: flip one row, diff the bytes.
 
+### Boot-default rules — skip the menu flow entirely
+
+`Melee.Dolphin.launch(boot_rules: [stock: 1, time_limit: 5,
+team_attack: false, pause: true, damage_ratio: 1.0,
+item_frequency: :none])` (passed through by `Session`) starts every
+match pre-configured with ZERO menu taps. It works by gecko
+word-writes over the game's default-rules template at `0x803D4A48` —
+the same words Slippi's `$Required: General Codes` force to
+tournament standard (`Stock Mode` / `4 Stocks` / `8 Minutes` /
+`No Items` [Magus]), which is:
+
+- why fresh-session defaults are Stock/4/8:00 rather than vanilla
+  Melee's Time/2:00, and **why Team Attack defaults ON** (byte 1 of
+  the `8 Minutes` word — it was Magus's doing all along, not a
+  Slippi-wide convention switch);
+- why **card-seeded rules are NOT viable**: a memory-card save with
+  rules baked in loads and is then overridden by these writes
+  (verified: a card harvested after a rules-set session boots back to
+  Stock/4/8:00). Save-data seeding remains the mechanism for
+  NAMETAGS only.
+
+Template layout (decoded by poking one byte per run and reading the
+parsed GAME_START back — the parsed fields made each probe a one-line
+readback):
+
+    0x803D4A48  00 34 <mode: 1 stock> <time-mode minutes>
+    0x803D4A4C  <stocks> 00 <damage ratio x10> 00
+    0x803D4A50  <stock time limit min> <team attack> <pause> 00
+    0x803D4A60  <item freq: FF off, 0..4> 00 00 00
+
+User-ini gecko codes execute after the Sys bundle, so these override
+Slippi's; menu-set rules (the `rules:` flow above) still override
+both within a session. Per-item selection has no boot path yet —
+use `rules: [items: [...]]` for that. NOTE: 04-type word writes work
+in this position; 00-type byte writes silently do not.
+
 ### The Item Switch sub-screen (row 5)
 
 Mapped and productized 2026-08-17 (`Match.play/2` `rules:

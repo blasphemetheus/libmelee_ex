@@ -157,6 +157,53 @@ defmodule Melee.Integration.RulesTest do
     end
   end
 
+  test "boot_rules: the match starts pre-configured with ZERO menu taps", ctx do
+    if ctx[:skip] do
+      IO.puts("\n[dolphin] skipped: #{ctx.skip}")
+    else
+      # Boot-default rules via gecko writes over the template at
+      # 0x803D4A48 — the same words Slippi's General Codes force to
+      # tournament standard (which is also why card-saved rules never
+      # survive boot; see docs/melee-menus.md). No rules: pass, no
+      # Custom Rules navigation: the match starts already configured.
+      home = Path.join(System.tmp_dir!(), "libmelee_ex_rules_it_boot")
+      File.rm_rf!(home)
+
+      {:ok, session} =
+        Session.start_link(
+          path: ctx.path,
+          iso_path: ctx.iso,
+          home: home,
+          slippi_port: 51_611,
+          headless: true,
+          gfx_backend: "Null",
+          blocking_input: true,
+          boot_rules: [stock: 1, time_limit: 5, team_attack: false],
+          ports: [1, 2],
+          console: [polling_mode: true, polling_timeout: 100]
+        )
+
+      on_exit(fn -> safe_stop(session) end)
+
+      {:ok, first} =
+        Match.play(session,
+          p1: [character: :fox],
+          p2: [character: :falco],
+          stage: :final_destination
+        )
+
+      assert GameState.in_game?(first)
+      assert first.players[1].stock == 1
+      assert first.players[2].stock == 1
+      assert first.timer == 300
+      refute first.is_team_attack
+      assert first.pause_enabled
+
+      IO.puts("\n[dolphin] boot_rules: stock=1 timer=300s ta=off with zero menu taps")
+      safe_stop(session)
+    end
+  end
+
   defp collect_item_types(_session, _gamestate, types, 0), do: types
 
   defp collect_item_types(session, gamestate, types, frames_left) do

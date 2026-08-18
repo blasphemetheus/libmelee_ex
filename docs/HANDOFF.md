@@ -412,13 +412,22 @@ in the order agreed:
    finishes the whole flow in 1.2-1.8s (was 2.9s). DONE 2026-08-18:
    exi-ai-flush is the default ExiAI path in every doc and test
    moduledoc; stock remains at `exi-ai/` as fallback.
-2. **Card-seeded rules.** Rules live in Melee save data and the
-   memory-card seeding machinery already exists
-   (`memory_card: {:folder, seed: path}`, built for nametags). Create
-   a card with the training rules baked in (1 stock, pause off, items
-   off, time limit), commit the `.gci` as a fixture, and boots start
-   pre-configured with ZERO menu taps. Verify via GAME_START readback
-   that a seeded fresh session skips the whole rules flow.
+2. **Card-seeded rules — DONE via a better mechanism (2026-08-18).**
+   Card seeding itself is NOT viable: Slippi's `$Required: General
+   Codes` gecko-write the default-rules template at 0x803D4A48 every
+   boot (Stock Mode / 4 Stocks / 8 Minutes / No Items [Magus]), so a
+   card's saved rules load and are immediately overridden (verified
+   with a harvested rules card). Those same writes also explain the
+   Stock/4/8:00 defaults AND the Team Attack-ON default (byte 1 of
+   Magus's "8 Minutes" word). The shipped replacement:
+   `boot_rules: [stock:, time_limit:, team_attack:, pause:,
+   damage_ratio:, item_frequency:]` on Dolphin/Session emits our own
+   template-override gecko (user-ini codes run after Sys, so ours
+   win; menu `rules:` still overrides in-session) — every match
+   starts pre-configured with ZERO menu taps and no memory card.
+   Template layout decoded + documented in melee-menus.md
+   "Boot-default rules"; `--only dolphin_rules` gained the zero-tap
+   test. Card seeding remains the nametag mechanism only.
 3. **`Melee.Tech` — tech-skill primitives.** Frame-perfect building
    blocks on the proven multishine machinery: wavedash, L-cancel,
    shine OOS, ledgedash, short-hop laser... NOTE: much of this is

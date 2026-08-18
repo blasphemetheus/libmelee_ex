@@ -353,6 +353,49 @@ defmodule Melee.DolphinTest do
                )
     end
 
+    test "boot_rules renders template-override gecko words", %{tmp_dir: tmp} do
+      exe = fake_exe(tmp)
+      home = Path.join(tmp, "home")
+
+      assert {:ok, _} =
+               Dolphin.prepare_home(
+                 path: exe,
+                 iso_path: "/isos/melee.iso",
+                 home: home,
+                 boot_rules: [
+                   stock: 1,
+                   time_limit: 5,
+                   team_attack: false,
+                   damage_ratio: 0.5,
+                   item_frequency: :very_high
+                 ]
+               )
+
+      gecko = File.read!(Path.join([home, "GameSettings", "GALE01r2.ini"]))
+      assert gecko =~ "$Optional: Boot Default Rules (libmelee)"
+      # 0x803D4A48: mode stock, time-mode minutes 5.
+      assert gecko =~ "043D4A48 00340105"
+      # 0x803D4A4C: 1 stock, damage ratio 0.5 (x10 = 5).
+      assert gecko =~ "043D4A4C 01000500"
+      # 0x803D4A50: 5-minute stock time limit, TA off, pause on.
+      assert gecko =~ "043D4A50 05000100"
+      # 0x803D4A60: item frequency very_high (4).
+      assert gecko =~ "043D4A60 04000000"
+    end
+
+    test "boot_rules rejects out-of-range values", %{tmp_dir: tmp} do
+      exe = fake_exe(tmp)
+
+      assert_raise ArgumentError, ~r/:stock/, fn ->
+        Dolphin.prepare_home(
+          path: exe,
+          iso_path: "/isos/melee.iso",
+          home: Path.join(tmp, "home"),
+          boot_rules: [stock: 0]
+        )
+      end
+    end
+
     test "setup_gecko_codes: false skips the file", %{tmp_dir: tmp} do
       exe = fake_exe(tmp)
       home = Path.join(tmp, "home")

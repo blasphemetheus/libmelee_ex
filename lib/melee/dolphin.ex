@@ -141,6 +141,8 @@ defmodule Melee.Dolphin do
           | {:replay_dir, Path.t()}
           | {:setup_gecko_codes, boolean()}
           | {:gecko_extra_codes, [String.t()]}
+          | {:gecko_definitions, [String.t()]}
+          | {:boot_rules, keyword()}
           | {:exi_inputs, boolean()}
           | {:ffw, boolean()}
           | {:direct_channel, boolean()}
@@ -293,9 +295,14 @@ defmodule Melee.Dolphin do
       user_json? = setup_user_json(home, Keyword.get(opts, :user_json_path), info)
 
       if Keyword.get(opts, :setup_gecko_codes, true) do
+        {boot_rules_enabled, boot_rules_definitions} =
+          boot_rules_gecko(Keyword.get(opts, :boot_rules))
+
         write_gecko_codes(
           home,
-          Keyword.get(opts, :gecko_extra_codes, []) ++ exi_gecko_codes(opts)
+          Keyword.get(opts, :gecko_extra_codes, []) ++
+            exi_gecko_codes(opts) ++ boot_rules_enabled,
+          Keyword.get(opts, :gecko_definitions, []) ++ boot_rules_definitions
         )
       end
 
@@ -1155,14 +1162,90 @@ defmodule Melee.Dolphin do
     home |> Path.expand() |> Path.join("Slippi/direct.sock")
   end
 
-  defp write_gecko_codes(home, extra_codes) do
+  # Boot-default rules: gecko word-writes over the game's default-rules
+  # template at 0x803D4A48 — the same words Slippi's General Codes
+  # force to tournament standard (Stock / 4 stocks / 8:00 / items off),
+  # which is also why card-saved rules never survive a boot on these
+  # builds. Layout, decoded empirically 2026-08-18 by poking one byte
+  # per run and reading the parsed GAME_START back
+  # (tmp/boot_rules_probe.exs / tmp/boot_rules_sweep2.exs):
+  #
+  #   0x803D4A48  00 34 <mode> <time-mode minutes>   (mode 1 = stock)
+  #   0x803D4A4C  <stocks> 00 <damage ratio x10> 00
+  #   0x803D4A50  <stock time limit min> <team attack> <pause> 00
+  #   0x803D4A60  <item frequency: FF off, 0..4> 00 00 00
+  #
+  # User-ini codes execute after the Sys bundle, so these override
+  # Slippi's writes; menu-set rules still override both in-session.
+  # NOTE: 04-type word writes work here; 00-type byte writes do not.
+  @boot_rules_code_name "$Optional: Boot Default Rules (libmelee)"
+
+  defp boot_rules_gecko(nil), do: {[], []}
+
+  defp boot_rules_gecko(rules) when is_list(rules) do
+    stock = fetch_range!(rules, :stock, 4, 1..99)
+    time_limit = fetch_range!(rules, :time_limit, 8, 1..99)
+    team_attack = if Keyword.get(rules, :team_attack, true), do: 1, else: 0
+    pause = if Keyword.get(rules, :pause, true), do: 1, else: 0
+
+    ratio =
+      case Keyword.get(rules, :damage_ratio, 1.0) do
+        r when is_number(r) and r >= 0.5 and r <= 2.0 ->
+          round(r * 10)
+
+        other ->
+          raise ArgumentError, "boot_rules: :damage_ratio must be 0.5..2.0, got #{inspect(other)}"
+      end
+
+    frequency =
+      case Keyword.get(rules, :item_frequency, :none) do
+        :none -> 0xFF
+        :very_low -> 0
+        :low -> 1
+        :medium -> 2
+        :high -> 3
+        :very_high -> 4
+        other -> raise ArgumentError, "boot_rules: bad :item_frequency #{inspect(other)}"
+      end
+
+    definitions = [
+      @boot_rules_code_name,
+      gecko_word(0x3D4A48, <<0x00, 0x34, 0x01, time_limit>>),
+      gecko_word(0x3D4A4C, <<stock, 0x00, ratio, 0x00>>),
+      gecko_word(0x3D4A50, <<time_limit, team_attack, pause, 0x00>>),
+      gecko_word(0x3D4A60, <<frequency, 0x00, 0x00, 0x00>>)
+    ]
+
+    {[@boot_rules_code_name], definitions}
+  end
+
+  defp fetch_range!(rules, key, default, range) do
+    case Keyword.get(rules, key, default) do
+      n when is_integer(n) and n in 1..99 ->
+        n
+
+      other ->
+        raise ArgumentError,
+              "boot_rules: #{inspect(key)} must be #{inspect(range)}, got #{inspect(other)}"
+    end
+  end
+
+  defp gecko_word(address, <<_::binary-size(4)>> = word) do
+    "04#{Integer.to_string(address, 16) |> String.pad_leading(6, "0")} " <>
+      Base.encode16(word)
+  end
+
+  defp write_gecko_codes(home, extra_codes, extra_definitions) do
     template =
       :libmelee_ex
       |> :code.priv_dir()
       |> Path.join("GALE01r2.ini")
       |> File.read!()
 
-    rendered = String.replace(template, "{extra_codes}", Enum.join(extra_codes, "\n"))
+    rendered =
+      template
+      |> String.replace("{extra_codes}", Enum.join(extra_codes, "\n"))
+      |> String.replace("{extra_definitions}", Enum.join(extra_definitions, "\n"))
 
     game_settings = Path.join(home, "GameSettings")
     File.mkdir_p!(game_settings)
