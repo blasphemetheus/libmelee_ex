@@ -190,6 +190,35 @@ input-to-frame alignment, the seed fixes everything else.
 
 Shared memory remains not-worth-it at these numbers.
 
+## Reproducible episodes (roadmap item 7, landed 2026-08-18)
+
+The determinism recipe, all launch options:
+
+    single_core: true,      # dual-core emulation is the nondeterminism
+    custom_rtc: 946_684_800 # pins the boot clock — AND selects the seed
+
+plus lockstep (`direct_inputs: true`) or blocking pipes for the input
+schedule. With it, two runs of the same schedule produce the SAME
+match: same GAME_START `random_seed` (now parsed:
+`gamestate.random_seed`, u32 at 0x13D) and an identical
+frame-by-frame fingerprint over positions, percents and RNG-driven
+item spawns at very-high frequency. `--only dolphin_determinism`
+proves it live in ~10s: same RTC twice -> identical seed +
+fingerprint; RTC+1 -> different seed, different game.
+
+What the experiments established:
+
+- **Melee derives its local-match seed from emulated boot state**, so
+  the RTC value IS the episode seed selector — vary `custom_rtc` to
+  vary episodes, fix it to reproduce them.
+- The fork's `SlippiRngSeed` / `rng_seed:` option (which pins the EXI
+  device's own `generator`, the CMD_GET_NEW_SEED source) does NOT
+  affect local matches — that path only feeds netplay-side draws
+  (stage strikes, online reseeds). Kept for future online-bot use.
+- **`single_core: true` costs nothing headless** (p50 204us vs 206 —
+  Null-video emulation is one-thread-bound anyway), so the recipe is
+  free to leave on for training.
+
 ## Consequences for the roadmap
 
 1. **Scale OUT, not up, for training throughput today.** Sessions

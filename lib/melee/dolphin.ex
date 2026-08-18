@@ -145,6 +145,9 @@ defmodule Melee.Dolphin do
           | {:ffw, boolean()}
           | {:direct_channel, boolean()}
           | {:direct_inputs, boolean()}
+          | {:rng_seed, pos_integer()}
+          | {:single_core, boolean()}
+          | {:custom_rtc, pos_integer()}
           | {:extra_args, [String.t()]}
 
   @default_slippi_port 51_441
@@ -935,6 +938,16 @@ defmodule Melee.Dolphin do
                do: [{"SlippiDirectInputs", "True"}],
                else: []
              ) ++
+             case Keyword.get(opts, :rng_seed) do
+               nil ->
+                 []
+
+               seed when is_integer(seed) and seed > 0 ->
+                 [{"SlippiRngSeed", to_string(seed)}]
+
+               other ->
+                 raise ArgumentError, "rng_seed must be a positive integer, got #{inspect(other)}"
+             end ++
              if(is_nil(monthly),
                do: [],
                else: [{"SlippiReplayMonthlyFolders", bool_str(monthly)}]
@@ -951,7 +964,16 @@ defmodule Melee.Dolphin do
       [
         {"GFXBackend", gfx_backend},
         {"EmulationSpeed", to_string(emulation_speed)}
-      ] ++ memory_card_kvs
+      ] ++
+        memory_card_kvs ++
+        if(Keyword.get(opts, :single_core, false), do: [{"CPUThread", "False"}], else: []) ++
+        case Keyword.get(opts, :custom_rtc) do
+          nil ->
+            []
+
+          unix_seconds when is_integer(unix_seconds) and unix_seconds > 0 ->
+            [{"EnableCustomRTC", "True"}, {"CustomRTCValue", to_string(unix_seconds)}]
+        end
 
     update_ini(ini_path, "Core", core_kvs)
     update_ini(ini_path, "Display", [{"Fullscreen", "False"}])

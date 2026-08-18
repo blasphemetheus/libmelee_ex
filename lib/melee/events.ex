@@ -85,6 +85,7 @@ defmodule Melee.Events do
             timer: non_neg_integer(),
             item_frequency: 0..4 | nil,
             item_bitfield: non_neg_integer(),
+            random_seed: non_neg_integer(),
             game_start_raw: binary() | nil,
             costumes: tuple(),
             cpu_levels: tuple(),
@@ -113,6 +114,7 @@ defmodule Melee.Events do
               timer: 0,
               item_frequency: nil,
               item_bitfield: 0xFF_FFFF_FFFF,
+              random_seed: 0,
               game_start_raw: nil,
               costumes: {0, 0, 0, 0},
               cpu_levels: {0, 0, 0, 0},
@@ -431,7 +433,11 @@ defmodule Melee.Events do
       timer: read_u32(event, 0x15, 0),
       item_frequency: item_frequency,
       item_bitfield:
-        Enum.reduce(0x28..0x2C, 0, fn off, acc -> acc * 256 + read_u8(event, off, 0xFF) end)
+        Enum.reduce(0x28..0x2C, 0, fn off, acc -> acc * 256 + read_u8(event, off, 0xFF) end),
+      # The match's RNG seed (the one noise source every rules byte-diff
+      # had to mask). With the fork's SlippiRngSeed config pinned, this
+      # is reproducible across runs — the determinism readback.
+      random_seed: read_u32(event, 0x13D, 0)
     }
   end
 
@@ -508,6 +514,7 @@ defmodule Melee.Events do
         timer: parser.timer,
         item_frequency: parser.item_frequency,
         item_bitfield: parser.item_bitfield,
+        random_seed: parser.random_seed,
         is_frozen_ps: parser.is_frozen_ps
     }
 

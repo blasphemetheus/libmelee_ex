@@ -96,6 +96,7 @@ defmodule Melee.GameState do
           timer: non_neg_integer(),
           item_frequency: 0..4 | nil,
           item_bitfield: non_neg_integer(),
+          random_seed: non_neg_integer(),
           distance: float(),
           menu_selection: integer(),
           startAt: String.t(),
@@ -139,6 +140,9 @@ defmodule Melee.GameState do
             # (all-ones default; see Melee.Events for the offsets).
             item_frequency: nil,
             item_bitfield: 0xFF_FFFF_FFFF,
+            # The match's RNG seed from GAME_START (0x13D). Pinnable via
+            # the fork's rng_seed launch option for reproducible runs.
+            random_seed: 0,
             # GAME_START's frozen-Pokemon-Stadium flag (replay v2.0+).
             is_frozen_ps: false,
             distance: 0.0,

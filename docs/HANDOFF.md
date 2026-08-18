@@ -442,11 +442,18 @@ in the order agreed:
    Attack ON default is NOT part of the mystery: competitive doubles
    is always played TA ON, so the Slippi builds shipping that default
    is expected — the user confirmed this.)
-7. **RNG control, focused.** The GAME_START random seed sits at
-   0x13D-0x140 (the one noise source every byte-diff had to mask).
-   Goal: deterministic episodes — find what sets the seed (boot RNG?
-   debug menu? memory write via a gecko/EXI poke?) and whether fixing
-   it makes two identical input schedules produce identical games.
+7. **RNG control — DONE (2026-08-18).** Bit-reproducible episodes via
+   `single_core: true` + `custom_rtc: <unix seconds>` (+ lockstep):
+   Melee derives its local seed from emulated boot state, so the RTC
+   IS the seed selector — same RTC = identical seed + identical
+   300-frame fingerprint including item spawns; RTC+1 = a different
+   match. `--only dolphin_determinism` (~10s) is the proof;
+   `gamestate.random_seed` (GAME_START 0x13D) is the readback; recipe
+   and findings in docs/throughput.md "Reproducible episodes".
+   Single-core costs nothing headless. The fork also gained
+   `SlippiRngSeed` / `rng_seed:` pinning the EXI device generator —
+   it does NOT affect local matches (netplay-side draws only), kept
+   for future online-bot work.
 8. **Real hardware support** (eventually). The one remaining
    Python-libmelee parity gap: GC adapter passthrough / console
    spectate.
