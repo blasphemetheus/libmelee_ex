@@ -51,6 +51,45 @@ scheduling latency, not emulation cost (emulation is well under 1ms —
 the natural pace right after GO shows ~0.93ms/frame including
 streaming).
 
+## The spectator patch (landed 2026-08-17, same day)
+
+The Dolphin-side fix from item 2 below is DONE. vladfi1's
+slippi-Ishiiruka fork at the `exi-ai-0.2.0` release commit, patched on
+the local branch `spectator-flush-on-frame`
+(`~/git/slippi-Ishiiruka`, commit `080a8c6c7`): the spectator thread
+now waits on a condition variable that `write()` notifies and treats
+`enet_host_service` as a non-blocking flush, so a frame's events go
+out the moment the game thread produces them instead of on the next
+~1ms service tick. The 1ms `wait_for` fallback preserves the old
+cadence for enet housekeeping, so the worst case IS the old behavior.
+
+Measured against the same benchmarks (patched binary installed at
+`~/.local/share/slippi/exi-ai-flush/dolphin-emu-headless`):
+
+| | stock ExiAI | patched |
+| --- | --- | --- |
+| Blocking step p50 | 2119us | **1755us** |
+| Blocking step p99 | 3216us | **1856us** |
+| Solo fps | ~535 | **~569** |
+| 4-concurrent aggregate | 1830 | **2117** (~530 each — the per-session penalty nearly vanished) |
+
+The telling detail: the patched p50 (1755us) equals the OLD run's
+mean natural inter-arrival during active gameplay (1760us) — the
+bimodal 1065/2119 pattern was service-tick quantization of an
+underlying ~1.76ms emulation time, and it is gone. **The blocking
+step is now emulation-bound**: further per-instance gains mean making
+Melee emulate faster (e.g. Fizzi's fast-forward gecko that slippi-ai
+credits for its RL speedup — it skips rendering-only work), not
+transport work. Correctness on the patched build: `dolphin_replay`
+(byte-identical recording), `dolphin_rules`, `dolphin_teams`,
+`dolphin_tech` (frame-perfect multishine) all pass.
+
+Rebuild recipe: `nix-shell` (the branch carries a `shell.nix`), then
+`cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DLINUX_LOCAL_DEV=true
+-DDISABLE_WX=true -DENABLE_HEADLESS=true -DENABLE_ALSA=false
+-DENABLE_PULSEAUDIO=false -DENABLE_EVDEV=false` and
+`make dolphin-nogui`, then copy `Data/Sys` beside the binary.
+
 ## Consequences for the roadmap
 
 1. **Scale OUT, not up, for training throughput today.** Sessions

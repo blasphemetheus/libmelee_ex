@@ -370,10 +370,18 @@ in the order agreed:
    loop), and blocking always spans two. Remaining moves, in order:
    (a) scale OUT — sessions stack near-linearly (4 concurrent =
    1830fps aggregate at ~86% efficiency on 32 cores), so the pool is
-   the cheap win today; (b) patch the ExiAI fork's spectator loop to
-   flush on the frame boundary (est. ~900fps/instance); (c) the EXI
-   direct channel bypass (bigger scope, bigger ceiling). Do NOT spend
-   effort on BEAM-side protocol changes.
+   the cheap win today; (b) DONE — the ExiAI spectator loop is
+   patched (local branch `spectator-flush-on-frame` in
+   `~/git/slippi-Ishiiruka`, binary installed at
+   `~/.local/share/slippi/exi-ai-flush/dolphin-emu-headless`):
+   p50 2119 -> 1755us, p99 3216 -> 1856us, 4-concurrent 1830 -> 2117
+   aggregate, all integration suites green on it. The step is now
+   EMULATION-bound, so the next per-instance lever is Fizzi's
+   fast-forward gecko (what slippi-ai uses), not transport; (c) the
+   EXI direct channel bypass (bigger scope, bigger ceiling). Do NOT
+   spend effort on BEAM-side protocol changes. Follow-ups: push the
+   branch to the user's GitHub / consider a PR to vladfi1; point
+   MELEE_DOLPHIN_PATH at exi-ai-flush by default once trusted.
 2. **Card-seeded rules.** Rules live in Melee save data and the
    memory-card seeding machinery already exists
    (`memory_card: {:folder, seed: path}`, built for nametags). Create
