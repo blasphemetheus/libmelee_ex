@@ -82,6 +82,25 @@ defmodule Melee.Integration.MultishineTest do
     end
   end
 
+  @tag :dolphin_direct
+  test "the loop stays frame-perfect over the direct channel", ctx do
+    if ctx[:skip] do
+      IO.puts("\n[dolphin] skipped: #{ctx.skip}")
+    else
+      # The full fast path: EXI inputs + fast-forward + the raw unix
+      # domain event channel instead of the ENet spectator socket
+      # (docs/throughput.md "the direct channel"). Frame count parity
+      # with the pipes run proves the channel delivers every frame's
+      # events, in order, with no envelope loss — measured p50 192us
+      # per blocking step (~5000fps) on the flush-patched build.
+      run_multishine(ctx, "direct", 51_600,
+        exi_inputs: true,
+        ffw: true,
+        direct_channel: true
+      )
+    end
+  end
+
   defp run_multishine(ctx, name, slippi_port, extra_opts) do
     windowed? = System.get_env("MELEE_WINDOWED") == "1"
     home = "#{@home}_#{name}"

@@ -172,7 +172,11 @@ defmodule Melee.Console do
               reconnect: nil,
               reconnecting?: false,
               attempt: 0,
-              reconnect_timer: nil
+              reconnect_timer: nil,
+              # :slippstream (ENet spectator, JSON messages) or :raw
+              # (the direct channel: each packet is a raw Slippi event
+              # payload, no envelope). See Melee.Transport.Direct.
+              protocol: :slippstream
 
     @type t :: %__MODULE__{}
   end
@@ -191,7 +195,8 @@ defmodule Melee.Console do
       blocking_input: Keyword.get(opts, :blocking_input, true),
       polling_mode: Keyword.get(opts, :polling_mode, false),
       polling_timeout: Keyword.get(opts, :polling_timeout, 0),
-      reconnect: normalize_reconnect(Keyword.get(opts, :reconnect, false))
+      reconnect: normalize_reconnect(Keyword.get(opts, :reconnect, false)),
+      protocol: Keyword.get(opts, :protocol, :slippstream)
     }
 
     {:ok, state}
@@ -245,6 +250,10 @@ defmodule Melee.Console do
   def handle_info({:enet_connected, conn}, %{conn: conn} = state) do
     :ok = state.transport.send(conn, 0, Slippstream.connect_request(), :reliable)
 
+    # The direct channel has no handshake: connected the moment the
+    # socket is up (the Slippstream path waits for connect_reply).
+    state = if state.protocol == :raw, do: %{state | connected: true}, else: state
+
     if state.connect_from do
       GenServer.reply(state.connect_from, :ok)
     end
@@ -261,6 +270,10 @@ defmodule Melee.Console do
          attempt: 0,
          reconnect_timer: cancel_timer(state.reconnect_timer)
      }}
+  end
+
+  def handle_info({:enet_packet, conn, _channel, data}, %{conn: conn, protocol: :raw} = state) do
+    {:noreply, maybe_reply_step(handle_raw(data, state))}
   end
 
   def handle_info({:enet_packet, conn, _channel, data}, %{conn: conn} = state) do
@@ -408,6 +421,19 @@ defmodule Melee.Console do
 
   defp handle_message(:frame_end, state), do: state
   defp handle_message({:unknown, _msg}, state), do: state
+
+  # Direct-channel payloads: raw Slippi event bytes, no envelope. Each
+  # packet is one write() call's payload from Dolphin — whole events,
+  # menu frames included (they arrive inline, first byte 0x3E, instead
+  # of as a separate Slippstream message type).
+  @menu_event_cmd 0x3E
+
+  defp handle_raw(<<>>, state), do: state
+
+  defp handle_raw(<<@menu_event_cmd, _::binary>> = payload, state),
+    do: handle_message({:menu_event, payload}, state)
+
+  defp handle_raw(payload, state), do: handle_message({:game_event, payload}, state)
 
   # Run the event parser to exhaustion over new data + buffered pending.
   defp drain_events(state, payload) do

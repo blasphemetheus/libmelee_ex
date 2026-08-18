@@ -384,12 +384,18 @@ in the order agreed:
    ~4272fps solo, ~11.8k aggregate at 4 (high variance; see
    docs/throughput.md), multishine frame-perfect through the EXI input
    path (`--only dolphin_ffw`); analog triggers are dropped on it;
-   (c) the EXI DIRECT CHANNEL bypass — QUEUED, the user wants this
-   eventually: extend CEXISlippi so events reach the bot at DMAWrite
-   time over shm/unix socket and inputs return on the same channel
-   (optionally a blocking lockstep handshake) — no spectator thread,
-   ENet, JSON, or pipes; the payoff is at FFW speeds where frame times
-   are ~0.23ms and structure matters again, plus determinism. Do NOT
+   (c) the EXI DIRECT CHANNEL — STAGE 1 DONE (2026-08-18): events out
+   over a unix domain socket written from the game thread at DMAWrite
+   time (`direct_channel: true` on Session/Dolphin/Probe;
+   `Melee.Transport.Direct` + Console `protocol: :raw`; Dolphin side
+   on the same Ishiiruka branch, config key SlippiDirectChannelPath).
+   p50 192us, ~5058fps solo, ~12.6k aggregate at 4; multishine
+   frame-perfect over it (`--only dolphin_direct`), whole test 630ms.
+   REMAINING deep-tier stages: inputs over the same channel serving
+   CMD_OVERWRITE_INPUTS (drop the named pipes) with an optional
+   LOCKSTEP handshake (block the EXI input read until the client
+   commits the frame's inputs — determinism), then shm only if the
+   residual ~190us ever matters. Do NOT
    spend effort on BEAM-side protocol changes. The branch is pushed:
    github.com/blasphemetheus/slippi-Ishiiruka `spectator-flush-on-frame`
    (a PR to vladfi1 remains an option). The FULL `--only dolphin`

@@ -125,6 +125,46 @@ Caveats to know:
   sessions sank to 552fps); a training pool should pin or shard
   instances if per-env pacing matters.
 
+## The direct channel (landed 2026-08-18, same day)
+
+The deep tier's first stage: `Melee.Session.start_link(...,
+direct_channel: true)` (or the same option on `Melee.Dolphin.launch` /
+`Melee.Probe.start!`) replaces the ENet spectator socket with a unix
+domain socket that Dolphin's game thread writes each raw event payload
+to at DMAWrite time — `<u32 length><payload>`, no ENet, no
+JSON/base64, no spectator-thread hop. On our side
+`Melee.Transport.Direct` (a ~90-line `:gen_tcp` client; `packet: 4`
+decodes the framing in the runtime) feeds `Melee.Console` in
+`protocol: :raw` mode, where payloads go straight into the existing
+`Melee.Events` parser — it is the same byte stream a `.slp` file
+contains, menu frames included (they arrive inline, first byte 0x3E).
+
+Dolphin side: `SlippiDirectChannelPath` in `Dolphin.ini` (written
+automatically; socket at `<home>/Slippi/direct.sock`), on the same
+Ishiiruka branch as the flush patch. The game thread never blocks on
+the channel — non-blocking socket, ~1MB send buffer (~2000 frames of
+headroom), slow clients dropped rather than stalling emulation.
+
+Measured, with exi + ffw on the flush-patched build:
+
+| | spectator (ENet) | direct channel |
+| --- | --- | --- |
+| Blocking step p50 | 233us | **192us** (p99 280us) |
+| Solo fps | ~4272 | **~5058** |
+| 4-concurrent aggregate | ~11800 | **~12600** (same CPU-bound variance) |
+
+Correctness: the multishine suite now runs THREE ways (pipes / ffw /
+direct — `--only dolphin_direct` for the last): identical
+74 shines / 73 jumpsquats on all of them, and the direct variant's
+whole test (boot, menus, 600 played frames) completes in ~630ms.
+
+Still open in the deep tier, in order of value: inputs over the same
+channel serving `CMD_OVERWRITE_INPUTS` (replacing the named pipes)
+with an optional **lockstep** handshake — block the EXI input read
+until the client commits inputs for the frame, giving determinism no
+polling scheme can; then shared memory if the remaining ~190us ever
+matters (it is now mostly emulation again).
+
 ## Consequences for the roadmap
 
 1. **Scale OUT, not up, for training throughput today.** Sessions

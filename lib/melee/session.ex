@@ -240,6 +240,12 @@ defmodule Melee.Session do
     Process.flag(:trap_exit, true)
 
     {session_opts, launch_opts} = Keyword.split(opts, @session_keys)
+
+    # :direct_channel stays in launch_opts (Dolphin writes the config
+    # key and creates the socket dir) AND informs console wiring below.
+    session_opts =
+      Keyword.put(session_opts, :direct_channel, Keyword.get(opts, :direct_channel, false))
+
     ports = Keyword.get(session_opts, :ports, [1])
     dolphin_module = Keyword.get(session_opts, :dolphin_module, Melee.Dolphin)
 
@@ -335,6 +341,22 @@ defmodule Melee.Session do
       session_opts
       |> Keyword.get(:console, [])
       |> Keyword.put_new(:port, state.dolphin.slippi_port)
+
+    # direct_channel: true swaps the spectator socket for the raw unix
+    # domain channel (Melee.Transport.Direct + protocol: :raw), unless
+    # the caller already chose a transport explicitly.
+    console_opts =
+      if Keyword.get(session_opts, :direct_channel, false) do
+        console_opts
+        |> Keyword.put_new(:transport, Melee.Transport.Direct)
+        |> Keyword.put_new(
+          :transport_opts,
+          path: Melee.Dolphin.direct_channel_path(state.dolphin.home)
+        )
+        |> Keyword.put_new(:protocol, :raw)
+      else
+        console_opts
+      end
 
     with {:ok, console} <- Console.start_link(console_opts),
          :ok <-

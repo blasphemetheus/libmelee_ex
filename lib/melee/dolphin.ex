@@ -143,6 +143,7 @@ defmodule Melee.Dolphin do
           | {:gecko_extra_codes, [String.t()]}
           | {:exi_inputs, boolean()}
           | {:ffw, boolean()}
+          | {:direct_channel, boolean()}
           | {:extra_args, [String.t()]}
 
   @default_slippi_port 51_441
@@ -277,6 +278,13 @@ defmodule Melee.Dolphin do
       headless = Keyword.get(opts, :headless, false)
 
       write_dolphin_ini(home, flavor, slippi_port, headless, opts)
+
+      # Dolphin binds the direct-channel socket inside <home>/Slippi;
+      # make sure the directory exists before it tries.
+      if Keyword.get(opts, :direct_channel, false) do
+        File.mkdir_p!(Path.join(home, "Slippi"))
+      end
+
       write_logger_ini(home, opts)
       user_json? = setup_user_json(home, Keyword.get(opts, :user_json_path), info)
 
@@ -918,6 +926,10 @@ defmodule Melee.Dolphin do
              {"SlippiSaveReplays", bool_str(save_replays)}
            ] ++
              if(replay_dir, do: [{"SlippiReplayDir", replay_dir}], else: []) ++
+             if(Keyword.get(opts, :direct_channel, false),
+               do: [{"SlippiDirectChannelPath", direct_channel_path(home)}],
+               else: []
+             ) ++
              if(is_nil(monthly),
                do: [],
                else: [{"SlippiReplayMonthlyFolders", bool_str(monthly)}]
@@ -1081,6 +1093,19 @@ defmodule Melee.Dolphin do
       ),
       if(Keyword.get(opts, :ffw, false), do: ["$Optional: FFW VS Mode"], else: [])
     ])
+  end
+
+  @doc """
+  Where the direct-channel unix socket lives for a given home
+  (`<home>/Slippi/direct.sock`), when launched with
+  `direct_channel: true`. Requires the direct-channel Dolphin patch
+  (Ishiiruka flavor only); connect `Melee.Transport.Direct` here with
+  the console in `protocol: :raw` — or just use `Melee.Session`'s
+  `direct_channel: true`, which wires all three.
+  """
+  @spec direct_channel_path(Path.t()) :: Path.t()
+  def direct_channel_path(home) do
+    home |> Path.expand() |> Path.join("Slippi/direct.sock")
   end
 
   defp write_gecko_codes(home, extra_codes) do

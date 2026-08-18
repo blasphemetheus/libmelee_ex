@@ -150,6 +150,20 @@ defmodule Melee.Probe do
     # drains the port's output messages.
     Dolphin.watch(dolphin)
 
+    # direct_channel: true (already passed through to Dolphin.launch
+    # above) also swaps the console onto the raw unix-socket transport,
+    # mirroring Melee.Session's wiring.
+    console_opts =
+      if Keyword.get(opts, :direct_channel, false) do
+        [
+          transport: Melee.Transport.Direct,
+          protocol: :raw,
+          transport_opts: [path: Dolphin.direct_channel_path(dolphin.home)]
+        ] ++ console_opts
+      else
+        console_opts
+      end
+
     {:ok, console} =
       Console.start_link(
         [port: slippi_port, polling_mode: true, polling_timeout: 100] ++ console_opts
