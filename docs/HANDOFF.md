@@ -379,9 +379,15 @@ in the order agreed:
    EMULATION-bound, so the next per-instance lever is Fizzi's
    fast-forward gecko (what slippi-ai uses), not transport; (c) the
    EXI direct channel bypass (bigger scope, bigger ceiling). Do NOT
-   spend effort on BEAM-side protocol changes. Follow-ups: push the
-   branch to the user's GitHub / consider a PR to vladfi1; point
-   MELEE_DOLPHIN_PATH at exi-ai-flush by default once trusted.
+   spend effort on BEAM-side protocol changes. The branch is pushed:
+   github.com/blasphemetheus/slippi-Ishiiruka `spectator-flush-on-frame`
+   (a PR to vladfi1 remains an option). The FULL `--only dolphin`
+   gauntlet passes on the patched build except the two structurally
+   environmental tests (DolphinTest's manual-Dolphin connect test and
+   nametag_create's netplay-only boot prompt); nametag_select's
+   anti-vacuous floor was retuned to 1s because the patched build
+   finishes the whole flow in 1.2-1.8s (was 2.9s). Remaining:
+   point MELEE_DOLPHIN_PATH at exi-ai-flush by default once trusted.
 2. **Card-seeded rules.** Rules live in Melee save data and the
    memory-card seeding machinery already exists
    (`memory_card: {:folder, seed: path}`, built for nametags). Create

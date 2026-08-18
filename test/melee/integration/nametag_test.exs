@@ -42,13 +42,15 @@ defmodule Melee.Integration.NametagTest do
   # A smoke check that these runs are not vacuous: launching Dolphin and
   # connecting the console alone costs seconds, so a "pass" faster than
   # this never drove the game at all. Measured: netplay 8-11s, ExiAI
-  # with a seeded card 2.9s — hence a 2s floor rather than something
-  # tighter.
+  # with a seeded card 2.9s — and 1.2-1.8s on the flush-patched ExiAI
+  # build (docs/throughput.md), whose lower per-frame latency cuts
+  # menu time too. The floor sits under the fastest observed honest
+  # run (1205ms) while staying far above a connect-and-bail (~0.5s).
   #
   # Wall clock, NOT `probe.frames`: that counts console steps, which
   # polling coalesces, so it reads far lower than the emulated frames
   # (a full boot-and-navigate is only ~250-350 steps).
-  @min_run_ms 2_000
+  @min_run_ms 1_000
 
   # A Melee save created by the create test on the netplay build, with
   # the EXPH tag already registered. Seeding it into a fresh card lets
