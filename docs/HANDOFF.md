@@ -440,11 +440,18 @@ in the order agreed:
    (landing lag 6 vs 14 in the identical no-L control — the pulse
    trick: a 6-frame L period guarantees an edge inside the 7-frame
    window without predicting the landing), multishine (37/300
-   frames, Fox+Falco via the jumpsquat table). Full catalog with
-   tiers 2-4 (waveland, teching, ledgedash, pivots, powershield;
-   character-specific: waveshine, SH laser, float cancel, DJC, ICs
-   desyncs; reactive defense belongs atop GameEvents) in
-   docs/melee-tech.md.
+   frames, Fox+Falco via the jumpsquat table). TIERS 2+3 ALSO SHIPPED
+   (same day): fast_fall, waveland, pivot, tech (unit-pinned; live
+   proof needs a scripted launcher), ledgedash (grab -> DJ above the
+   lip -> dodge in, lands WITH galint; two dead foxes taught that
+   dodging from below dives and from beside hits the stage wall),
+   waveshine (4/4 into wavedash-outs), short_hop_laser (projectile
+   observed), djc_aerial (Ness nair at apex 2.91). The ledge-grab
+   test setup composes the primitives themselves: pivot + backward
+   wavedash off the edge. Remaining backlog (JC grab, powershield,
+   moonwalk, shield drop, drillshine, float cancel, ICs desyncs...)
+   in docs/melee-tech.md; reactive defense (SDI, tech chases) belongs
+   atop GameEvents.
 4. **Richer `GameEvents` — SHIPPED (2026-08-18).** Four new
    post-frame fields (last_attack_landed 0x1E, combo_count 0x1F,
    last_hit_by 0x20 wire-0-based -> ports, l_cancel 0x33) feed two

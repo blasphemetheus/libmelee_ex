@@ -139,4 +139,148 @@ defmodule Melee.TechTest do
       assert Tech.new(:short_hop, :bowser).jumpsquat == 8
     end
   end
+
+  describe "tier 2" do
+    test "waveland airdodges the first airborne frame and finishes on the special landing" do
+      tech = Tech.new(:waveland, :fox, direction: :right)
+      # Grounded: waits.
+      {:cont, tech, []} = Tech.step(tech, player(%{}))
+      # Airborne: L + diagonal immediately.
+      {:cont, tech, commands} = Tech.step(tech, player(%{on_ground: false, action: 0x1D}))
+      assert {:press, :l} in commands
+      assert {:tilt, :main, x, y} = List.keyfind(commands, :tilt, 0)
+      assert x > 0.8 and y < 0.3
+      {:done, _tech, [:release_all]} = Tech.step(tech, player(%{action: 0x2B}))
+    end
+
+    test "pivot dashes, flicks opposite for one frame, then settles to standing" do
+      tech = Tech.new(:pivot, :marth, direction: :right, dash_frames: 3)
+      {:cont, tech, [{:tilt, :main, 1.0, 0.5}]} = Tech.step(tech, player(%{action: 0x14}))
+      {:cont, tech, []} = Tech.step(tech, player(%{action: 0x14}))
+      {:cont, tech, []} = Tech.step(tech, player(%{action: 0x14}))
+      # The flick: exactly one opposite-direction frame.
+      {:cont, tech, [{:tilt, :main, 0.0, 0.5}]} = Tech.step(tech, player(%{action: 0x14}))
+      {:cont, tech, [{:tilt, :main, 0.5, 0.5}]} = Tech.step(tech, player(%{action: 0x12}))
+      {:done, _tech, []} = Tech.step(tech, player(%{action: 0x0E}))
+    end
+
+    test "ground tech presses L exactly once, near the ground, never early" do
+      tech = Tech.new(:tech, :fox, direction: :left, height: 8.0)
+
+      # Tumbling but high up: hold fire (an early press = 40f lockout).
+      {:cont, tech, []} =
+        Tech.step(
+          tech,
+          player(%{on_ground: false, action: 0x26, speed_y_self: -2.0})
+          |> Map.put(:position, %Melee.Position{x: 0.0, y: 30.0})
+        )
+
+      # Close to the ground: one press, roll direction held.
+      {:cont, tech, commands} =
+        Tech.step(
+          tech,
+          player(%{on_ground: false, action: 0x26, speed_y_self: -2.0})
+          |> Map.put(:position, %Melee.Position{x: 0.0, y: 5.0})
+        )
+
+      assert {:press, :l} in commands
+      assert {:tilt, :main, 0.0, 0.5} in commands
+
+      # Tech state entered -> done.
+      {:done, _tech, [:release_all]} = Tech.step(tech, player(%{action: 0xC9, on_ground: true}))
+    end
+
+    test "ledgedash releases, double-jumps in, and wavelands" do
+      tech = Tech.new(:ledgedash, :fox, direction: :left)
+
+      # Not hanging yet: waits.
+      {:cont, tech, []} = Tech.step(tech, player(%{on_ground: false, action: 0x1D}))
+
+      # Hanging: release AWAY from the stage (stage is :left -> tilt right).
+      {:cont, tech, [{:tilt, :main, 0.95, 0.5}]} =
+        Tech.step(tech, player(%{on_ground: false, action: 0xFD}))
+
+      {:cont, tech, [{:tilt, :main, 0.5, 0.5}]} =
+        Tech.step(tech, player(%{on_ground: false, action: 0x1D}))
+
+      # Jump back in toward the stage.
+      {:cont, tech, commands} = Tech.step(tech, player(%{on_ground: false, action: 0x1D}))
+      assert {:press, :y} in commands
+      assert {:tilt, :main, 0.05, 0.5} in commands
+
+      # Aerial jump seen and risen above the lip -> airdodge toward the stage.
+      {:cont, tech, commands} =
+        Tech.step(
+          tech,
+          player(%{on_ground: false, action: 0x1B})
+          |> Map.put(:position, %Melee.Position{x: 90.0, y: 2.0})
+        )
+
+      assert {:press, :l} in commands
+
+      {:done, _tech, [:release_all]} = Tech.step(tech, player(%{action: 0x2B}))
+    end
+  end
+
+  describe "tier 3" do
+    test "waveshine: shine, jump-cancel on frame 3, airdodge out" do
+      tech = Tech.new(:waveshine, :fox, direction: :right)
+
+      {:cont, tech, commands} = Tech.step(tech, player(%{}))
+      assert {:press, :b} in commands
+
+      shine = Melee.Enums.Action.to_id(:down_b_ground_start)
+
+      # Shine frame 2: not yet cancellable.
+      {:cont, tech, [{:release, :b}]} =
+        Tech.step(tech, player(%{action: shine, action_frame: 2}))
+
+      # Frame 3: jump cancel.
+      {:cont, tech, commands} =
+        Tech.step(tech, player(%{action: shine, action_frame: 3}))
+
+      assert {:press, :y} in commands
+
+      # Airborne: airdodge.
+      {:cont, tech, commands} = Tech.step(tech, player(%{on_ground: false, action: 0x19}))
+      assert {:press, :l} in commands
+      {:done, _tech, [:release_all]} = Tech.step(tech, player(%{action: 0x2B}))
+    end
+
+    test "short hop laser fires airborne and fast falls" do
+      tech = Tech.new(:short_hop_laser, :falco)
+
+      {:cont, tech, [{:press, :y}]} = Tech.step(tech, player(%{}))
+      {:cont, tech, [{:release, :y}]} = Tech.step(tech, player(%{action: 0x18}))
+
+      {:cont, tech, commands} =
+        Tech.step(tech, player(%{on_ground: false, action: 0x19, speed_y_self: 2.0}))
+
+      assert {:press, :b} in commands
+
+      {:cont, tech, commands} =
+        Tech.step(tech, player(%{on_ground: false, action: 0x19, speed_y_self: -1.0}))
+
+      assert {:tilt, :main, 0.5, 0.0} in commands
+      {:done, _tech, [:release_all]} = Tech.step(tech, player(%{on_ground: true, action: 0x2A}))
+    end
+
+    test "djc aerial double-jumps and immediately attacks" do
+      tech = Tech.new(:djc_aerial, :ness, aerial: :dair)
+
+      {:cont, tech, [{:press, :y}]} = Tech.step(tech, player(%{}))
+
+      {:cont, tech, [{:release, :y}]} =
+        Tech.step(tech, player(%{on_ground: false, action: 0x19}))
+
+      {:cont, tech, [{:press, :x}]} =
+        Tech.step(tech, player(%{on_ground: false, action: 0x19}))
+
+      {:cont, tech, commands} =
+        Tech.step(tech, player(%{on_ground: false, action: 0x1B}))
+
+      assert {:tilt, :c, 0.5, 0.0} in commands
+      {:done, _tech, [:release_all]} = Tech.step(tech, player(%{on_ground: true, action: 0x4A}))
+    end
+  end
 end

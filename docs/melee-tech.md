@@ -10,7 +10,7 @@ references (SmashWiki's [Advanced technique](https://www.ssbwiki.com/Advanced_te
 [L-canceling](https://www.ssbwiki.com/L-canceling) and the
 [Wikibooks Melee techniques guide](https://en.wikibooks.org/wiki/Super_Smash_Bros._Melee/Techniques/Advanced)).
 
-## Tier 1 — implemented, live-verified (`--only dolphin_movement`)
+## Implemented, live-verified (`--only dolphin_movement`)
 
 | Tech | Routine | Live proof |
 | --- | --- | --- |
@@ -21,6 +21,30 @@ references (SmashWiki's [Advanced technique](https://www.ssbwiki.com/Advanced_te
 | L-cancel (via SHFFL) | `:shffl` | nair landing lag 6 frames vs 14 in the identical no-L control run |
 | SHFFL | `:shffl` | the above, with fast fall confirmed by the lag window even existing |
 | Multishine | `:multishine` | 37 shines/300 frames — the historical 8-frame cycle |
+| Fast fall | `:fast_fall` | (inside `:shffl`'s lag proof; standalone routine) |
+| Waveland | `:waveland` | airdodge-landing (`landing_special`) from a full hop |
+| Empty pivot | `:pivot` | facing flips, ends standing within ~12 units (a run-stop takes ~40) |
+| Ground tech | `:tech` | unit-verified single-press arming (a live proof needs a scripted hit — see below) |
+| Ledgedash | `:ledgedash` | grab -> DJ above the lip -> dodge in -> `landing_special` ON STAGE with ledge invincibility intact (galint) |
+| Waveshine | `:waveshine` | 4/4 shines jump-cancelled into 4/4 wavedashes out |
+| Short-hop laser | `:short_hop_laser` | the laser projectile observed mid-air (`ProjectileType` 0x36) |
+| DJC aerial | `:djc_aerial` | Ness DJC nair at apex 2.91 — a fraction of his jump height |
+
+The composability check that closed the loop: the ledgedash test's
+ledge GRAB is itself built from the primitives — walk to the edge,
+`:pivot` to face the stage, backward `:wavedash` off — and the
+airdodge freefall grabs the ledge.
+
+Hard-won geometry facts (each cost a dead Fox):
+
+- A ledgedash airdodge from BELOW the ledge dives to a death; from
+  BESIDE the stage it hits the wall and slides down it. The dodge
+  must wait for the double jump to rise ABOVE the lip
+  (`dodge_height`, default +1.0).
+- `:tech` must never pulse L — an early press is a 40-frame lockout.
+  It arms once, close to the ground, from tumble/damage-fall states.
+  A live proof needs an opponent scripted to launch the subject
+  (future work; the state machine is unit-pinned).
 
 Key implementation facts, all live-measured:
 
@@ -40,37 +64,20 @@ Key implementation facts, all live-measured:
   walked Fox off FD's edge within ~200 frames. The routine is
   closed-loop around its starting position.
 
-## Tier 2 — next: universal, buildable with current readbacks
+## Remaining backlog
 
-- **Waveland** — the wavedash airdodge from an airborne approach onto
-  a platform; same input core, platform-height awareness.
-- **Fast fall** as a standalone routine (currently inside `:shffl`).
-- **Teching** (in place / roll) — press L within 20 frames before
-  hitting the ground in tumble; reactive off `hitstun_frames_left` +
-  projected landing.
-- **Pivot / empty pivot** — 1-frame turnaround out of dash.
-- **Ledgedash** — ledge release, double jump in, airdodge onto stage
-  with invincibility frames; needs ledge action-state handling
-  (`Melee.FrameData` has the roll/ledge data).
-- **Jump-cancel grab / shine grab**; **wavedash out of shield**.
-- **Powershield** — 2-frame window; feasible against seen
-  projectiles via `Projectile` tracking.
-- **Moonwalk**, **fox trot**, **crouch cancel**, **shield drop**
-  (axis-notch emulation is trivial for a virtual controller).
+Universal: jump-cancel grab / shine grab; wavedash out of shield;
+powershield (2-frame window, feasible against seen projectiles);
+moonwalk, fox trot, crouch cancel, shield drop (axis-notch emulation
+is trivial for a virtual controller); a LIVE proof for `:tech` (needs
+an opponent scripted to launch the subject).
 
-## Tier 3 — character-specific
-
-- **Fox/Falco**: waveshine (+ shine turnaround), short-hop
-  laser/double laser, drillshine, thunders. `:multishine` already
-  handles both via the jumpsquat table.
-- **Peach**: float cancel aerials.
-- **Ness / Mewtwo / Yoshi / Peach**: double-jump cancel (DJC) aerials.
-- **Samus**: missile cancel, bomb jump, extended grapple.
-- **Ice Climbers**: desyncs (Nana is already visible as
-  `player.nana`), handoffs.
-- **Marth**: pivot tipper spacing (pairs with `FrameData.in_range/3`).
-- **Yoshi**: parry (shield on frame 1 of... unique double-jump armor).
-- **Falcon/Ganon**: gentleman, instant reverse aerials.
+Character-specific: Fox/Falco drillshine, double laser, thunders,
+shine turnaround; Peach float-cancel aerials; Samus missile cancel /
+bomb jump / extended grapple; Ice Climbers desyncs (Nana is already
+visible as `player.nana`) and handoffs; Marth pivot-tipper spacing
+(pairs with `FrameData.in_range/3`); Yoshi parry; Falcon/Ganon
+gentleman and instant reverse aerials.
 
 ## Tier 4 — reactive defense (needs opponent modeling)
 

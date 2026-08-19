@@ -76,13 +76,13 @@ defmodule Melee.Integration.ConversionsTest do
             "damage=#{inspect(Enum.map(conversions, & &1.damage))}"
         )
 
-        assert Enum.count(l_cancels, & &1.success) >= 1
+        assert Enum.any?(l_cancels, & &1.success)
         assert conversions != []
 
         best = Enum.max_by(conversions, & &1.damage)
         assert best.against == 2
         assert best.damage > 8.0
-        assert length(best.moves) >= 1
+        assert best.moves != []
         assert best.opening == :neutral_win
       after
         Probe.stop(probe)
