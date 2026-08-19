@@ -64,11 +64,12 @@ defmodule Melee.Tech do
   | `:float_cancel` | `aerial:`, `float_frames:` | Peach full hop, float armed at the apex (down-tap, jump held), float-aerial, release and land |
   | `:gentleman` | — | Falcon jab1-jab2-jab3 with SLOW links (mashing buffers the rapid jab) |
   | `:pivot_smash` | `direction:`, `dash_frames:` | Marth pivot with a c-stick fsmash on the turn frame |
-  | `:sh_missile` | `direction:` | Samus SH side-B missile (landing inside the animation is ALWAYS the 30f heavy landing — measured) |
+  | `:missile_cancel` | `direction:` | Samus SH side-B; the landing cancels the missile animation (actionable in ~2 frames, live-measured) |
   | `:ics_desync` | — | Popo's grab connects (Nana's whiffs), then B has only Nana answer: solo blizzard |
   | `:shine_grab` | — | Fox/Falco shine, jump-cancel, Z in jumpsquat: the JC grab out of a shine |
   | `:instant_rar` | `direction:`, `run_frames:` | run, turnaround jump, bair while drifting the original way |
   | `:uthrow_uair` | — | thunders combo: grab, up-throw, full-hop uair into the hitstun |
+  | `:super_wavedash` | `direction:`, `flick_frame:` (sweep it), `slide_frames:` | Samus SWD: standing bomb, away-then-toward on the morph ball touchdown frames |
 
   ## Timing sources
 
@@ -116,11 +117,12 @@ defmodule Melee.Tech do
           | :float_cancel
           | :gentleman
           | :pivot_smash
-          | :sh_missile
+          | :missile_cancel
           | :ics_desync
           | :shine_grab
           | :instant_rar
           | :uthrow_uair
+          | :super_wavedash
   @type command ::
           {:press, Controller.button()}
           | {:release, Controller.button()}
@@ -265,11 +267,12 @@ defmodule Melee.Tech do
     :float_cancel,
     :gentleman,
     :pivot_smash,
-    :sh_missile,
+    :missile_cancel,
     :ics_desync,
     :shine_grab,
     :instant_rar,
-    :uthrow_uair
+    :uthrow_uair,
+    :super_wavedash
   ]
 
   @spec new(routine(), atom() | integer(), keyword()) :: t()
@@ -336,11 +339,12 @@ defmodule Melee.Tech do
   defp dispatch(:float_cancel, tech, player), do: float_cancel(tech, player)
   defp dispatch(:gentleman, tech, player), do: gentleman(tech, player)
   defp dispatch(:pivot_smash, tech, player), do: pivot_smash(tech, player)
-  defp dispatch(:sh_missile, tech, player), do: sh_missile(tech, player)
+  defp dispatch(:missile_cancel, tech, player), do: missile_cancel(tech, player)
   defp dispatch(:ics_desync, tech, player), do: ics_desync(tech, player)
   defp dispatch(:shine_grab, tech, player), do: shine_grab(tech, player)
   defp dispatch(:instant_rar, tech, player), do: instant_rar(tech, player)
   defp dispatch(:uthrow_uair, tech, player), do: uthrow_uair(tech, player)
+  defp dispatch(:super_wavedash, tech, player), do: super_wavedash(tech, player)
 
   @doc "Step and apply the commands to a `Melee.Controller`."
   @spec step(t(), PlayerState.t(), GenServer.server()) :: {status(), t()}
@@ -1487,45 +1491,32 @@ defmodule Melee.Tech do
   end
 
   defp float_cancel(%{phase: :floating, counter: c} = tech, _player) do
-    # A beat in the float, then RELEASE it - the 40% float cancel
-    # applies to an aerial performed in the drop AFTER leaving float
-    # (attacking inside the float lands as a ~29f heavy landing,
-    # measured).
+    # A beat in the float, then the aerial IN the float — landing
+    # during the attack is the float cancel (a 4-frame landing; our
+    # earlier "29f heavy" was the uninterrupted Landing ANIMATION,
+    # not the lag — generic Landing is actionable after 4).
     if c >= Keyword.get(tech.opts, :float_frames, 6) do
-      {:cont, %{tech | phase: :drop, counter: 0}, [{:release, :y}]}
+      aerial = Keyword.get(tech.opts, :aerial, :nair)
+
+      commands =
+        case @aerial_stick[aerial] do
+          nil -> [{:press, :a}]
+          {cx, cy} -> [{:tilt, :c, cx, cy}]
+        end
+
+      {:cont, %{tech | phase: :attacking, counter: 0}, commands}
     else
       {:cont, %{tech | counter: c + 1}, []}
     end
   end
 
-  defp float_cancel(%{phase: :drop, counter: c} = tech, player) do
-    cond do
-      # Wait for a real FALL - the release plays a float-end anim
-      # (0x156) first, which eats button presses.
-      int(player.action) in 0x1D..0x22 ->
-        aerial = Keyword.get(tech.opts, :aerial, :nair)
-
-        commands =
-          case @aerial_stick[aerial] do
-            nil -> [{:press, :a}]
-            {cx, cy} -> [{:tilt, :c, cx, cy}]
-          end
-
-        {:cont, %{tech | phase: :attacking, counter: 0}, commands}
-
-      c >= 20 ->
-        {:done, tech, [:release_all]}
-
-      true ->
-        {:cont, %{tech | counter: c + 1}, []}
-    end
-  end
-
   defp float_cancel(%{phase: :attacking, counter: c} = tech, player) do
     cond do
-      # The post-float aerial is the NORMAL aerial family.
-      int(player.action) in @aerial_attacks ->
-        {:cont, %{tech | phase: :landing, counter: 0}, [{:release, :a}, {:tilt, :c, 0.5, 0.5}]}
+      # Float aerials are their own action family: release the float
+      # and fast fall so the touchdown lands DURING the attack.
+      int(player.action) in 0x158..0x15C ->
+        {:cont, %{tech | phase: :landing, counter: 0},
+         [{:release, :y}, {:release, :a}, {:tilt, :c, 0.5, 0.5}, {:tilt, :main, 0.5, 0.0}]}
 
       c >= 20 ->
         {:done, tech, [:release_all]}
@@ -1795,17 +1786,16 @@ defmodule Melee.Tech do
     end
   end
 
-  # Samus short-hop missile - the staple approach tool. Landing
-  # anywhere inside the missile animation is a 30-frame heavy landing
-  # (measured at every fire height, SH and FH: there is NO
-  # mid-animation lag skip in Melee; the community "missile cancel"
-  # is a platform EDGE-cancel, backlog).
-  defp sh_missile(%{phase: :init} = tech, %{on_ground: true}),
+  # Samus missile cancel: SH side-B; landing during the missile
+  # animation is ACTIONABLE in ~2 frames (the landing ANIMATION runs
+  # ~30 frames when idle, but generic Landing is interruptible after
+  # its lag - an earlier "heavy landing" reading was that artifact).
+  defp missile_cancel(%{phase: :init} = tech, %{on_ground: true}),
     do: {:cont, %{tech | phase: :hop}, [{:press, :y}]}
 
-  defp sh_missile(%{phase: :init} = tech, _player), do: {:cont, tech, []}
+  defp missile_cancel(%{phase: :init} = tech, _player), do: {:cont, tech, []}
 
-  defp sh_missile(%{phase: :hop} = tech, player) do
+  defp missile_cancel(%{phase: :hop} = tech, player) do
     if player.on_ground do
       {:cont, tech, [{:release, :y}]}
     else
@@ -1816,12 +1806,57 @@ defmodule Melee.Tech do
     end
   end
 
-  defp sh_missile(%{phase: :firing, counter: c} = tech, player) do
+  defp missile_cancel(%{phase: :firing, counter: c} = tech, player) do
     cond do
       player.on_ground -> {:done, tech, [:release_all]}
       c >= 90 -> {:done, tech, [:release_all]}
       c >= 1 -> {:cont, %{tech | counter: c + 1}, [{:release, :b}, {:tilt, :main, 0.5, 0.5}]}
       true -> {:cont, %{tech | counter: c + 1}, [{:release, :b}]}
+    end
+  end
+
+  # Samus super wavedash: lay a standing bomb; on the frame the morph
+  # ball touches back down press AWAY, the very next frame press
+  # TOWARD — a frame-perfect pair that flings her the length of FD.
+  # `flick_frame:` counts frames from the bomb press (sweep it — the
+  # game is deterministic, one offset lands the 1-frame window).
+  defp super_wavedash(%{phase: :init} = tech, %{on_ground: true}),
+    do: {:cont, %{tech | phase: :bombing, counter: 0}, [{:tilt, :main, 0.5, 0.0}, {:press, :b}]}
+
+  defp super_wavedash(%{phase: :init} = tech, _player), do: {:cont, tech, []}
+
+  defp super_wavedash(%{phase: :bombing, counter: c} = tech, _player) do
+    flick = Keyword.get(tech.opts, :flick_frame, 40)
+
+    cond do
+      c >= flick ->
+        away = if dir_right?(tech), do: 0.0, else: 1.0
+        {:cont, %{tech | phase: :flick}, [{:release, :b}, {:tilt, :main, away, 0.5}]}
+
+      c >= 1 ->
+        {:cont, %{tech | counter: c + 1}, [{:release, :b}, {:tilt, :main, 0.5, 0.5}]}
+
+      true ->
+        {:cont, %{tech | counter: c + 1}, [{:release, :b}]}
+    end
+  end
+
+  defp super_wavedash(%{phase: :flick} = tech, _player) do
+    toward = if dir_right?(tech), do: 1.0, else: 0.0
+    {:cont, %{tech | phase: :launch}, [{:tilt, :main, toward, 0.5}]}
+  end
+
+  defp super_wavedash(%{phase: :launch} = tech, _player) do
+    # "Do not continue holding after frame 42" — neutral maximizes
+    # the slide.
+    {:cont, %{tech | phase: :sliding, counter: 0}, [{:tilt, :main, 0.5, 0.5}]}
+  end
+
+  defp super_wavedash(%{phase: :sliding, counter: c} = tech, _player) do
+    if c >= Keyword.get(tech.opts, :slide_frames, 30) do
+      {:done, tech, [:release_all]}
+    else
+      {:cont, %{tech | counter: c + 1}, []}
     end
   end
 

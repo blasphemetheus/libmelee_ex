@@ -483,7 +483,16 @@ in the order agreed:
    (did not reproduce, measurements recorded), Samus edge-cancelled
    missile / bomb jump / grapple, ICs handoffs, tipper SPACING,
    Yoshi parry intangibility pin, Mewtwo teleport-cancel, thunders.
-   DI mixups/tech-chase POLICY belongs atop GameEvents. RESEARCH
+   DI mixups/tech-chase POLICY belongs atop GameEvents. EXOTIC
+   ROUND (2026-08-19): the landing-ANIMATION-vs-LAG artifact found
+   and fixed (lag = ACTIONABILITY, probe a held movement input) -
+   which flipped two verdicts: Peach FLOAT CANCEL is REAL (2 frames
+   actionable vs 13/16 controls) and Samus MISSILE CANCEL is REAL
+   (2 frames); plus Samus SUPER WAVEDASH proven (:super_wavedash,
+   126.4 units at flick_frame 39) and the Ness YO-YO GLITCH
+   reproduced (stale usmash hitbox re-activates at 28.8 units,
+   37 frames later, mid-charge-hold; requires the victim walking in
+   and HOLDING toward through the knockback). RESEARCH
    ROUND (2026-08-19, --only dolphin_research): Mewtwo teleport
    EDGE-CANCEL proven (end anim slides off FD lip -> double jump out
    of the fall; grounded teleport = 55.2 units, 29f end anim); Marth

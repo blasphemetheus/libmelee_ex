@@ -558,27 +558,18 @@ defmodule Melee.TechTest do
       {:cont, tech, [{:tilt, :main, 0.5, 0.5}]} =
         Tech.step(tech, player(%{on_ground: false, action: 0x155}))
 
-      # One float beat, then RELEASE the float first (attacking inside
-      # it lands as a ~29f heavy landing, measured).
+      # One float beat, then the aerial IN the float.
       {:cont, tech, []} = Tech.step(tech, player(%{on_ground: false, action: 0x155}))
+      {:cont, tech, [{:press, :a}]} = Tech.step(tech, player(%{on_ground: false, action: 0x155}))
 
-      {:cont, tech, [{:release, :y}]} =
-        Tech.step(tech, player(%{on_ground: false, action: 0x155}))
+      # Float-aerial started (its own family): release the float and
+      # fast fall so the touchdown lands DURING the attack — that IS
+      # the float cancel (4-frame landing, live-measured).
+      {:cont, tech, commands} = Tech.step(tech, player(%{on_ground: false, action: 0x158}))
+      assert {:release, :y} in commands
+      assert {:tilt, :main, 0.5, 0.0} in commands
 
-      # Still in the float-end animation: wait (it eats presses).
-      {:cont, tech, []} = Tech.step(tech, player(%{on_ground: false, action: 0x156}))
-
-      # Falling: NOW the aerial.
-      {:cont, tech, [{:press, :a}]} = Tech.step(tech, player(%{on_ground: false, action: 0x1D}))
-
-      {:cont, tech, commands} = Tech.step(tech, player(%{on_ground: false, action: 0x41}))
-      assert {:release, :a} in commands
-
-      # Fast fall, then done on touchdown.
-      {:cont, tech, [{:tilt, :main, 0.5, 0.0}]} =
-        Tech.step(tech, player(%{on_ground: false, action: 0x41}))
-
-      {:done, _tech, [:release_all]} = Tech.step(tech, player(%{on_ground: true, action: 0x46}))
+      {:done, _tech, [:release_all]} = Tech.step(tech, player(%{on_ground: true, action: 0x2A}))
     end
 
     test "gentleman links three slow jabs and stops" do
@@ -605,8 +596,8 @@ defmodule Melee.TechTest do
       {:done, _tech, [:release_all]} = Tech.step(tech, player(%{action: 0x3C}))
     end
 
-    test "sh_missile hops, side-Bs, finishes on landing" do
-      tech = Tech.new(:sh_missile, :samus, direction: :right)
+    test "missile_cancel hops, side-Bs, finishes on landing" do
+      tech = Tech.new(:missile_cancel, :samus, direction: :right)
 
       {:cont, tech, [{:press, :y}]} = Tech.step(tech, player(%{}))
 
@@ -701,6 +692,34 @@ defmodule Melee.TechTest do
         Tech.step(tech, player(%{on_ground: false, action: 0x19}))
 
       {:done, _tech, [:release_all]} = Tech.step(tech, player(%{on_ground: true, action: 0x49}))
+    end
+  end
+
+  describe "super wavedash" do
+    test "bombs, then flicks away-toward on the configured frame pair" do
+      tech = Tech.new(:super_wavedash, :samus, direction: :right, flick_frame: 2, slide_frames: 1)
+
+      {:cont, tech, commands} = Tech.step(tech, player(%{}))
+      assert {:press, :b} in commands
+      assert {:tilt, :main, 0.5, 0.0} in commands
+
+      {:cont, tech, commands} = Tech.step(tech, player(%{action: 0x155}))
+      assert {:release, :b} in commands
+
+      {:cont, tech, commands} = Tech.step(tech, player(%{action: 0x155}))
+      assert {:tilt, :main, 0.5, 0.5} in commands
+
+      # Flick frame: AWAY first...
+      {:cont, tech, commands} = Tech.step(tech, player(%{action: 0x155}))
+      assert {:tilt, :main, 0.0, 0.5} in commands
+
+      # ...TOWARD the very next frame...
+      {:cont, tech, [{:tilt, :main, 1.0, 0.5}]} = Tech.step(tech, player(%{action: 0x155}))
+
+      # ...then neutral (holding past the pair shrinks the slide).
+      {:cont, tech, [{:tilt, :main, 0.5, 0.5}]} = Tech.step(tech, player(%{action: 0x0E}))
+      {:cont, tech, []} = Tech.step(tech, player(%{action: 0x0E}))
+      {:done, _tech, [:release_all]} = Tech.step(tech, player(%{action: 0x0E}))
     end
   end
 end

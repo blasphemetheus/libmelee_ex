@@ -2,11 +2,10 @@ defmodule Melee.Integration.TechCharactersTest do
   use ExUnit.Case
 
   @moduledoc """
-  Character kits, live: Peach's float and float-aerial (with the
-  landing-lag measurements), Falcon's gentleman (three jabs, no
-  rapid), Marth's pivot fsmash, Samus's SH missile (and the
-  30-frame heavy-landing fact), and the Ice Climbers grab desync
-  (Nana blizzards solo while Popo holds the catch).
+  Character kits, live: Peach's float cancel (actionable ~2 frames
+  after touchdown), Falcon's gentleman + instant RAR, Marth's pivot
+  fsmash, Samus's missile land-cancel (~2 frames), and the Ice
+  Climbers grab desync (Nana blizzards solo while Popo holds).
 
       MELEE_DOLPHIN_PATH=~/.local/share/slippi/exi-ai-flush/dolphin-emu-headless \\
       MELEE_ISO_PATH=~/isos/melee.iso \\
@@ -73,21 +72,29 @@ defmodule Melee.Integration.TechCharactersTest do
             {false, false}
           )
 
-        # The float-aerial touchdown lands via the GENERIC landing
-        # action (0x2A). Measured at every float height / release
-        # timing we tried: ~17 frames, on par with the plain nair's
-        # 16 — the folkloric 40% FC did not reproduce (refinement in
-        # the backlog); the float and its aerials are fully drivable.
-        {probe, fc_lag} = count_landing_lag(probe, [nair_landing, 0x2A])
+        # The FC touchdown is a plain 4-frame landing — measure
+        # ACTIONABILITY (a held movement input taking effect), not the
+        # idle landing animation.
+        {probe, fc_lag} =
+          Enum.reduce_while(1..40, {probe, 0}, fn _i, {probe, n} ->
+            Melee.Controller.tilt_analog(probe.controllers[1], :main, 0.0, 0.5)
+            probe = Probe.step!(probe)
+            p = player(probe)
+
+            if p.action in [0x0F, 0x10, 0x11, 0x12, 0x14],
+              do: {:halt, {probe, n}},
+              else: {:cont, {probe, n + 1}}
+          end)
+
+        Melee.Controller.release_all(probe.controllers[1])
 
         IO.puts(
-          "\n[dolphin] peach float nair: floated=#{floated?} attacked=#{attacked?} lag=#{inspect(fc_lag)} vs plain=#{inspect(control_lag)}"
+          "\n[dolphin] peach FC nair: floated=#{floated?} attacked=#{attacked?} actionable_in=#{fc_lag} (plain nair anim=#{inspect(control_lag)})"
         )
 
         assert floated?
         assert attacked?
-        assert control_lag != nil and fc_lag != nil
-        assert fc_lag < 35
+        assert fc_lag <= 7
         _ = probe
       after
         Probe.stop(probe)
@@ -188,7 +195,7 @@ defmodule Melee.Integration.TechCharactersTest do
     end
   end
 
-  test "Samus short-hop missile (and the heavy-landing fact)", ctx do
+  test "Samus missile land-cancel: actionable ~2 frames after touchdown", ctx do
     if ctx[:skip] do
       IO.puts("\n[dolphin] skipped: #{ctx.skip}")
     else
@@ -203,7 +210,7 @@ defmodule Melee.Integration.TechCharactersTest do
         {probe, missile?} =
           run_tech(
             probe,
-            Tech.new(:sh_missile, :samus, direction: dir),
+            Tech.new(:missile_cancel, :samus, direction: dir),
             120,
             fn a, _ -> a end,
             false
@@ -212,22 +219,26 @@ defmodule Melee.Integration.TechCharactersTest do
             {probe, Probe.gamestate(probe).projectiles != []}
           end)
 
-        # The routine ends on touchdown; count frames until actionable
-        # - pinning the measured 30-frame heavy landing (Melee has no
-        # mid-animation missile lag skip; see docs/melee-tech.md).
+        # The routine ends on touchdown; measure ACTIONABILITY by
+        # holding a movement input and counting frames until it takes
+        # (the landing ANIMATION runs ~30 frames when idle, but it is
+        # interruptible — the original "heavy landing" reading was
+        # that artifact; the missile land-cancel is real).
         {probe, lag} =
-          Enum.reduce_while(1..60, {probe, 0}, fn _i, {probe, n} ->
+          Enum.reduce_while(1..40, {probe, 0}, fn _i, {probe, n} ->
+            Melee.Controller.tilt_analog(probe.controllers[1], :main, 0.0, 0.5)
             probe = Probe.step!(probe)
             p = player(probe)
 
-            if p.on_ground and p.action < 0x19,
+            if p.action in [0x0F, 0x10, 0x11, 0x12, 0x14],
               do: {:halt, {probe, n}},
               else: {:cont, {probe, n + 1}}
           end)
 
-        IO.puts("\n[dolphin] sh missile: missile=#{missile?} heavy_landing_frames=#{lag}")
+        Melee.Controller.release_all(probe.controllers[1])
+        IO.puts("\n[dolphin] sh missile: missile=#{missile?} actionable_in=#{lag} frames")
         assert missile?
-        assert lag in 20..40
+        assert lag <= 8
         _ = probe
       after
         Probe.stop(probe)

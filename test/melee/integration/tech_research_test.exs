@@ -3,16 +3,12 @@ defmodule Melee.Integration.TechResearchTest do
 
   @moduledoc """
   The research-grade backlog, one experiment per open question:
-
-    * Peach's 40% float cancel — the dair variant, with Slippi's own
-      l_cancel byte read during the landing (it records FCs);
-    * Mewtwo's teleport cancel — the END animation sliding off FD's
-      lip; the discriminator is a jump press (special fall can't
-      jump, a cancelled exit can);
-    * Marth's tipper — spacing set from FrameData's fsmash range, far
-      vs close damage;
-    * the thunders combo (uthrow -> FH uair) — asserted through
-      Melee.GameEvents as a real 2-move conversion.
+  Peach float cancel (PROVEN: actionable in ~2 frames - lag must be
+  measured as ACTIONABILITY, not idle animation length), Mewtwo
+  teleport edge-cancel, Marth FrameData-spaced tipper, the thunders
+  combo through GameEvents, Samus super wavedash (126 units), and
+  the Ness yo-yo glitch (the stale hitbox re-activating at 28.8
+  units mid-charge-hold). Findings in docs/melee-tech.md.
 
       MELEE_DOLPHIN_PATH=~/.local/share/slippi/exi-ai-flush/dolphin-emu-headless \\
       MELEE_ISO_PATH=~/isos/melee.iso \\
@@ -49,7 +45,11 @@ defmodule Melee.Integration.TechResearchTest do
         probe = Probe.idle!(probe, 90)
         probe = settle(probe)
 
-        dair_landing = Enums.Action.to_id(:dair_landing)
+        # Lag is measured as ACTIONABILITY (frames from touchdown to a
+        # dash coming out) — the landing ANIMATION plays ~30 frames if
+        # idle but generic Landing is interruptible after its lag, an
+        # artifact that produced the earlier false-negative "heavy
+        # landing" readings.
 
         # Control: plain falling dair, no L press.
         {probe, _} =
@@ -61,39 +61,35 @@ defmodule Melee.Integration.TechResearchTest do
             nil
           )
 
-        {probe, control_lag, control_lc} = landing_lag_and_byte(probe, [dair_landing, 0x2A])
+        {probe, control_lag} = frames_to_dash(probe)
         probe = settle(probe)
 
-        # FC arm: float, RELEASE, dair in the drop, land.
-        dair = Enums.Action.to_id(:dair)
-
+        # FC arm: dair IN the float, release + fast fall, land during
+        # the attack.
         {probe, {floated?, attacked?}} =
           run_tech(
             probe,
             Tech.new(:float_cancel, :peach, aerial: :dair),
             150,
             fn {fl, a}, p ->
-              {fl or p.action == 0x155, a or p.action == dair}
+              {fl or p.action == 0x155, a or p.action in 0x158..0x15C}
             end,
             {false, false}
           )
 
-        {probe, fc_lag, fc_lc} = landing_lag_and_byte(probe, [dair_landing, 0x2A])
+        {probe, fc_lag} = frames_to_dash(probe)
 
         IO.puts(
           "\n[dolphin] peach FC dair: floated=#{floated?} attacked=#{attacked?} " <>
-            "fc lag=#{inspect(fc_lag)} l_cancel_byte=#{inspect(fc_lc)} vs " <>
-            "control lag=#{inspect(control_lag)} byte=#{inspect(control_lc)}"
+            "actionable_in=#{inspect(fc_lag)} vs control=#{inspect(control_lag)} frames"
         )
 
         assert floated?
         assert attacked?
         assert fc_lag != nil and control_lag != nil
-        # Pin the measurement: the post-float dair lands at exactly
-        # NORMAL lag (14 = control) and the Slippi l_cancel byte never
-        # fires — no 40% reduction exists in any float sequence we can
-        # produce (attacking INSIDE float lands heavy ~29-30f).
-        assert fc_lag <= control_lag
+        # The float cancel: a ~4-frame landing vs the dair's full lag.
+        assert fc_lag <= 7
+        assert control_lag >= fc_lag * 2
         _ = probe
       after
         Probe.stop(probe)
@@ -372,25 +368,30 @@ defmodule Melee.Integration.TechResearchTest do
     settle(probe)
   end
 
-  # Landing lag in the given action(s), plus the l_cancel byte values
-  # observed during those frames.
-  defp landing_lag_and_byte(probe, actions) do
-    Enum.reduce_while(1..60, {probe, 0, MapSet.new()}, fn _i, {probe, lag, bytes} ->
+  # Frames from NOW (a touchdown) until a held dash input produces a
+  # dash/turn — the real landing LAG, as opposed to the (longer,
+  # interruptible) landing animation.
+  defp frames_to_dash(probe) do
+    Enum.reduce_while(1..40, {probe, 0, []}, fn _i, {probe, n, tr} ->
+      Melee.Controller.tilt_analog(probe.controllers[1], :main, 0.0, 0.5)
+      probe = Probe.step!(probe)
       p = player(probe)
 
-      cond do
-        p.action in actions ->
-          {:cont, {Probe.step!(probe), lag + 1, MapSet.put(bytes, p.l_cancel)}}
+      tr =
+        if tr == [] or elem(hd(tr), 0) != p.action,
+          do: [{p.action, trunc(p.action_frame)} | tr],
+          else: tr
 
-        lag > 0 ->
-          {:halt, {probe, lag, bytes}}
-
-        true ->
-          {:cont, {Probe.step!(probe), lag, bytes}}
-      end
+      # A stick HELD through the landing exits into a WALK (no fresh
+      # edge for a dash) - any grounded movement marks actionability.
+      if p.action in [0x0F, 0x10, 0x11, 0x12, 0x14],
+        do: {:halt, {probe, n, tr}},
+        else: {:cont, {probe, n + 1, tr}}
     end)
-    |> then(fn {probe, lag, bytes} ->
-      {probe, if(lag == 0, do: nil, else: lag), MapSet.to_list(bytes)}
+    |> then(fn {probe, n, tr} ->
+      Melee.Controller.release_all(probe.controllers[1])
+      if n >= 40, do: IO.puts("[dash probe stuck] #{inspect(Enum.reverse(tr), base: :hex)}")
+      {probe, if(n >= 40, do: nil, else: n)}
     end)
   end
 
@@ -688,5 +689,162 @@ defmodule Melee.Integration.TechResearchTest do
       end,
       timeout_frames: 1_800
     )
+  end
+
+  test "Samus super wavedash: flick-frame sweep until the slide", ctx do
+    if ctx[:skip] do
+      IO.puts("\n[dolphin] skipped: #{ctx.skip}")
+    else
+      probe = boot(ctx, 52_109, :samus)
+
+      try do
+        probe = Probe.idle!(probe, 90)
+        probe = settle(probe)
+
+        # The window is 1 frame wide; the game is deterministic, so
+        # sweep the flick frame until the slide appears.
+        {probe, {best_slide, best_frame}} =
+          Enum.reduce_while(36..46, {probe, {0.0, nil}}, fn flick, {probe, best} ->
+            # Start on the far side - the slide covers 60-80 units and
+            # sails off the lip otherwise (measured the hard way).
+            probe = recover(probe)
+            f0 = player(probe).facing
+            dir = if f0, do: :right, else: :left
+            probe = center_at(probe, if(dir == :right, do: -45.0, else: 45.0))
+            x0 = player(probe).position.x
+
+            {probe, trace} =
+              run_tech(
+                probe,
+                Tech.new(:super_wavedash, :samus, direction: dir, flick_frame: flick),
+                120,
+                fn tr, p ->
+                  e = {p.action, trunc(p.action_frame), Float.round(p.position.x, 1)}
+                  if tr == [] or elem(hd(tr), 0) != p.action, do: [e | tr], else: tr
+                end,
+                []
+              )
+
+            _ = trace
+            slide = abs(player(probe).position.x - x0)
+            probe = recover(probe)
+            best = if slide > elem(best, 0), do: {slide, flick}, else: best
+
+            if slide > 40.0,
+              do: {:halt, {probe, best}},
+              else: {:cont, {probe, best}}
+          end)
+
+        IO.puts(
+          "\n[dolphin] super wavedash: best slide=#{Float.round(best_slide, 1)} units at flick_frame=#{inspect(best_frame)}"
+        )
+
+        assert best_slide > 40.0
+        _ = probe
+      after
+        Probe.stop(probe)
+      end
+    end
+  end
+
+  test "Ness yo-yo glitch: the stale hitbox re-activates at range", ctx do
+    if ctx[:skip] do
+      IO.puts("\n[dolphin] skipped: #{ctx.skip}")
+    else
+      probe = boot(ctx, 52_111, :ness)
+
+      try do
+        probe = Probe.idle!(probe, 90)
+        probe = settle(probe)
+
+        # Mapped by a frame-by-frame walkthrough: the charging up
+        # smash hits at ~8.6 around charge frames 11-12; at low
+        # percent the target stays near and only eats the normal
+        # 6-frame re-hits, but once knocked BEYOND the swing range
+        # (~13), a further hit while the charge is still held is the
+        # STALE hitbox re-activating (seen at 28.8 in the map run).
+        # Loop the scenario - percent accumulates and the knockback
+        # grows until falco parks out of normal reach.
+        {probe, ranged, all_hits} =
+          Enum.reduce_while(1..4, {probe, nil, []}, fn _round, {probe, _, acc} ->
+            {probe, hits} = yoyo_round(probe)
+            acc = acc ++ hits
+
+            ranged =
+              Enum.find(hits, fn {_, d, a, _} -> d > 15.0 and a in [0x156, 0x157] end)
+
+            if ranged != nil,
+              do: {:halt, {probe, ranged, acc}},
+              else: {:cont, {probe, nil, acc}}
+          end)
+
+        IO.puts(
+          "\n[dolphin] yo-yo glitch: ranged=#{inspect(ranged, base: :hex)} all hits (pct, dist, ness_action, frame)=#{inspect(all_hits, base: :hex, limit: 20)}"
+        )
+
+        assert ranged != nil
+        _ = probe
+      after
+        Probe.stop(probe)
+      end
+    end
+  end
+
+  # One yo-yo round: falco walks into the held charge, parks after the
+  # first hit; every hit is logged with distance and ness's action.
+  defp yoyo_round(probe) do
+    probe = settle_ports(probe, [1, 2])
+
+    # Recenter if the knockbacks pushed the scene toward an edge.
+    fx = Probe.gamestate(probe).players[2].position.x
+
+    probe =
+      if abs(fx) > 40.0 do
+        probe =
+          walk_port(probe, 2, if(fx > 0, do: 0.28, else: 0.72), fn p ->
+            abs(p.position.x) < 20.0
+          end)
+
+        settle_ports(probe, [1, 2])
+      else
+        probe
+      end
+
+    falco_x = Probe.gamestate(probe).players[2].position.x
+    me_x = player(probe).position.x
+    tilt = if falco_x > me_x, do: 0.72, else: 0.28
+    probe = walk_until(probe, tilt, fn p -> abs(p.position.x - falco_x) < 16.0 end)
+    probe = settle_ports(probe, [1, 2])
+
+    walk_in = if falco_x > player(probe).position.x, do: 0.28, else: 0.72
+
+    Melee.Controller.tilt_analog(probe.controllers[1], :main, 0.5, 1.0)
+    Melee.Controller.press_button(probe.controllers[1], :a)
+
+    {probe, hits} =
+      Enum.reduce(1..140, {probe, []}, fn i, {probe, hits} ->
+        # Falco HOLDS toward throughout - exactly the mapped run where
+        # the ranged re-hit appeared (the held direction shapes the
+        # knockback path).
+        Melee.Controller.tilt_analog(probe.controllers[2], :main, walk_in, 0.5)
+        probe = Probe.step!(probe)
+        gs = Probe.gamestate(probe)
+        a = gs.players[1]
+        b = gs.players[2]
+        prev = List.first(hits)
+
+        hits =
+          if b.hitlag_left > 0 and (prev == nil or b.percent > elem(prev, 0)) do
+            [{b.percent, Float.round(abs(b.position.x - a.position.x), 1), a.action, i} | hits]
+          else
+            hits
+          end
+
+        {probe, hits}
+      end)
+
+    Melee.Controller.release_all(probe.controllers[1])
+    Melee.Controller.release_all(probe.controllers[2])
+    {probe, Enum.reverse(hits)}
   end
 end

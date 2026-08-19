@@ -121,26 +121,39 @@ Key implementation facts, all live-measured:
 
 ## Research findings (`--only dolphin_research`)
 
-Four of the open questions got answers:
+**The measurement lesson that rewrote two verdicts**: a landing
+ANIMATION plays ~30 frames when idle, but generic Landing (0x2A) is
+interruptible after its actual lag — counting idle animation frames
+produced false "heavy landing" readings. Lag must be measured as
+ACTIONABILITY: hold a movement input through the touchdown and count
+frames until it takes (a held stick exits into a WALK — no fresh
+edge for a dash).
 
 | Question | Verdict | Evidence |
 | --- | --- | --- |
-| Mewtwo teleport cancel | REAL, proven | grounded teleport travels 55.2 units with a 29-frame end animation (0x163); ending it ~1.5 units inside FD's lip slides the end animation off the edge — and mewtwo can DOUBLE JUMP out of the fall (special fall can't jump; the exit is fully actionable) |
-| Marth tipper | proven, FrameData-spaced | `FrameData.range_forward(marth, fsmash, 1)` = 32.0; spacing falco at range+3 (his body width offsets the contact inward) hits for 18.2 vs 14.0 point-blank |
-| Thunders combo | proven, through GameEvents | `:uthrow_uair` connects at ~40%+ (the ThrowUp animation runs ~26 frames while a low-percent pop peaks at 31 and falls back — measured); the landed combo registers as ONE conversion: 18.7 damage, 5 moves |
-| Peach 40% float cancel | did NOT reproduce | full matrix measured: attack INSIDE float lands heavy (~29f, any height/release timing); attack AFTER releasing float lands at exactly NORMAL lag (14 = control); Slippi's l_cancel byte never fires (0) in any variant. Either the folklore mechanics differ from all these input shapes, or the FC needs something EXI-driven inputs aren't producing — left open, with the matrix as the map |
+| Peach float cancel | **PROVEN** (earlier "did not reproduce" was the measurement artifact) | FC dair actionable in **2 frames** vs 13 for the plain dair; FC nair 2 vs ~16. The literature's "normal 4-frame landing" confirmed. Canonical input: aerial IN the float, release + fast fall, land during the attack |
+| Samus missile cancel | **PROVEN** (same correction) | SH missile, land during the animation: actionable in **2 frames**. No platform edge-cancel needed |
+| Samus super wavedash | proven | standing bomb; away-then-toward flick on morph-ball touchdown (flick_frame 39 from the bomb press): **126.4 units** in one slide |
+| Ness yo-yo glitch | reproduced | falco walks into the held usmash charge (its hitting part is ~charge frames 11-12 at ~8.6 range, and the victim must HOLD toward through the knockback); the stale hitbox then re-activates and strikes him at **28.8 units away, 37 frames later, while ness is still in the charge hold (0x157)** — no live yoyo reaches that |
+| Mewtwo teleport cancel | proven | grounded teleport travels 55.2 units with a 29-frame end animation (0x163); ending ~1.5 inside FD's lip slides the end animation off the edge — and mewtwo can DOUBLE JUMP out of the fall (special fall can't jump; the exit is fully actionable) |
+| Marth tipper | proven, FrameData-spaced | `range_forward(marth, fsmash, 1)` = 32.0; falco at range+3 (body width offsets contact inward) takes 18.2 vs 14.0 point-blank |
+| Thunders combo | proven, through GameEvents | `:uthrow_uair` connects at ~40%+ (ThrowUp runs ~26 frames while a low-percent pop peaks at 31); the landed combo registers as ONE conversion: 18.7 damage, 5 moves |
 
 Thunders timing facts: the up-throw needs a stick edge IN CatchWait
 (0xD8) — an up-tilt held from CatchPull never throws; and the uair
 must ride the jump (a first-airborne-frame swing passes under the
 victim).
 
+Ness usmash state map: 0x156 charge (hitting part ~frames 11-12),
+0x157 charge hold (multi-hits a CLOSE target on a ~6-frame cycle),
+0x158 the released swing (auto-releases at max charge, reach ~12).
+
 ## Remaining backlog
 
-Samus's platform EDGE-cancelled missile, bomb jump, and extended
-grapple; ICs handoffs (the grab desync is done); Yoshi's parry
-intangibility pin (egg-shield behavior mapped above); Peach's 40% FC
-mechanism (matrix above).
+Samus bomb jump and extended grapple; ICs handoffs (the grab desync
+is done); Yoshi's parry intangibility pin (egg-shell behavior mapped
+above); the yo-yo glitch's Thunder Jacket follow-up (PKT2 after the
+glitch attaches the hitbox to ness's body).
 
 ## Tier 4 — hit response
 
