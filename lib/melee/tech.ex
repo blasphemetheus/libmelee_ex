@@ -68,6 +68,7 @@ defmodule Melee.Tech do
   | `:ics_desync` | — | Popo's grab connects (Nana's whiffs), then B has only Nana answer: solo blizzard |
   | `:shine_grab` | — | Fox/Falco shine, jump-cancel, Z in jumpsquat: the JC grab out of a shine |
   | `:instant_rar` | `direction:`, `run_frames:` | run, turnaround jump, bair while drifting the original way |
+  | `:uthrow_uair` | — | thunders combo: grab, up-throw, full-hop uair into the hitstun |
 
   ## Timing sources
 
@@ -119,6 +120,7 @@ defmodule Melee.Tech do
           | :ics_desync
           | :shine_grab
           | :instant_rar
+          | :uthrow_uair
   @type command ::
           {:press, Controller.button()}
           | {:release, Controller.button()}
@@ -266,7 +268,8 @@ defmodule Melee.Tech do
     :sh_missile,
     :ics_desync,
     :shine_grab,
-    :instant_rar
+    :instant_rar,
+    :uthrow_uair
   ]
 
   @spec new(routine(), atom() | integer(), keyword()) :: t()
@@ -337,6 +340,7 @@ defmodule Melee.Tech do
   defp dispatch(:ics_desync, tech, player), do: ics_desync(tech, player)
   defp dispatch(:shine_grab, tech, player), do: shine_grab(tech, player)
   defp dispatch(:instant_rar, tech, player), do: instant_rar(tech, player)
+  defp dispatch(:uthrow_uair, tech, player), do: uthrow_uair(tech, player)
 
   @doc "Step and apply the commands to a `Melee.Controller`."
   @spec step(t(), PlayerState.t(), GenServer.server()) :: {status(), t()}
@@ -1483,30 +1487,45 @@ defmodule Melee.Tech do
   end
 
   defp float_cancel(%{phase: :floating, counter: c} = tech, _player) do
-    # A beat in the float, then the aerial (jump stays held).
+    # A beat in the float, then RELEASE it - the 40% float cancel
+    # applies to an aerial performed in the drop AFTER leaving float
+    # (attacking inside the float lands as a ~29f heavy landing,
+    # measured).
     if c >= Keyword.get(tech.opts, :float_frames, 6) do
-      aerial = Keyword.get(tech.opts, :aerial, :nair)
-
-      commands =
-        case @aerial_stick[aerial] do
-          nil -> [{:press, :a}]
-          {cx, cy} -> [{:tilt, :c, cx, cy}]
-        end
-
-      {:cont, %{tech | phase: :attacking, counter: 0}, commands}
+      {:cont, %{tech | phase: :drop, counter: 0}, [{:release, :y}]}
     else
       {:cont, %{tech | counter: c + 1}, []}
     end
   end
 
+  defp float_cancel(%{phase: :drop, counter: c} = tech, player) do
+    cond do
+      # Wait for a real FALL - the release plays a float-end anim
+      # (0x156) first, which eats button presses.
+      int(player.action) in 0x1D..0x22 ->
+        aerial = Keyword.get(tech.opts, :aerial, :nair)
+
+        commands =
+          case @aerial_stick[aerial] do
+            nil -> [{:press, :a}]
+            {cx, cy} -> [{:tilt, :c, cx, cy}]
+          end
+
+        {:cont, %{tech | phase: :attacking, counter: 0}, commands}
+
+      c >= 20 ->
+        {:done, tech, [:release_all]}
+
+      true ->
+        {:cont, %{tech | counter: c + 1}, []}
+    end
+  end
+
   defp float_cancel(%{phase: :attacking, counter: c} = tech, player) do
     cond do
-      # Float aerials use their own action family (0x158..0x15C).
-      # Release the float the moment the aerial starts: the landing
-      # must arrive DURING the aerial with the float no longer held.
-      int(player.action) in 0x158..0x15C ->
-        {:cont, %{tech | phase: :landing, counter: 0},
-         [{:release, :y}, {:release, :a}, {:tilt, :c, 0.5, 0.5}]}
+      # The post-float aerial is the NORMAL aerial family.
+      int(player.action) in @aerial_attacks ->
+        {:cont, %{tech | phase: :landing, counter: 0}, [{:release, :a}, {:tilt, :c, 0.5, 0.5}]}
 
       c >= 20 ->
         {:done, tech, [:release_all]}
@@ -1622,6 +1641,86 @@ defmodule Melee.Tech do
     cond do
       player.on_ground -> {:done, tech, [:release_all]}
       c >= 60 -> {:done, tech, [:release_all]}
+      c >= 2 -> {:cont, %{tech | counter: c + 1}, [{:tilt, :c, 0.5, 0.5}]}
+      true -> {:cont, %{tech | counter: c + 1}, []}
+    end
+  end
+
+  # Thunders combo: grab, up-throw, chase with a full-hop uair while
+  # the victim is still in hitstun.
+  defp uthrow_uair(%{phase: :init} = tech, %{on_ground: true}),
+    do: {:cont, %{tech | phase: :grabbing, counter: 0}, [{:press, :z}]}
+
+  defp uthrow_uair(%{phase: :init} = tech, _player), do: {:cont, tech, []}
+
+  defp uthrow_uair(%{phase: :grabbing, counter: c} = tech, player) do
+    cond do
+      # Wait for CatchWait (0xD8) - a stick already held up during
+      # the CatchPull has no fresh EDGE left to trigger the throw.
+      int(player.action) == 0xD8 ->
+        {:cont, %{tech | phase: :throwing, counter: 0},
+         [{:release, :z}, {:tilt, :main, 0.5, 1.0}]}
+
+      c >= 30 ->
+        {:done, tech, [:release_all]}
+
+      true ->
+        {:cont, %{tech | counter: c + 1}, [{:release, :z}]}
+    end
+  end
+
+  defp uthrow_uair(%{phase: :throwing, counter: c} = tech, player) do
+    cond do
+      # ThrowUp (0xDD): neutral the stick so the held up doesn't
+      # tap-jump the endlag.
+      int(player.action) == 0xDD ->
+        {:cont, %{tech | phase: :thrown, counter: 0}, [{:tilt, :main, 0.5, 0.5}]}
+
+      c >= 20 ->
+        {:done, tech, [:release_all]}
+
+      true ->
+        {:cont, %{tech | counter: c + 1}, []}
+    end
+  end
+
+  defp uthrow_uair(%{phase: :thrown, counter: c} = tech, player) do
+    cond do
+      # Throw endlag over: jump after the victim.
+      int(player.action) < 0x40 and player.on_ground ->
+        {:cont, %{tech | phase: :hop}, [{:press, :y}]}
+
+      c >= 40 ->
+        {:done, tech, [:release_all]}
+
+      true ->
+        {:cont, %{tech | counter: c + 1}, []}
+    end
+  end
+
+  defp uthrow_uair(%{phase: :hop} = tech, player) do
+    if player.on_ground do
+      # Full hop: hold the jump through jumpsquat.
+      {:cont, tech, [{:press, :y}]}
+    else
+      {:cont, %{tech | phase: :rising, counter: 0}, [{:release, :y}]}
+    end
+  end
+
+  # Ride the jump up before swinging - an instant uair passes under
+  # the popped victim.
+  defp uthrow_uair(%{phase: :rising, counter: c} = tech, _player) do
+    if c >= Keyword.get(tech.opts, :uair_delay, 6) do
+      {:cont, %{tech | phase: :attacking, counter: 0}, [{:tilt, :c, 0.5, 1.0}]}
+    else
+      {:cont, %{tech | counter: c + 1}, []}
+    end
+  end
+
+  defp uthrow_uair(%{phase: :attacking, counter: c} = tech, player) do
+    cond do
+      player.on_ground -> {:done, tech, [:release_all]}
+      c >= 90 -> {:done, tech, [:release_all]}
       c >= 2 -> {:cont, %{tech | counter: c + 1}, [{:tilt, :c, 0.5, 0.5}]}
       true -> {:cont, %{tech | counter: c + 1}, []}
     end

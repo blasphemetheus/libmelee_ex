@@ -119,17 +119,28 @@ Key implementation facts, all live-measured:
 - Positioning walks flip the walker's FACING; a falco meant to laser
   or dtilt leftward needs a leftward step before settling.
 
+## Research findings (`--only dolphin_research`)
+
+Four of the open questions got answers:
+
+| Question | Verdict | Evidence |
+| --- | --- | --- |
+| Mewtwo teleport cancel | REAL, proven | grounded teleport travels 55.2 units with a 29-frame end animation (0x163); ending it ~1.5 units inside FD's lip slides the end animation off the edge — and mewtwo can DOUBLE JUMP out of the fall (special fall can't jump; the exit is fully actionable) |
+| Marth tipper | proven, FrameData-spaced | `FrameData.range_forward(marth, fsmash, 1)` = 32.0; spacing falco at range+3 (his body width offsets the contact inward) hits for 18.2 vs 14.0 point-blank |
+| Thunders combo | proven, through GameEvents | `:uthrow_uair` connects at ~40%+ (the ThrowUp animation runs ~26 frames while a low-percent pop peaks at 31 and falls back — measured); the landed combo registers as ONE conversion: 18.7 damage, 5 moves |
+| Peach 40% float cancel | did NOT reproduce | full matrix measured: attack INSIDE float lands heavy (~29f, any height/release timing); attack AFTER releasing float lands at exactly NORMAL lag (14 = control); Slippi's l_cancel byte never fires (0) in any variant. Either the folklore mechanics differ from all these input shapes, or the FC needs something EXI-driven inputs aren't producing — left open, with the matrix as the map |
+
+Thunders timing facts: the up-throw needs a stick edge IN CatchWait
+(0xD8) — an up-tilt held from CatchPull never throws; and the uair
+must ride the jump (a first-airborne-frame swing passes under the
+victim).
+
 ## Remaining backlog
 
-What's left is research-grade rather than routine-grade: the thunders
-combo (a combo, not a primitive); Peach's folkloric 40% float cancel
-(did not reproduce — measurements above); Samus's platform
-EDGE-cancelled missile, bomb jump, and extended grapple; ICs
-handoffs (the grab desync is done); Marth pivot-tipper SPACING (the
-pivot fsmash is done; the tipper needs `FrameData.in_range/3`
-distance control); Yoshi's parry intangibility pin (egg-shield
-behavior mapped above); Mewtwo teleport-cancel (platform/edge
-variant).
+Samus's platform EDGE-cancelled missile, bomb jump, and extended
+grapple; ICs handoffs (the grab desync is done); Yoshi's parry
+intangibility pin (egg-shield behavior mapped above); Peach's 40% FC
+mechanism (matrix above).
 
 ## Tier 4 — hit response
 

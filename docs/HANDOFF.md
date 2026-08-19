@@ -483,7 +483,17 @@ in the order agreed:
    (did not reproduce, measurements recorded), Samus edge-cancelled
    missile / bomb jump / grapple, ICs handoffs, tipper SPACING,
    Yoshi parry intangibility pin, Mewtwo teleport-cancel, thunders.
-   DI mixups/tech-chase POLICY belongs atop GameEvents.
+   DI mixups/tech-chase POLICY belongs atop GameEvents. RESEARCH
+   ROUND (2026-08-19, --only dolphin_research): Mewtwo teleport
+   EDGE-CANCEL proven (end anim slides off FD lip -> double jump out
+   of the fall; grounded teleport = 55.2 units, 29f end anim); Marth
+   tipper proven via FrameData.range_forward spacing (18.2 vs 14.0,
+   victim body width offsets contact); thunders combo (:uthrow_uair)
+   proven THROUGH GameEvents as one 18.7%/5-move conversion (throw
+   edge must land in CatchWait, uair must ride the jump, pop
+   out-races the 26f throw anim only at ~40%+); Peach 40% FC did NOT
+   reproduce across the full input matrix (docs/melee-tech.md) - the
+   l_cancel byte never fires.
 4. **Richer `GameEvents` — SHIPPED (2026-08-18).** Four new
    post-frame fields (last_attack_landed 0x1E, combo_count 0x1F,
    last_hit_by 0x20 wire-0-based -> ports, l_cancel 0x33) feed two

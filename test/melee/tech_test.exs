@@ -558,18 +558,27 @@ defmodule Melee.TechTest do
       {:cont, tech, [{:tilt, :main, 0.5, 0.5}]} =
         Tech.step(tech, player(%{on_ground: false, action: 0x155}))
 
+      # One float beat, then RELEASE the float first (attacking inside
+      # it lands as a ~29f heavy landing, measured).
       {:cont, tech, []} = Tech.step(tech, player(%{on_ground: false, action: 0x155}))
-      {:cont, tech, [{:press, :a}]} = Tech.step(tech, player(%{on_ground: false, action: 0x155}))
 
-      # Float-aerial (its own action family): release the float.
-      {:cont, tech, commands} = Tech.step(tech, player(%{on_ground: false, action: 0x158}))
-      assert {:release, :y} in commands
+      {:cont, tech, [{:release, :y}]} =
+        Tech.step(tech, player(%{on_ground: false, action: 0x155}))
+
+      # Still in the float-end animation: wait (it eats presses).
+      {:cont, tech, []} = Tech.step(tech, player(%{on_ground: false, action: 0x156}))
+
+      # Falling: NOW the aerial.
+      {:cont, tech, [{:press, :a}]} = Tech.step(tech, player(%{on_ground: false, action: 0x1D}))
+
+      {:cont, tech, commands} = Tech.step(tech, player(%{on_ground: false, action: 0x41}))
+      assert {:release, :a} in commands
 
       # Fast fall, then done on touchdown.
       {:cont, tech, [{:tilt, :main, 0.5, 0.0}]} =
-        Tech.step(tech, player(%{on_ground: false, action: 0x158}))
+        Tech.step(tech, player(%{on_ground: false, action: 0x41}))
 
-      {:done, _tech, [:release_all]} = Tech.step(tech, player(%{on_ground: true, action: 0x2A}))
+      {:done, _tech, [:release_all]} = Tech.step(tech, player(%{on_ground: true, action: 0x46}))
     end
 
     test "gentleman links three slow jabs and stops" do
@@ -662,6 +671,36 @@ defmodule Melee.TechTest do
       assert {:tilt, :c, 0.85, 0.5} in commands
 
       {:done, _tech, [:release_all]} = Tech.step(tech, player(%{on_ground: true, action: 0x48}))
+    end
+  end
+
+  describe "combos" do
+    test "uthrow_uair grabs, throws on the CatchWait edge, rides the jump, uairs" do
+      tech = Tech.new(:uthrow_uair, :fox, uair_delay: 1)
+
+      {:cont, tech, [{:press, :z}]} = Tech.step(tech, player(%{}))
+      # CatchPull is NOT enough — the up-tilt needs a fresh edge in
+      # CatchWait or the throw never comes out.
+      {:cont, tech, [{:release, :z}]} = Tech.step(tech, player(%{action: 0xD5}))
+
+      {:cont, tech, commands} = Tech.step(tech, player(%{action: 0xD8}))
+      assert {:tilt, :main, 0.5, 1.0} in commands
+
+      # ThrowUp: neutral so the held up doesn't tap-jump.
+      {:cont, tech, [{:tilt, :main, 0.5, 0.5}]} = Tech.step(tech, player(%{action: 0xDD}))
+
+      # Endlag over: full hop.
+      {:cont, tech, [{:press, :y}]} = Tech.step(tech, player(%{action: 0x0E}))
+      {:cont, tech, [{:press, :y}]} = Tech.step(tech, player(%{action: 0x18}))
+
+      # Airborne: ride up before the swing.
+      {:cont, tech, [{:release, :y}]} = Tech.step(tech, player(%{on_ground: false, action: 0x19}))
+      {:cont, tech, []} = Tech.step(tech, player(%{on_ground: false, action: 0x19}))
+
+      {:cont, tech, [{:tilt, :c, 0.5, 1.0}]} =
+        Tech.step(tech, player(%{on_ground: false, action: 0x19}))
+
+      {:done, _tech, [:release_all]} = Tech.step(tech, player(%{on_ground: true, action: 0x49}))
     end
   end
 end
