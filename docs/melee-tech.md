@@ -148,12 +148,59 @@ Ness usmash state map: 0x156 charge (hitting part ~frames 11-12),
 0x157 charge hold (multi-hits a CLOSE target on a ~6-frame cycle),
 0x158 the released swing (auto-releases at max charge, reach ~12).
 
-## Remaining backlog
+## The full remaining catalog
 
-Samus bomb jump and extended grapple; ICs handoffs (the grab desync
-is done); Yoshi's parry intangibility pin (egg-shell behavior mapped
-above); the yo-yo glitch's Thunder Jacket follow-up (PKT2 after the
-glitch attaches the hitbox to ness's body).
+Everything surveyed and not yet implemented, grouped by what it
+takes in this harness. NEXT ROUND (picked, in priority order):
+
+1. **Edge-cancelled aerials** — land with slide momentum so the
+   landing slips off a platform/stage edge, cancelling ALL lag. Same
+   geometry discipline as the proven Mewtwo teleport edge-cancel;
+   platform work like the shield-drop test (Battlefield boot).
+   Assert with the actionability probe (see Research findings — the
+   idle-animation trap).
+2. **No-impact land (NIL)** — time a jump so the character's center
+   crosses the platform lip at the apex: ZERO landing frames. Pure
+   timing/height; sweep jump heights like the SWD flick sweep.
+3. **V-cancel** — airdodge input 1-2 frames BEFORE being hit reduces
+   knockback ~5%. Reuse the defense-test falco launcher A/B (peak
+   height, like crouch cancel); the press timing sweeps off the
+   launcher's known startup.
+4. **Ness Thunder Jacket** — after the (reproduced) yo-yo glitch,
+   PKT2 into the ground attaches the stale hitbox to ness's body.
+   One step past `yoyo_round/1` in tech_research_test: add PKT2
+   (down-B, steer the bolt into himself), then falco walks into
+   ness with no attack out -> takes damage = jacket.
+5. **Walljump + walltech** — FD's side walls; the defense launcher
+   can send fox into the wall below the lip. Walltech = L near wall
+   contact (extend `:tech`); walljump = away-tap on the wall.
+6. **ICs wobbling** — from the proven `:ics_desync` grab: pummel
+   while Nana dtilts on a timer; assert as ONE GameEvents conversion
+   with many moves (an infinite the tracker should capture).
+
+Feasible, unpicked (do after or on request): ledge-cancelled
+specials (Fox/Falco Illusion off platform edges); Illusion/Phantasm
+SHORTENING (second B press mid-side-B; measure travel like the SWD
+sweep); haxdash (fastfall ledge release -> instant DJ regrab, no
+turnaround; all ledge machinery exists); ledgestalls with
+invincibility-refresh assertions (Fox shine stall, Samus bomb
+stall, Marth up-B stall); pivot grab; boost grab (dash-attack
+-cancelled grab, extra slide measurable); ICs handoffs (Nana regrab
+chains); chaingrab loops (Marth uthrow on spacies, Sheik dthrow
+tech-chase — policies atop `:uthrow_uair`'s skeleton + GameEvents);
+Falco ledgehop double laser (ledge release + `:double_laser`);
+Zelda teleport edge-cancel (confirm the Mewtwo mechanic
+generalizes) and Sheik/Zelda transform storage; Yoshi DJC armor
+(launcher A/B during his double jump); Pikachu/Pichu agility
+cancels; Doc/Mario cape stall; Link/Y.Link bomb-jump recovery; G&W
+bucket braking; DK cargo-throw carry; Luigi misfire (RNG-gated —
+pairs with the rng_seed launch opt); Samus bomb jump and extended
+grapple; Yoshi parry intangibility pin (egg-shell mapped above).
+
+TAS-tier curiosities (the deterministic rig qualifies): invisible
+ceiling glitch, ICs freeze glitch, Peach parasol stall, the
+4-player black hole glitch (4-port boots exist — see
+`--only dolphin_4p`).
 
 ## Tier 4 — hit response
 

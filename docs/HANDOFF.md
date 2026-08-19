@@ -4,6 +4,43 @@ Written 2026-08-05, at the end of the session that built the port. Read
 this first; it is the live resume point. Everything below is verified
 unless it says otherwise.
 
+## RESUME HERE (2026-08-19): next tech round is picked and specced
+
+`Melee.Tech` has 41 live-verified routines across 6 dolphin suites
+(`dolphin_movement`, `_defense`, `_mewtwo`, `_universal`,
+`_characters`, `_research` — all green, ~2 min total). The FULL
+remaining catalog with per-item implementation notes is in
+**docs/melee-tech.md "The full remaining catalog"** — the picked
+next round, in order:
+
+1. Edge-cancelled aerials (BF platform boot, slide-off landing)
+2. No-impact land (apex-crosses-lip timing sweep)
+3. V-cancel (airdodge 1-2f pre-hit, defense-launcher A/B)
+4. Ness Thunder Jacket (PKT2 after the reproduced yo-yo glitch)
+5. Walljump + walltech (FD side walls, launcher-assisted)
+6. ICs wobbling (as one many-move GameEvents conversion)
+
+Hard-won methodology to reuse (details in melee-tech.md):
+
+- **Lag = ACTIONABILITY, never idle animation length** (hold a
+  movement input through touchdown; it exits into a WALK — no dash
+  edge). This artifact once produced two false verdicts.
+- Frame-perfect windows: SWEEP the frame offset (deterministic game;
+  see `:super_wavedash`'s flick_frame 39 and the mewtwo TC margins).
+- When an attempt fails, MAP it: a frame-by-frame walkthrough script
+  (scratchpad `yoyo_map.exs` pattern) beats blind parameter sweeps.
+- Settle to STANDING (0x0E); recenter actors between attempts (scenes
+  drift into edges/ledge-hangs); launcher tests need
+  `boot_rules: [stock: 99, time_limit: 99]`.
+- Test files to copy patterns from: `tech_research_test.exs` (probes,
+  recover/1, walk/settle helpers), `defense_test.exs` (launcher),
+  `tech_universal_test.exs` (BF platform boot).
+
+Checks before each commit: `mix format`, full `mix test`
+(445 green), the touched dolphin suites, `mix credo` (baseline: 2
+refactoring / 1 readability / 1 design), `mix dialyzer` (Total
+errors: 2).
+
 ## Addendum 2026-08-17 (second session): rules menu SHIPPED
 
 The in-flight rules work below is done, entirely headless (no windowed
