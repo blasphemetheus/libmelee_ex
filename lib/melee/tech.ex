@@ -212,24 +212,23 @@ defmodule Melee.Tech do
       :done
   """
   @spec step(t(), PlayerState.t()) :: {status(), t(), [command()]}
-  def step(%__MODULE__{routine: routine} = tech, %PlayerState{} = player) do
-    case routine do
-      :short_hop -> hop(tech, player, :short)
-      :full_hop -> hop(tech, player, :full)
-      :wavedash -> wavedash(tech, player)
-      :dash_dance -> dash_dance(tech, player)
-      :shffl -> shffl(tech, player)
-      :multishine -> multishine(tech, player)
-      :fast_fall -> fast_fall(tech, player)
-      :waveland -> waveland(tech, player)
-      :pivot -> pivot(tech, player)
-      :tech -> ground_tech(tech, player)
-      :ledgedash -> ledgedash(tech, player)
-      :waveshine -> waveshine(tech, player)
-      :short_hop_laser -> short_hop_laser(tech, player)
-      :djc_aerial -> djc_aerial(tech, player)
-    end
-  end
+  def step(%__MODULE__{} = tech, %PlayerState{} = player),
+    do: dispatch(tech.routine, tech, player)
+
+  defp dispatch(:short_hop, tech, player), do: hop(tech, player, :short)
+  defp dispatch(:full_hop, tech, player), do: hop(tech, player, :full)
+  defp dispatch(:wavedash, tech, player), do: wavedash(tech, player)
+  defp dispatch(:dash_dance, tech, player), do: dash_dance(tech, player)
+  defp dispatch(:shffl, tech, player), do: shffl(tech, player)
+  defp dispatch(:multishine, tech, player), do: multishine(tech, player)
+  defp dispatch(:fast_fall, tech, player), do: fast_fall(tech, player)
+  defp dispatch(:waveland, tech, player), do: waveland(tech, player)
+  defp dispatch(:pivot, tech, player), do: pivot(tech, player)
+  defp dispatch(:tech, tech, player), do: ground_tech(tech, player)
+  defp dispatch(:ledgedash, tech, player), do: ledgedash(tech, player)
+  defp dispatch(:waveshine, tech, player), do: waveshine(tech, player)
+  defp dispatch(:short_hop_laser, tech, player), do: short_hop_laser(tech, player)
+  defp dispatch(:djc_aerial, tech, player), do: djc_aerial(tech, player)
 
   @doc "Step and apply the commands to a `Melee.Controller`."
   @spec step(t(), PlayerState.t(), GenServer.server()) :: {status(), t()}
@@ -596,16 +595,15 @@ defmodule Melee.Tech do
   defp waveshine(%{phase: :init} = tech, _player), do: {:cont, tech, []}
 
   defp waveshine(%{phase: :shining} = tech, player) do
-    action = int(player.action)
+    cancellable? =
+      int(player.action) in [@shine_ground_start, @shine_stun] and player.action_frame >= 3 and
+        player.on_ground
 
-    cond do
-      action in [@shine_ground_start, @shine_stun] and player.action_frame >= 3 and
-          player.on_ground ->
-        {:cont, %{tech | phase: :jump_cancel},
-         [{:release, :b}, {:tilt, :main, 0.5, 0.5}, {:press, :y}]}
-
-      true ->
-        {:cont, tech, [{:release, :b}]}
+    if cancellable? do
+      {:cont, %{tech | phase: :jump_cancel},
+       [{:release, :b}, {:tilt, :main, 0.5, 0.5}, {:press, :y}]}
+    else
+      {:cont, tech, [{:release, :b}]}
     end
   end
 
