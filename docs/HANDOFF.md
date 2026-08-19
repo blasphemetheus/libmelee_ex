@@ -428,12 +428,23 @@ in the order agreed:
    Template layout decoded + documented in melee-menus.md
    "Boot-default rules"; `--only dolphin_rules` gained the zero-tap
    test. Card seeding remains the nametag mechanism only.
-3. **`Melee.Tech` — tech-skill primitives.** Frame-perfect building
-   blocks on the proven multishine machinery: wavedash, L-cancel,
-   shine OOS, ledgedash, short-hop laser... NOTE: much of this is
-   CHARACTER-SPECIFIC (jumpsquat frames, shine mechanics), so design
-   it per-character from the start — `Melee.FrameData` already has
-   the per-character frame tables to key off.
+3. **`Melee.Tech` — TIER 1 SHIPPED (2026-08-18).** Pure per-frame
+   state machines (`step/2` returns commands — unit-testable without
+   an emulator; `step/3` applies to a controller), timed off a
+   compiled-in per-character NTSC jumpsquat table (libmelee's CSVs
+   lack it). Implemented + live-verified (`--only dolphin_movement`,
+   ~15s): short/full hop (apex 3.97 vs 7.13), wavedash (8/8 special
+   landings, 21.1 travel, byte-repeatable), banded dash dance (an
+   OPEN-LOOP dance drifts — walked Fox off FD's edge; the routine is
+   closed-loop around its origin), SHFFL with pulsed L-cancel
+   (landing lag 6 vs 14 in the identical no-L control — the pulse
+   trick: a 6-frame L period guarantees an edge inside the 7-frame
+   window without predicting the landing), multishine (37/300
+   frames, Fox+Falco via the jumpsquat table). Full catalog with
+   tiers 2-4 (waveland, teching, ledgedash, pivots, powershield;
+   character-specific: waveshine, SH laser, float cancel, DJC, ICs
+   desyncs; reactive defense belongs atop GameEvents) in
+   docs/melee-tech.md.
 4. **Richer `GameEvents`.** Combo/conversion/neutral segmentation in
    the Slippi-stats mold (openings, punishes, kill moves, tech
    situations, L-cancel rate, recovery outcomes) as pure functions
