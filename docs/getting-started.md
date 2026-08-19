@@ -219,6 +219,7 @@ export MELEE_DOLPHIN_PATH=...
 | Bit-reproducible episodes (`single_core` + `custom_rtc` + lockstep) | `mix test --only dolphin_determinism` | ExiAI headless (flush-patched) | ~10s, no window; same RTC twice -> identical seed and 300-frame fingerprint incl. item spawns; RTC+1 -> a different match |
 | Lockstep inputs over the direct channel stay frame-perfect | `mix test --only dolphin_direct_inputs` | ExiAI headless (flush-patched) | <1s of play; 74 multishines / 73 jumpsquats, identical to the pipe path |
 | `Melee.Tech` movement tier: hops, wavedash, dash dance, SHFFL + L-cancel, multishine | `mix test --only dolphin_movement` | ExiAI headless (flush-patched) | ~15s, no window; 8/8 wavedashes at 21.1 travel, nair landing lag 6 vs 14 without the L-cancel |
+| Conversions + L-cancel events live (`Melee.GameEvents` over a Tech SHFFL punish) | `mix test --only dolphin_conversions` | ExiAI headless (flush-patched) | ~10s, no window; 2/2 L-cancels confirmed by the game, one 12% conversion attributed via last_hit_by |
 | Dolphin process management | `mix test --only dolphin` (includes all of these) | per test | — |
 | Nametag select, CPU config, full match start (seeded card) | `mix test --only nametag_select` | ExiAI headless | `select: ~5s`, no window, match starts with the EXPH tag and Falco at CPU 9 |
 | Nametag creation from a wiped home (card provisioning + boot prompt) | `mix test --only nametag_create` | netplay (window appears; it ignores headless, and only it shows the boot prompt) | `create: ~10s` and a `.gci` written |

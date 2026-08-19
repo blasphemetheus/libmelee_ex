@@ -556,6 +556,14 @@ defmodule Melee.Events do
         hitstun_frames_left: trunc(read_f32(event, 0x2B, 0.0)),
         on_ground: on_ground,
         jumps_left: read_u8(event, 0x32, 1),
+        # Combat bookkeeping (Slippi post-frame): last attack this
+        # player landed, the game's combo counter, which port hit them
+        # last (wire 0-3 -> 1-4; 6 = nobody, normalized to 0), and the
+        # L-cancel status of the latest aerial landing.
+        last_attack_landed: read_u8(event, 0x1E, 0),
+        combo_count: read_u8(event, 0x1F, 0),
+        last_hit_by: normalize_last_hit_by(read_u8(event, 0x20, 6)),
+        l_cancel: read_u8(event, 0x33, 0),
         invulnerable: read_u8(event, 0x34, 0) != 0,
         speed_air_x_self: read_f32(event, 0x35, 0.0),
         speed_y_self: read_f32(event, 0x39, 0.0),
@@ -749,6 +757,10 @@ defmodule Melee.Events do
   # rather than crashing the decoder — malformed input must degrade, not
   # take the console down mid-game.
   defp valid_port?(port), do: port in 1..4
+
+  # Wire "last hit by" is a 0-based port, 6 when nobody has yet.
+  defp normalize_last_hit_by(wire) when wire in 0..3, do: wire + 1
+  defp normalize_last_hit_by(_), do: 0
 
   defp put_in_menu_state(parser, menu_state),
     do: %{parser | gamestate: %{parser.gamestate | menu_state: menu_state}}

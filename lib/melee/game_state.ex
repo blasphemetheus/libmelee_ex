@@ -274,6 +274,10 @@ defmodule Melee.PlayerState do
           hitlag_left: integer(),
           hitstun_frames_left: integer(),
           jumps_left: integer(),
+          last_attack_landed: integer(),
+          combo_count: integer(),
+          last_hit_by: integer(),
+          l_cancel: 0 | 1 | 2,
           on_ground: boolean(),
           speed_air_x_self: float(),
           speed_y_self: float(),
@@ -316,6 +320,16 @@ defmodule Melee.PlayerState do
             hitlag_left: 0,
             hitstun_frames_left: 0,
             jumps_left: 0,
+            # Slippi post-frame combat bookkeeping: the id of the last
+            # attack this player LANDED (0x1E), the game's own combo
+            # counter (0x1F), which port last hit this player (0x20;
+            # 1-4, 0 = nobody yet), and the L-cancel status of the
+            # most recent aerial landing (0x33: 0 none this frame,
+            # 1 successful, 2 missed).
+            last_attack_landed: 0,
+            combo_count: 0,
+            last_hit_by: 0,
+            l_cancel: 0,
             on_ground: true,
             speed_air_x_self: 0.0,
             speed_y_self: 0.0,

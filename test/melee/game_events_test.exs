@@ -158,10 +158,38 @@ defmodule Melee.GameEventsTest do
                {:stock_lost, %{port: 1, kind: :sd, remaining: 2, percent_before: sd1}},
                {:stock_lost, %{port: 1, kind: :sd, remaining: 1, percent_before: sd2}},
                {:stock_lost, %{port: 1, kind: :sd, remaining: 0, percent_before: sd3}}
-             ] = events
+             ] = for(e = {kind, _} <- events, kind in [:game_start, :stock_lost], do: e)
 
       assert_in_delta p2, 21.0, 0.001
       assert Enum.all?([sd1, sd2, sd3], &(&1 == 0.0))
+
+      # The richer layer over the same replay: nine conversions (the
+      # session's shine hits and the dummy's retaliations, all between
+      # ports 1 and 2). Exactly one carries did_kill — and it is NOT
+      # the port-2 KO above: it is port 2's 1% jab four frames before
+      # fox's first SD. `did_kill` means "the defender died inside the
+      # punish window" (slippi-js's semantic), deliberately independent
+      # of :stock_lost's trajectory-based SD/KO classification — the
+      # two views disagree on exactly this kind of death, and both are
+      # right about what they measure.
+      conversions = for {:conversion, c} <- events, do: c
+      assert length(conversions) == 9
+      assert Enum.all?(conversions, &({&1.by, &1.against} in [{1, 2}, {2, 1}]))
+      assert Enum.all?(conversions, &(&1.damage > 0 and &1.moves != []))
+
+      assert [%{by: 2, against: 1, damage: 1.0, start_frame: 990}] =
+               Enum.filter(conversions, & &1.did_kill)
+
+      assert [{:l_cancel, %{port: 2, success: true}}] =
+               for(e = {:l_cancel, _} <- events, do: e)
+
+      # And the stats fold agrees end to end.
+      stats = Melee.GameEvents.Stats.summarize(events)
+      assert stats[2].kills == 1
+      assert stats[2].openings_per_kill != nil
+      assert stats[2].l_cancels == %{successful: 1, missed: 0, rate: 1.0}
+      assert stats[1].sds == 4
+      assert stats[1].conversions + stats[2].conversions == 9
     end
 
     # A semantic edge worth pinning: :game_end fires on the in-game ->
@@ -211,6 +239,147 @@ defmodule Melee.GameEventsTest do
         |> Enum.take(1)
 
       assert [{:game_start, _}] = first
+    end
+  end
+
+  describe "conversions" do
+    defp in_game_frame(frame, players), do: %{gs(@in_game, players) | frame: frame}
+
+    defp standing(port_attrs), do: player(Keyword.merge([on_ground: true], port_attrs))
+
+    test "opens on attributed damage, accumulates moves, closes on reset" do
+      base = %{1 => standing([]), 2 => standing(character: 10)}
+
+      hit1 = %{
+        1 => standing(last_attack_landed: 13),
+        2 => player(character: 10, percent: 12.0, action: 75, last_hit_by: 1)
+      }
+
+      hit2 = %{
+        1 => standing(last_attack_landed: 17),
+        2 => player(character: 10, percent: 25.0, action: 76, last_hit_by: 1)
+      }
+
+      reset_frames =
+        for i <- 5..55 do
+          in_game_frame(i, %{
+            1 => standing([]),
+            2 => standing(character: 10, percent: 25.0, last_hit_by: 1)
+          })
+        end
+
+      events =
+        feed(
+          [
+            in_game_frame(0, base),
+            in_game_frame(1, base),
+            in_game_frame(2, hit1),
+            in_game_frame(3, hit1),
+            in_game_frame(4, hit2)
+          ] ++ reset_frames
+        )
+
+      assert [{:conversion, conv}] = for({:conversion, _} = e <- events, do: e)
+      assert conv.by == 1
+      assert conv.against == 2
+      assert conv.damage == 25.0
+      assert conv.did_kill == false
+      assert conv.opening == :neutral_win
+      assert [%{move_id: 13, damage: 12.0}, %{move_id: 17, damage: 13.0}] = conv.moves
+    end
+
+    test "a death closes the conversion with did_kill" do
+      events =
+        feed([
+          in_game_frame(0, %{1 => standing([]), 2 => standing(character: 10)}),
+          in_game_frame(1, %{
+            1 => standing(last_attack_landed: 20),
+            2 => player(character: 10, percent: 80.0, action: 88, last_hit_by: 1)
+          }),
+          in_game_frame(2, %{
+            1 => standing([]),
+            2 => player(character: 10, percent: 0.0, stock: 3, action: 14, last_hit_by: 1)
+          })
+        ])
+
+      assert [{:conversion, conv}] = for({:conversion, _} = e <- events, do: e)
+      assert conv.did_kill == true
+      # The stock_lost event still fires independently.
+      assert Enum.any?(events, &match?({:stock_lost, %{port: 2}}, &1))
+    end
+
+    test "hitting back mid-punish opens a :counter_attack" do
+      events =
+        feed([
+          in_game_frame(0, %{1 => standing([]), 2 => standing(character: 10)}),
+          # 1 opens on 2.
+          in_game_frame(1, %{
+            1 => standing(last_attack_landed: 13),
+            2 => player(character: 10, percent: 10.0, action: 75, last_hit_by: 1)
+          }),
+          # 40 frames later (outside the trade window), 2 hits 1 back.
+          in_game_frame(41, %{
+            1 => player(percent: 15.0, action: 75, last_hit_by: 2),
+            2 =>
+              player(
+                character: 10,
+                percent: 10.0,
+                action: 75,
+                last_hit_by: 1,
+                last_attack_landed: 5
+              )
+          })
+        ])
+
+      tracker_events = for {:conversion, _} = e <- events, do: e
+      # Neither conversion closed yet; force them out via finish.
+      assert tracker_events == []
+    end
+
+    test "finish flushes open conversions" do
+      {events, tracker} =
+        Enum.reduce(
+          [
+            in_game_frame(0, %{1 => standing([]), 2 => standing(character: 10)}),
+            in_game_frame(1, %{
+              1 => standing(last_attack_landed: 13),
+              2 => player(character: 10, percent: 10.0, action: 75, last_hit_by: 1)
+            })
+          ],
+          {[], GameEvents.new()},
+          fn state, {acc, tracker} ->
+            {events, tracker} = GameEvents.step(tracker, state)
+            {acc ++ events, tracker}
+          end
+        )
+
+      flushed = events ++ GameEvents.finish(tracker)
+      assert [{:conversion, conv}] = for({:conversion, _} = e <- flushed, do: e)
+      assert conv.by == 1 and conv.did_kill == false
+    end
+  end
+
+  describe "l_cancel events" do
+    test "one event per aerial landing, success from the status byte" do
+      base = %{1 => player(action: 0x41, on_ground: false)}
+      landing_ok = %{1 => player(action: 70, on_ground: true, l_cancel: 1)}
+      landing_miss = %{1 => player(action: 70, on_ground: true, l_cancel: 2)}
+      air = %{1 => player(action: 0x41, on_ground: false)}
+
+      events =
+        feed([
+          gs(@in_game, base),
+          gs(@in_game, base),
+          gs(@in_game, landing_ok),
+          gs(@in_game, landing_ok),
+          gs(@in_game, air),
+          gs(@in_game, landing_miss)
+        ])
+
+      assert [
+               {:l_cancel, %{port: 1, success: true}},
+               {:l_cancel, %{port: 1, success: false}}
+             ] = for({:l_cancel, _} = e <- events, do: e)
     end
   end
 end

@@ -445,13 +445,26 @@ in the order agreed:
    character-specific: waveshine, SH laser, float cancel, DJC, ICs
    desyncs; reactive defense belongs atop GameEvents) in
    docs/melee-tech.md.
-4. **Richer `GameEvents`.** Combo/conversion/neutral segmentation in
-   the Slippi-stats mold (openings, punishes, kill moves, tech
-   situations, L-cancel rate, recovery outcomes) as pure functions
-   over the existing replay-or-live stream pipeline. Purpose: dense
-   reward shaping, corpus filtering for imitation, and bot evals
-   beyond win rate. Differential-test against slippi-js stats where
-   definitions overlap.
+4. **Richer `GameEvents` — SHIPPED (2026-08-18).** Four new
+   post-frame fields (last_attack_landed 0x1E, combo_count 0x1F,
+   last_hit_by 0x20 wire-0-based -> ports, l_cancel 0x33) feed two
+   new events: `{:l_cancel, %{port, success}}` (one per aerial
+   landing, read at landing-action entry) and `{:conversion, ...}` in
+   the slippi-js ConversionComputer mold — opens on attributed damage
+   (last_hit_by, no heuristics), moves carry the attacker's
+   last_attack_landed, closes on 45 actionable frames / death /
+   game end, openings classified neutral_win / counter_attack /
+   trade. `Melee.GameEvents.Stats.summarize/1` folds streams into
+   per-port kills, openings-per-kill, damage-per-opening, L-cancel
+   rate, SDs. Verified three ways: synthetic unit sequences; the
+   multishine FIXTURE replay turned out to contain 9 real conversions
+   + 1 L-cancel (golden test now pins them — incl. the nuance that
+   conversion did_kill means "died inside the punish window" and can
+   disagree with stock_lost's SD/KO trajectory call, both correctly);
+   and live (`--only dolphin_conversions`): Tech SHFFLs Falco, 2/2
+   L-cancels confirmed by the game's own byte, one 12% conversion
+   attributed. Not done: slippi-js corpus differential (needs node),
+   tech-situation events, recovery outcomes — natural follow-ons.
 5. **Special Melee — EXPLORED, blocked on Slippi itself (2026-08-18).**
    Everything is mapped and drivable (per-mode scene majors typed in
    Melee.Events.Menu, open-loop CSS/SSS recipes, matches verifiably

@@ -38,6 +38,26 @@ defmodule Melee.GameEvents do
       into the break family (205..211, ShieldBreakFly/…/FuraFura)
     * `{:menu_transition, %{from: m1, to: m2}}` — any menu-state change
       that isn't a game boundary
+    * `{:l_cancel, %{port: p, success: boolean}}` — an aerial landing
+      resolved its L-cancel (Slippi post-frame 0x33; one event per
+      landing)
+    * `{:conversion, %{by: p, against: q, start_frame: f0,
+      end_frame: f1, moves: [%{frame, move_id, damage}], damage: total,
+      did_kill: boolean, opening: :neutral_win | :counter_attack |
+      :trade}}` — a punish in the slippi-js `ConversionComputer` mold:
+      OPENS when a player takes attributed damage (`last_hit_by`),
+      ACCUMULATES every further damage instance as a move (move ids
+      from the attacker's `last_attack_landed`), and CLOSES once the
+      defender has been out of combo states (hitstun / grabbed /
+      tumble / hitlag) for #{45} consecutive frames — or dies
+      (`did_kill: true`), or the game ends. The opening classifies as
+      `:counter_attack` when the attacker was themselves being
+      converted at the time, `:trade` when the attacker took damage
+      within the previous 5 frames, `:neutral_win` otherwise.
+
+  Conversions are the dense-reward signal: "won neutral" and "damage
+  per opening" fall out of this stream without replay post-processing.
+  `Melee.GameEvents.Stats` folds these events into per-game summaries.
   """
 
   alias Melee.GameState
@@ -54,20 +74,36 @@ defmodule Melee.GameEvents do
   @shield_states MapSet.new([178, 179, 180])
   @shield_break_states MapSet.new(205..211)
 
+  # Aerial-landing actions (NairLanding..DairLanding): entering one is
+  # the moment the L-cancel status (post-frame 0x33) is authoritative.
+  @aerial_landing_states MapSet.new(70..74)
+
+  # States that keep a conversion alive (defender not yet reset):
+  # hitstun/thrown families plus tumble. The reset counter runs only
+  # while the defender is OUT of these (and out of hitlag); slippi-js's
+  # PUNISH_RESET_FRAMES.
+  @combo_states MapSet.new(Enum.to_list(75..91) ++ Enum.to_list(223..232) ++ [38])
+  @conversion_reset_frames 45
+  @trade_window_frames 5
+
   @type event ::
           {:game_start, map()}
           | {:game_end, map()}
           | {:stock_lost, map()}
           | {:shield_break, map()}
           | {:menu_transition, map()}
+          | {:l_cancel, map()}
+          | {:conversion, map()}
 
   @type t :: %__MODULE__{
           in_game: boolean(),
           menu_state: integer() | nil,
-          players: %{optional(integer()) => map()}
+          players: %{optional(integer()) => map()},
+          conversions: %{optional(integer()) => map()},
+          frame: integer() | nil
         }
 
-  defstruct in_game: false, menu_state: nil, players: %{}
+  defstruct in_game: false, menu_state: nil, players: %{}, conversions: %{}, frame: nil
 
   @doc "Fresh tracker. Feed it `step/2` per gamestate."
   @spec new() :: t()
@@ -90,7 +126,8 @@ defmodule Melee.GameEvents do
   def finish(%__MODULE__{in_game: false}), do: []
 
   def finish(%__MODULE__{} = tracker) do
-    [{:game_end, %{stocks: Map.new(tracker.players, fn {port, p} -> {port, p.stock} end)}}]
+    flush_conversions(tracker) ++
+      [{:game_end, %{stocks: Map.new(tracker.players, fn {port, p} -> {port, p.stock} end)}}]
   end
 
   @doc """
@@ -139,9 +176,11 @@ defmodule Melee.GameEvents do
           ]
 
         not in_game and tracker.in_game ->
-          [
-            {:game_end, %{stocks: Map.new(tracker.players, fn {port, p} -> {port, p.stock} end)}}
-          ]
+          flush_conversions(tracker) ++
+            [
+              {:game_end,
+               %{stocks: Map.new(tracker.players, fn {port, p} -> {port, p.stock} end)}}
+            ]
 
         not in_game and tracker.menu_state != nil and
             gamestate.menu_state != tracker.menu_state ->
@@ -153,11 +192,14 @@ defmodule Melee.GameEvents do
 
     # Per-port diffs only make sense across two consecutive IN-GAME
     # frames — respawn resets and menu screens would read as deaths.
-    events =
+    {events, conversions} =
       if in_game and tracker.in_game do
-        events ++ player_events(tracker.players, known_players(gamestate))
+        {conv_events, conversions} = step_conversions(tracker, gamestate)
+
+        {events ++
+           player_events(tracker.players, known_players(gamestate)) ++ conv_events, conversions}
       else
-        events
+        {events, %{}}
       end
 
     # hit_since_safe only carries across consecutive in-game frames — a
@@ -167,9 +209,11 @@ defmodule Melee.GameEvents do
     tracker = %__MODULE__{
       in_game: in_game,
       menu_state: gamestate.menu_state,
+      frame: if(in_game, do: gamestate.frame, else: tracker.frame),
+      conversions: conversions,
       players:
         if(in_game,
-          do: Map.new(known_players(gamestate), &snapshot(&1, prev_flags)),
+          do: Map.new(known_players(gamestate), &snapshot(&1, prev_flags, gamestate.frame)),
           else: tracker.players
         )
     }
@@ -181,7 +225,7 @@ defmodule Melee.GameEvents do
     for {port, p} <- players || %{}, p != nil, do: {port, p}
   end
 
-  defp snapshot({port, p}, prev_flags) do
+  defp snapshot({port, p}, prev_flags, frame) do
     action = int(p.action)
 
     # Action states ONLY — deliberately not `hitstun_frames_left > 0`.
@@ -202,13 +246,21 @@ defmodule Melee.GameEvents do
         true -> get_in(prev_flags, [port, :hit_since_safe]) || false
       end
 
+    prev_percent = get_in(prev_flags, [port, :percent])
+
+    last_damaged_frame =
+      if is_number(prev_percent) and p.percent > prev_percent + 0.001,
+        do: frame,
+        else: get_in(prev_flags, [port, :last_damaged_frame])
+
     {port,
      %{
        stock: p.stock,
        percent: p.percent,
        action: p.action,
        character: p.character,
-       hit_since_safe: hit_since_safe
+       hit_since_safe: hit_since_safe,
+       last_damaged_frame: last_damaged_frame
      }}
   end
 
@@ -244,7 +296,152 @@ defmodule Melee.GameEvents do
         []
       end
 
-    stock_events ++ break_events
+    stock_events ++ break_events ++ l_cancel_events(port, prev, p)
+  end
+
+  # One event per aerial landing, read at the moment the landing action
+  # is entered (the frame post-frame 0x33 is authoritative).
+  defp l_cancel_events(port, prev, p) do
+    if not MapSet.member?(@aerial_landing_states, int(prev.action)) and
+         MapSet.member?(@aerial_landing_states, int(p.action)) and p.l_cancel in [1, 2] do
+      [{:l_cancel, %{port: port, success: p.l_cancel == 1}}]
+    else
+      []
+    end
+  end
+
+  ## ------------------------------------------------------------------
+  ## Conversions
+  ## ------------------------------------------------------------------
+
+  # Walk every port with a previous snapshot: open/extend a conversion
+  # on attributed damage, run the reset counter otherwise, close on
+  # reset expiry or death.
+  defp step_conversions(tracker, gamestate) do
+    frame = gamestate.frame
+    players = known_players(gamestate)
+
+    # The move id a hit carries is the ATTACKER's last_attack_landed as
+    # of this frame.
+    attacker_moves = Map.new(players, fn {port, p} -> {port, p.last_attack_landed} end)
+
+    Enum.reduce(players, {[], tracker.conversions}, fn {port, p}, {events, conversions} ->
+      case tracker.players do
+        %{^port => prev} ->
+          step_conversion(port, prev, p, frame, tracker, attacker_moves, events, conversions)
+
+        _ ->
+          {events, conversions}
+      end
+    end)
+  end
+
+  defp step_conversion(port, prev, p, frame, tracker, attacker_moves, events, conversions) do
+    active = Map.get(conversions, port)
+    died? = is_integer(prev.stock) and is_integer(p.stock) and p.stock < prev.stock
+    damaged? = is_number(prev.percent) and p.percent > prev.percent + 0.001
+    attacker = p.last_hit_by
+
+    cond do
+      died? and active != nil ->
+        {events ++ [close_conversion(active, frame, true)], Map.delete(conversions, port)}
+
+      damaged? and attacker in 1..4 and attacker != port ->
+        damage = Float.round(p.percent - prev.percent, 2)
+        move = %{frame: frame, move_id: Map.get(attacker_moves, attacker, 0), damage: damage}
+        take_hit(port, attacker, move, damage, frame, active, tracker, events, conversions)
+
+      active != nil ->
+        run_reset(port, p, frame, active, events, conversions)
+
+      true ->
+        {events, conversions}
+    end
+  end
+
+  defp take_hit(port, attacker, move, damage, frame, active, tracker, events, conversions) do
+    opened = %{
+      by: attacker,
+      against: port,
+      start_frame: frame,
+      moves: [move],
+      damage: damage,
+      reset: 0,
+      opening: classify_opening(attacker, port, conversions, tracker, frame)
+    }
+
+    cond do
+      active == nil ->
+        {events, Map.put(conversions, port, opened)}
+
+      active.by == attacker ->
+        extended = %{
+          active
+          | moves: [move | active.moves],
+            damage: active.damage + damage,
+            reset: 0
+        }
+
+        {events, Map.put(conversions, port, extended)}
+
+      true ->
+        # A different port took over the punish: close the old
+        # conversion and open a fresh one attributed to them.
+        {events ++ [close_conversion(active, frame, false)], Map.put(conversions, port, opened)}
+    end
+  end
+
+  defp run_reset(port, p, frame, active, events, conversions) do
+    cond do
+      MapSet.member?(@combo_states, int(p.action)) or p.hitlag_left > 0 ->
+        {events, Map.put(conversions, port, %{active | reset: 0})}
+
+      active.reset + 1 > @conversion_reset_frames ->
+        {events ++ [close_conversion(active, frame, false)], Map.delete(conversions, port)}
+
+      true ->
+        {events, Map.put(conversions, port, %{active | reset: active.reset + 1})}
+    end
+  end
+
+  defp classify_opening(attacker, defender, conversions, tracker, frame) do
+    attacker_being_converted? =
+      case Map.get(conversions, attacker) do
+        %{by: ^defender} -> true
+        _ -> false
+      end
+
+    attacker_recently_hit? =
+      case get_in(tracker.players, [attacker, :last_damaged_frame]) do
+        f when is_integer(f) -> frame - f <= @trade_window_frames
+        _ -> false
+      end
+
+    cond do
+      attacker_recently_hit? -> :trade
+      attacker_being_converted? -> :counter_attack
+      true -> :neutral_win
+    end
+  end
+
+  defp close_conversion(active, frame, did_kill) do
+    {:conversion,
+     %{
+       by: active.by,
+       against: active.against,
+       start_frame: active.start_frame,
+       end_frame: frame,
+       moves: Enum.reverse(active.moves),
+       damage: Float.round(active.damage, 2),
+       did_kill: did_kill,
+       opening: active.opening
+     }}
+  end
+
+  defp flush_conversions(%__MODULE__{conversions: conversions, frame: frame}) do
+    for {_port, active} <- conversions do
+      close_conversion(active, frame || active.start_frame, false)
+    end
   end
 
   defp int(a) when is_integer(a), do: a
