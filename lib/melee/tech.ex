@@ -61,6 +61,11 @@ defmodule Melee.Tech do
   | `:drillshine` | — | SHFFL'd dair, then pulse the shine out of the L-cancelled landing |
   | `:double_laser` | — | Falco SH double laser: B edges pulsed through the hop |
   | `:shine_turnaround` | — | tap back mid-shine; facing flips without leaving the shine |
+  | `:float_cancel` | `aerial:`, `float_frames:` | Peach full hop, float armed at the apex (down-tap, jump held), float-aerial, release and land |
+  | `:gentleman` | — | Falcon jab1-jab2-jab3 with SLOW links (mashing buffers the rapid jab) |
+  | `:pivot_smash` | `direction:`, `dash_frames:` | Marth pivot with a c-stick fsmash on the turn frame |
+  | `:sh_missile` | `direction:` | Samus SH side-B missile (landing inside the animation is ALWAYS the 30f heavy landing — measured) |
+  | `:ics_desync` | — | Popo's grab connects (Nana's whiffs), then B has only Nana answer: solo blizzard |
 
   ## Timing sources
 
@@ -105,6 +110,11 @@ defmodule Melee.Tech do
           | :drillshine
           | :double_laser
           | :shine_turnaround
+          | :float_cancel
+          | :gentleman
+          | :pivot_smash
+          | :sh_missile
+          | :ics_desync
   @type command ::
           {:press, Controller.button()}
           | {:release, Controller.button()}
@@ -178,6 +188,12 @@ defmodule Melee.Tech do
   @missed_tech_states [0xB7, 0xBF]
   # Catch (212) through CatchWait (216): the grab came out / connected.
   @grab_actions 0xD4..0xD8
+  @jab1 0x2C
+  @jab2 0x2D
+  @jab3 0x2E
+  @rapid_jab_start 0x2F
+  # AttackS4Hi..AttackS4Lw: the five fsmash angle variants.
+  @fsmash_actions 0x3A..0x3E
   @shield_reflect 0xB6
   @platform_drop 0xF4
   @edge_catch 0xFC
@@ -239,7 +255,12 @@ defmodule Melee.Tech do
     :shield_drop,
     :drillshine,
     :double_laser,
-    :shine_turnaround
+    :shine_turnaround,
+    :float_cancel,
+    :gentleman,
+    :pivot_smash,
+    :sh_missile,
+    :ics_desync
   ]
 
   @spec new(routine(), atom() | integer(), keyword()) :: t()
@@ -303,6 +324,11 @@ defmodule Melee.Tech do
   defp dispatch(:drillshine, tech, player), do: drillshine(tech, player)
   defp dispatch(:double_laser, tech, player), do: double_laser(tech, player)
   defp dispatch(:shine_turnaround, tech, player), do: shine_turnaround(tech, player)
+  defp dispatch(:float_cancel, tech, player), do: float_cancel(tech, player)
+  defp dispatch(:gentleman, tech, player), do: gentleman(tech, player)
+  defp dispatch(:pivot_smash, tech, player), do: pivot_smash(tech, player)
+  defp dispatch(:sh_missile, tech, player), do: sh_missile(tech, player)
+  defp dispatch(:ics_desync, tech, player), do: ics_desync(tech, player)
 
   @doc "Step and apply the commands to a `Melee.Controller`."
   @spec step(t(), PlayerState.t(), GenServer.server()) :: {status(), t()}
@@ -1395,6 +1421,242 @@ defmodule Melee.Tech do
   end
 
   defp dir_right?(tech), do: Keyword.get(tech.opts, :direction, :right) == :right
+
+  ## ------------------------------------------------------------------
+  ## Tier 5: character kits
+  ## ------------------------------------------------------------------
+
+  # Peach float-cancel aerial: full hop, arm the float near the apex
+  # (a down-tap with jump still held), aerial IN the float, release,
+  # and land mid-aerial. A GROUND-LEVEL float drop lands the same
+  # frame the release registers and takes the 29-frame heavy landing
+  # (measured) — the FC needs the height.
+  defp float_cancel(%{phase: :init} = tech, %{on_ground: true} = player) do
+    if int(player.action) == @standing do
+      {:cont, %{tech | phase: :hop}, [{:press, :y}]}
+    else
+      {:cont, tech, [{:tilt, :main, 0.5, 0.5}]}
+    end
+  end
+
+  defp float_cancel(%{phase: :init} = tech, _player), do: {:cont, tech, []}
+
+  defp float_cancel(%{phase: :hop} = tech, player) do
+    if player.on_ground do
+      # Hold jump: full hop, and the held jump is half the float input.
+      {:cont, tech, [{:press, :y}]}
+    else
+      {:cont, %{tech | phase: :float_arm, counter: 0}, []}
+    end
+  end
+
+  # Arm the float LOW - a down-tap with jump held right after
+  # liftoff locks the float a few units up, so the post-release fall
+  # lands inside the FC window.
+  defp float_cancel(%{phase: :float_arm, counter: c} = tech, player) do
+    cond do
+      player.speed_y_self < 1.0 ->
+        {:cont, %{tech | phase: :float_wait, counter: 0}, [{:tilt, :main, 0.5, 0.25}]}
+
+      not player.on_ground and c >= 30 ->
+        {:done, tech, [:release_all]}
+
+      true ->
+        {:cont, %{tech | counter: c + 1}, []}
+    end
+  end
+
+  defp float_cancel(%{phase: :float_wait, counter: c} = tech, player) do
+    if int(player.action) >= 0x155 or c >= 15 do
+      {:cont, %{tech | phase: :floating, counter: 0}, [{:tilt, :main, 0.5, 0.5}]}
+    else
+      {:cont, %{tech | counter: c + 1}, []}
+    end
+  end
+
+  defp float_cancel(%{phase: :floating, counter: c} = tech, _player) do
+    # A beat in the float, then the aerial (jump stays held).
+    if c >= Keyword.get(tech.opts, :float_frames, 6) do
+      aerial = Keyword.get(tech.opts, :aerial, :nair)
+
+      commands =
+        case @aerial_stick[aerial] do
+          nil -> [{:press, :a}]
+          {cx, cy} -> [{:tilt, :c, cx, cy}]
+        end
+
+      {:cont, %{tech | phase: :attacking, counter: 0}, commands}
+    else
+      {:cont, %{tech | counter: c + 1}, []}
+    end
+  end
+
+  defp float_cancel(%{phase: :attacking, counter: c} = tech, player) do
+    cond do
+      # Float aerials use their own action family (0x158..0x15C).
+      # Release the float the moment the aerial starts: the landing
+      # must arrive DURING the aerial with the float no longer held.
+      int(player.action) in 0x158..0x15C ->
+        {:cont, %{tech | phase: :landing, counter: 0},
+         [{:release, :y}, {:release, :a}, {:tilt, :c, 0.5, 0.5}]}
+
+      c >= 20 ->
+        {:done, tech, [:release_all]}
+
+      true ->
+        {:cont, %{tech | counter: c + 1}, [{:release, :a}, {:tilt, :c, 0.5, 0.5}]}
+    end
+  end
+
+  defp float_cancel(%{phase: :landing, counter: c} = tech, player) do
+    cond do
+      player.on_ground ->
+        {:done, tech, [:release_all]}
+
+      c >= 60 ->
+        {:done, tech, [:release_all]}
+
+      # Fast fall: the FC window is landing within ~4 frames of
+      # leaving the float.
+      c == 0 ->
+        {:cont, %{tech | counter: c + 1}, [{:tilt, :main, 0.5, 0.0}]}
+
+      true ->
+        {:cont, %{tech | counter: c + 1}, []}
+    end
+  end
+
+  # Falcon gentleman: three SLOW jab links (mashing buffers the rapid
+  # jab instead of the third hit).
+  defp gentleman(%{phase: :init} = tech, %{on_ground: true}),
+    do: {:cont, %{tech | phase: :w1, counter: 0}, [{:press, :a}]}
+
+  defp gentleman(%{phase: :init} = tech, _player), do: {:cont, tech, []}
+
+  defp gentleman(%{phase: :w1} = tech, player),
+    do: gentleman_link(tech, player, @jab1, :w2)
+
+  defp gentleman(%{phase: :w2} = tech, player),
+    do: gentleman_link(tech, player, @jab2, :w3)
+
+  defp gentleman(%{phase: :w3, counter: c} = tech, player) do
+    cond do
+      int(player.action) in [@jab3, @rapid_jab_start] -> {:done, tech, [:release_all]}
+      c >= 40 -> {:done, tech, [:release_all]}
+      true -> {:cont, %{tech | counter: c + 1}, [{:release, :a}]}
+    end
+  end
+
+  defp gentleman_link(%{counter: c} = tech, player, jab, next) do
+    cond do
+      int(player.action) == jab and player.action_frame >= 3 ->
+        {:cont, %{tech | phase: next, counter: 0}, [{:press, :a}]}
+
+      c >= 40 ->
+        {:done, tech, [:release_all]}
+
+      true ->
+        {:cont, %{tech | counter: c + 1}, [{:release, :a}]}
+    end
+  end
+
+  # Marth pivot fsmash: the empty pivot's flick frame, with the
+  # c-stick smash landing on the turn.
+  defp pivot_smash(%{phase: :init} = tech, %{on_ground: true}) do
+    x = if dir_right?(tech), do: 1.0, else: 0.0
+    dash = Keyword.get(tech.opts, :dash_frames, 5)
+    {:cont, %{tech | phase: :dashing, counter: dash}, [{:tilt, :main, x, 0.5}]}
+  end
+
+  defp pivot_smash(%{phase: :init} = tech, _player), do: {:cont, tech, []}
+
+  defp pivot_smash(%{phase: :dashing, counter: c} = tech, _player) when c > 1,
+    do: {:cont, %{tech | counter: c - 1}, []}
+
+  defp pivot_smash(%{phase: :dashing} = tech, _player) do
+    x = if dir_right?(tech), do: 0.0, else: 1.0
+    {:cont, %{tech | phase: :flick}, [{:tilt, :main, x, 0.5}]}
+  end
+
+  defp pivot_smash(%{phase: :flick} = tech, _player) do
+    # C-stick smash toward the NEW facing, main back to neutral.
+    cx = if dir_right?(tech), do: 0.0, else: 1.0
+
+    {:cont, %{tech | phase: :smashing, counter: 0},
+     [{:tilt, :main, 0.5, 0.5}, {:tilt, :c, cx, 0.5}]}
+  end
+
+  defp pivot_smash(%{phase: :smashing, counter: c} = tech, player) do
+    cond do
+      int(player.action) in @fsmash_actions -> {:done, tech, [:release_all]}
+      c >= 15 -> {:done, tech, [:release_all]}
+      c >= 2 -> {:cont, %{tech | counter: c + 1}, [{:tilt, :c, 0.5, 0.5}]}
+      true -> {:cont, %{tech | counter: c + 1}, []}
+    end
+  end
+
+  # Samus short-hop missile - the staple approach tool. Landing
+  # anywhere inside the missile animation is a 30-frame heavy landing
+  # (measured at every fire height, SH and FH: there is NO
+  # mid-animation lag skip in Melee; the community "missile cancel"
+  # is a platform EDGE-cancel, backlog).
+  defp sh_missile(%{phase: :init} = tech, %{on_ground: true}),
+    do: {:cont, %{tech | phase: :hop}, [{:press, :y}]}
+
+  defp sh_missile(%{phase: :init} = tech, _player), do: {:cont, tech, []}
+
+  defp sh_missile(%{phase: :hop} = tech, player) do
+    if player.on_ground do
+      {:cont, tech, [{:release, :y}]}
+    else
+      x = if dir_right?(tech), do: 1.0, else: 0.0
+
+      {:cont, %{tech | phase: :firing, counter: 0},
+       [{:release, :y}, {:tilt, :main, x, 0.5}, {:press, :b}]}
+    end
+  end
+
+  defp sh_missile(%{phase: :firing, counter: c} = tech, player) do
+    cond do
+      player.on_ground -> {:done, tech, [:release_all]}
+      c >= 90 -> {:done, tech, [:release_all]}
+      c >= 1 -> {:cont, %{tech | counter: c + 1}, [{:release, :b}, {:tilt, :main, 0.5, 0.5}]}
+      true -> {:cont, %{tech | counter: c + 1}, [{:release, :b}]}
+    end
+  end
+
+  # Ice Climbers grab desync: Popo's grab CONNECTING splits the pair
+  # (Nana's whiffs), then B has only Nana answer — she blizzards solo
+  # while Popo holds the catch.
+  defp ics_desync(%{phase: :init} = tech, %{on_ground: true}),
+    do: {:cont, %{tech | phase: :grabbing, counter: 0}, [{:press, :z}]}
+
+  defp ics_desync(%{phase: :init} = tech, _player), do: {:cont, tech, []}
+
+  defp ics_desync(%{phase: :grabbing, counter: c} = tech, player) do
+    # Nana grabs too (6 frames late) and WHIFFS — hold the B until
+    # her catch endlag ends, or she ignores it.
+    nana_ready? = player.nana == nil or int(player.nana.action) < 0x40
+
+    cond do
+      int(player.action) in [0xD5, 0xD8] and nana_ready? ->
+        {:cont, %{tech | phase: :nana_special, counter: 0}, [{:release, :z}, {:press, :b}]}
+
+      c >= 90 ->
+        {:done, tech, [:release_all]}
+
+      true ->
+        {:cont, %{tech | counter: c + 1}, [{:release, :z}]}
+    end
+  end
+
+  defp ics_desync(%{phase: :nana_special, counter: c} = tech, _player) do
+    cond do
+      c >= 25 -> {:done, tech, [:release_all]}
+      c >= 1 -> {:cont, %{tech | counter: c + 1}, [{:release, :b}]}
+      true -> {:cont, %{tech | counter: c + 1}, []}
+    end
+  end
 
   defp int(a) when is_integer(a), do: a
   defp int(a) when is_number(a), do: trunc(a)

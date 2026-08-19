@@ -534,4 +534,94 @@ defmodule Melee.TechTest do
         Tech.step(tech, player(%{action: shine, action_frame: 7, facing: false}))
     end
   end
+
+  describe "tier 5 character kits" do
+    test "float_cancel full-hops, arms the float at the apex, aerials, releases" do
+      tech = Tech.new(:float_cancel, :peach, aerial: :nair, float_frames: 1)
+
+      {:cont, tech, [{:press, :y}]} = Tech.step(tech, player(%{}))
+      # Jump held through jumpsquat (full hop).
+      {:cont, tech, [{:press, :y}]} = Tech.step(tech, player(%{action: 0x18}))
+
+      # Rising fast: wait for the apex.
+      {:cont, tech, []} =
+        Tech.step(tech, player(%{on_ground: false, action: 0x19, speed_y_self: 3.0}))
+
+      {:cont, tech, []} =
+        Tech.step(tech, player(%{on_ground: false, action: 0x19, speed_y_self: 2.0}))
+
+      # Apex: down-tap with jump held arms the float.
+      {:cont, tech, [{:tilt, :main, 0.5, 0.25}]} =
+        Tech.step(tech, player(%{on_ground: false, action: 0x19, speed_y_self: 0.5}))
+
+      # Float state: neutral the stick, then aerial.
+      {:cont, tech, [{:tilt, :main, 0.5, 0.5}]} =
+        Tech.step(tech, player(%{on_ground: false, action: 0x155}))
+
+      {:cont, tech, []} = Tech.step(tech, player(%{on_ground: false, action: 0x155}))
+      {:cont, tech, [{:press, :a}]} = Tech.step(tech, player(%{on_ground: false, action: 0x155}))
+
+      # Float-aerial (its own action family): release the float.
+      {:cont, tech, commands} = Tech.step(tech, player(%{on_ground: false, action: 0x158}))
+      assert {:release, :y} in commands
+
+      # Fast fall, then done on touchdown.
+      {:cont, tech, [{:tilt, :main, 0.5, 0.0}]} =
+        Tech.step(tech, player(%{on_ground: false, action: 0x158}))
+
+      {:done, _tech, [:release_all]} = Tech.step(tech, player(%{on_ground: true, action: 0x2A}))
+    end
+
+    test "gentleman links three slow jabs and stops" do
+      tech = Tech.new(:gentleman, :cptfalcon)
+
+      {:cont, tech, [{:press, :a}]} = Tech.step(tech, player(%{}))
+      {:cont, tech, [{:release, :a}]} = Tech.step(tech, player(%{action: 0x2C, action_frame: 1}))
+      {:cont, tech, [{:press, :a}]} = Tech.step(tech, player(%{action: 0x2C, action_frame: 4}))
+      {:cont, tech, [{:release, :a}]} = Tech.step(tech, player(%{action: 0x2D, action_frame: 1}))
+      {:cont, tech, [{:press, :a}]} = Tech.step(tech, player(%{action: 0x2D, action_frame: 4}))
+      {:done, _tech, [:release_all]} = Tech.step(tech, player(%{action: 0x2E, action_frame: 1}))
+    end
+
+    test "pivot_smash flicks then c-sticks the new facing" do
+      tech = Tech.new(:pivot_smash, :marth, direction: :right, dash_frames: 2)
+
+      {:cont, tech, [{:tilt, :main, 1.0, 0.5}]} = Tech.step(tech, player(%{}))
+      {:cont, tech, []} = Tech.step(tech, player(%{action: 0x14}))
+      {:cont, tech, [{:tilt, :main, 0.0, 0.5}]} = Tech.step(tech, player(%{action: 0x14}))
+
+      {:cont, tech, commands} = Tech.step(tech, player(%{action: 0x14}))
+      assert {:tilt, :c, 0.0, 0.5} in commands
+
+      {:done, _tech, [:release_all]} = Tech.step(tech, player(%{action: 0x3C}))
+    end
+
+    test "sh_missile hops, side-Bs, finishes on landing" do
+      tech = Tech.new(:sh_missile, :samus, direction: :right)
+
+      {:cont, tech, [{:press, :y}]} = Tech.step(tech, player(%{}))
+
+      {:cont, tech, commands} = Tech.step(tech, player(%{on_ground: false, action: 0x19}))
+      assert {:press, :b} in commands
+      assert {:tilt, :main, 1.0, 0.5} in commands
+
+      {:cont, tech, commands} = Tech.step(tech, player(%{on_ground: false, action: 0x19}))
+      assert {:release, :b} in commands
+
+      {:done, _tech, [:release_all]} = Tech.step(tech, player(%{on_ground: true, action: 0x2A}))
+    end
+
+    test "ics_desync grabs, then Bs only after the catch connects" do
+      tech = Tech.new(:ics_desync, :popo)
+
+      {:cont, tech, [{:press, :z}]} = Tech.step(tech, player(%{}))
+      {:cont, tech, [{:release, :z}]} = Tech.step(tech, player(%{action: 0xD4}))
+
+      {:cont, tech, commands} = Tech.step(tech, player(%{action: 0xD5}))
+      assert {:press, :b} in commands
+
+      {:cont, tech, []} = Tech.step(tech, player(%{action: 0xD8}))
+      {:cont, _tech, [{:release, :b}]} = Tech.step(tech, player(%{action: 0xD8}))
+    end
+  end
 end

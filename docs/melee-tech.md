@@ -147,6 +147,35 @@ double jump is a slow roll and still cancels), `:shadow_ball_charge` /
 `:shadow_ball_fire` (shield-stored charge, two-B-edge release),
 `:teledgehog`. Backlog: teleport-cancel (near-ground endlag cancel).
 
+The kit batch (`--only dolphin_characters`, one boot each):
+
+| Tech | Routine | Live proof |
+| --- | --- | --- |
+| Peach float + float-aerial | `:float_cancel` | float (0x155) armed by an apex down-tap with jump held; float-nair is its OWN action family (0x158..0x15C) |
+| Falcon gentleman | `:gentleman` | jab3 (0x2E) reached, rapid jab (0x2F) never — the links must be SLOW |
+| Marth pivot fsmash | `:pivot_smash` | facing flips and the c-stick fsmash lands on the turn |
+| Samus SH missile | `:sh_missile` | missile spawns; landing pinned at the 30-frame heavy landing |
+| ICs grab desync | `:ics_desync` | Popo holds CatchWait (0xD8) while Nana blizzards (0x155) |
+
+Hard-won facts from this batch:
+
+- **Landing inside ANY special animation is a ~30-frame heavy
+  landing** — measured for Samus's missile (every fire height, SH and
+  FH) and Peach's float-nair (every float height and release timing).
+  Melee's community "missile cancel" is a platform EDGE-cancel
+  (backlog); Peach's folkloric 40% float cancel did not reproduce
+  under any input we tried (refinement backlog) — her float and
+  float-aerials themselves are fully drivable.
+- **Peach's float arms from a down-tap near the apex with jump
+  held**; at ground level the down+jump ground-float works too, but
+  the drop lands the frame the release registers. Float aerials use
+  their own action ids (0x158..0x15C), not 0x41..0x45.
+- **Nana echoes the grab 6 frames late and whiffs** — the desync's B
+  press must wait for HER catch endlag to finish (`player.nana` is in
+  the state feed), or she eats the input in lag and stays synced.
+- **The gentleman is a patience test**: press A only after each jab
+  reaches frame 3+; mashing buffers the rapid jab (0x2F).
+
 ## Verification convention
 
 Every routine lands with an assertion that cannot pass vacuously
