@@ -35,6 +35,16 @@ references (SmashWiki's [Advanced technique](https://www.ssbwiki.com/Advanced_te
 | Shadow ball store | `:shadow_ball_charge` | charge loop observed, shield-cancel lands in SpecialNCancel (0x158) with the charge stored |
 | Shadow ball fire | `:shadow_ball_fire` | release state (0x159) reached and the projectile observed in `gs.projectiles` |
 | Teledgehog | `:teledgehog` | ends hanging: CliffCatch (0xFC) at (90.5, −10.9) off FD's right lip |
+| JC grab | `:jc_grab` | Catch (0xD4, the STANDING grab) out of a dash, via Z in jumpsquat (`--only dolphin_universal`) |
+| Moonwalk | `:moonwalk` | dash-end speed 0.19 u/f vs 2.2 in the stick-held control — the down-back park kills the dash velocity with no turn |
+| Fox trot | `:fox_trot` | 3 initial-dash starts, run (0x15) never entered |
+| Crouch cancel | `:crouch_cancel` | launch peak 0.0 (never left the ground) vs 9.59 control, at HIGHER percent |
+| Wavedash OOS | `:wavedash_oos` | shield (R) -> jump-cancel -> L-airdodge special landing |
+| Powershield | `:powershield` | GuardReflect (0xB6) on a tracked falco laser, press timed by frames-to-impact |
+| Shield drop | `:shield_drop` | Pass (0xF4) through a Battlefield side platform from shield |
+| Drillshine | `:drillshine` | dair -> L-cancelled landing -> shine 9 frames later |
+| Double laser | `:double_laser` | 2 lasers spawned in one falco short hop |
+| Shine turnaround | `:shine_turnaround` | facing flips into 0x16C (shine-turn) without leaving the shine family |
 
 The composability check that closed the loop: the ledgedash test's
 ledge GRAB is itself built from the primitives — walk to the edge,
@@ -87,19 +97,33 @@ Key implementation facts, all live-measured:
   walked Fox off FD's edge within ~200 frames. The routine is
   closed-loop around its starting position.
 
+## Dash-state lessons (the universal batch's dead ends)
+
+- **An initial dash's animation completes regardless of the stick.**
+  Re-smashing forward mid-dash feeds a forward-hold into the RUN; a
+  fox trot must go neutral and re-smash only after the dash action
+  ends (fox's dash runs 21 frames at neutral).
+- **The moonwalk park dodges two cancels**: |x| >= 0.8 back is a
+  smash-turn, deep down is a crouch. At (~-0.76, -0.5), rolled in on
+  dash frame 2, the velocity dies to ~0 by dash end (vs 2.2 u/f in
+  the control) — fox can't NET-reverse a standing start in one dash,
+  so the proof is the A/B deceleration, not backward displacement.
+- **Smash inputs need neutral first**: starting a dash out of a walk
+  just walks faster. Settle to STANDING (0x0E) — walks 0x0F..0x11
+  also sit below 0x40 and poison "actionable" checks.
+- **A dash attack sails over a crouched fox** — the crouch-cancel
+  launcher is falco's dtilt.
+- Positioning walks flip the walker's FACING; a falco meant to laser
+  or dtilt leftward needs a leftward step before settling.
+
 ## Remaining backlog
 
-Universal: jump-cancel grab / shine grab; wavedash out of shield;
-powershield (2-frame window, feasible against seen projectiles);
-moonwalk, fox trot, crouch cancel, shield drop (axis-notch emulation
-is trivial for a virtual controller).
-
-Character-specific: Fox/Falco drillshine, double laser, thunders,
-shine turnaround; Peach float-cancel aerials; Samus missile cancel /
-bomb jump / extended grapple; Ice Climbers desyncs (Nana is already
-visible as `player.nana`) and handoffs; Marth pivot-tipper spacing
-(pairs with `FrameData.in_range/3`); Yoshi parry; Falcon/Ganon
-gentleman and instant reverse aerials.
+Universal: shine grab; thunders combo. Character-specific: Peach
+float-cancel aerials; Samus missile cancel / bomb jump / extended
+grapple; Ice Climbers desyncs (Nana is already visible as
+`player.nana`) and handoffs; Marth pivot-tipper spacing (pairs with
+`FrameData.in_range/3`); Yoshi parry; Falcon/Ganon gentleman and
+instant reverse aerials; Mewtwo teleport-cancel.
 
 ## Tier 4 — hit response
 

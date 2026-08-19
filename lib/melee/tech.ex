@@ -51,6 +51,16 @@ defmodule Melee.Tech do
   | `:shadow_ball_charge` | `frames:` (default 60) | Mewtwo charge; shield-cancel stores it (a full charge parks in its own hold loop) |
   | `:shadow_ball_fire` | — | B resumes the stored charge; a SECOND B edge releases the ball |
   | `:teledgehog` | `direction:`, `edge_x:` (default 85.57, FD), `dive_y:` | turn to face the stage, hop out past the lip, sink, snap the ledge (teleport up through the grab zone as the fallback) |
+  | `:jc_grab` | — | Z during jumpsquat: the jump cancels into a STANDING grab, even from a dash |
+  | `:moonwalk` | `direction:` (the dash side), `dash_frames:`, `slide_frames:` | dash, roll the stick through down into down-back: the dash animation plays while the velocity reverses |
+  | `:fox_trot` | `direction:`, `reps:`, `dash_frames:` | chained initial dashes with one-frame gaps — never maturing into a run |
+  | `:crouch_cancel` | — | full-down (plus c-stick ASDI) before the hit: 2/3 knockback; done when hitlag resolves |
+  | `:wavedash_oos` | `direction:` | shield on R, jump-cancel, L-airdodge diagonally |
+  | `:powershield` | — | the shield press + GuardReflect verification; the CALLER times it off projectile tracking |
+  | `:shield_drop` | `notch_y:` (default 0.16) | on a platform: shield, tilt into the drop band, fall through |
+  | `:drillshine` | — | SHFFL'd dair, then pulse the shine out of the L-cancelled landing |
+  | `:double_laser` | — | Falco SH double laser: B edges pulsed through the hop |
+  | `:shine_turnaround` | — | tap back mid-shine; facing flips without leaving the shine |
 
   ## Timing sources
 
@@ -85,6 +95,16 @@ defmodule Melee.Tech do
           | :shadow_ball_charge
           | :shadow_ball_fire
           | :teledgehog
+          | :jc_grab
+          | :moonwalk
+          | :fox_trot
+          | :crouch_cancel
+          | :wavedash_oos
+          | :powershield
+          | :shield_drop
+          | :drillshine
+          | :double_laser
+          | :shine_turnaround
   @type command ::
           {:press, Controller.button()}
           | {:release, Controller.button()}
@@ -156,6 +176,10 @@ defmodule Melee.Tech do
   @hitstun_air MapSet.new(Enum.to_list(0x54..0x5B) ++ [@tumbling])
   @tech_states [0xC7, 0xC8, 0xC9]
   @missed_tech_states [0xB7, 0xBF]
+  # Catch (212) through CatchWait (216): the grab came out / connected.
+  @grab_actions 0xD4..0xD8
+  @shield_reflect 0xB6
+  @platform_drop 0xF4
   @edge_catch 0xFC
   @edge_hanging 0xFD
   @shield_actions MapSet.new([178, 179, 180])
@@ -205,7 +229,17 @@ defmodule Melee.Tech do
     :asdi_down,
     :shadow_ball_charge,
     :shadow_ball_fire,
-    :teledgehog
+    :teledgehog,
+    :jc_grab,
+    :moonwalk,
+    :fox_trot,
+    :crouch_cancel,
+    :wavedash_oos,
+    :powershield,
+    :shield_drop,
+    :drillshine,
+    :double_laser,
+    :shine_turnaround
   ]
 
   @spec new(routine(), atom() | integer(), keyword()) :: t()
@@ -259,6 +293,16 @@ defmodule Melee.Tech do
   defp dispatch(:shadow_ball_charge, tech, player), do: shadow_ball_charge(tech, player)
   defp dispatch(:shadow_ball_fire, tech, player), do: shadow_ball_fire(tech, player)
   defp dispatch(:teledgehog, tech, player), do: teledgehog(tech, player)
+  defp dispatch(:jc_grab, tech, player), do: jc_grab(tech, player)
+  defp dispatch(:moonwalk, tech, player), do: moonwalk(tech, player)
+  defp dispatch(:fox_trot, tech, player), do: fox_trot(tech, player)
+  defp dispatch(:crouch_cancel, tech, player), do: crouch_cancel(tech, player)
+  defp dispatch(:wavedash_oos, tech, player), do: wavedash_oos(tech, player)
+  defp dispatch(:powershield, tech, player), do: powershield(tech, player)
+  defp dispatch(:shield_drop, tech, player), do: shield_drop(tech, player)
+  defp dispatch(:drillshine, tech, player), do: drillshine(tech, player)
+  defp dispatch(:double_laser, tech, player), do: double_laser(tech, player)
+  defp dispatch(:shine_turnaround, tech, player), do: shine_turnaround(tech, player)
 
   @doc "Step and apply the commands to a `Melee.Controller`."
   @spec step(t(), PlayerState.t(), GenServer.server()) :: {status(), t()}
@@ -1017,6 +1061,340 @@ defmodule Melee.Tech do
   end
 
   defp ledge_right?(tech), do: Keyword.get(tech.opts, :direction, :right) == :right
+
+  ## ------------------------------------------------------------------
+  ## Tier 5: the universal batch
+  ## ------------------------------------------------------------------
+
+  # JC grab: press Z during jumpsquat — the jump cancels into a
+  # STANDING grab even out of a dash (faster + longer-lasting than the
+  # dash grab it replaces).
+  defp jc_grab(%{phase: :init} = tech, %{on_ground: true}),
+    do: {:cont, %{tech | phase: :squat}, [{:press, :y}]}
+
+  defp jc_grab(%{phase: :init} = tech, _player), do: {:cont, tech, []}
+
+  defp jc_grab(%{phase: :squat} = tech, player) do
+    if int(player.action) == @knee_bend do
+      {:cont, %{tech | phase: :grabbing, counter: 0}, [{:release, :y}, {:press, :z}]}
+    else
+      {:cont, tech, [{:release, :y}]}
+    end
+  end
+
+  defp jc_grab(%{phase: :grabbing, counter: c} = tech, player) do
+    cond do
+      int(player.action) in @grab_actions -> {:done, tech, [:release_all]}
+      c >= 15 -> {:done, tech, [:release_all]}
+      true -> {:cont, %{tech | counter: c + 1}, [{:release, :z}]}
+    end
+  end
+
+  # Moonwalk: dash one way, roll the stick through straight-down into
+  # the down-back diagonal — the dash animation keeps playing while
+  # the velocity reverses. `direction:` is the DASH direction; the
+  # slide goes the other way.
+  defp moonwalk(%{phase: :init} = tech, %{on_ground: true} = player) do
+    # The dash needs a fresh smash input FROM NEUTRAL — starting out
+    # of a walk just walks faster. Hold neutral until standing.
+    if int(player.action) == @standing do
+      x = if dir_right?(tech), do: 1.0, else: 0.0
+      n = Keyword.get(tech.opts, :dash_frames, 4)
+      {:cont, %{tech | phase: :dashing, counter: n}, [{:tilt, :main, x, 0.5}]}
+    else
+      {:cont, tech, [{:tilt, :main, 0.5, 0.5}]}
+    end
+  end
+
+  defp moonwalk(%{phase: :init} = tech, _player), do: {:cont, tech, []}
+
+  defp moonwalk(%{phase: :dashing, counter: c} = tech, _player) when c > 1,
+    do: {:cont, %{tech | counter: c - 1}, []}
+
+  defp moonwalk(%{phase: :dashing} = tech, _player) do
+    # Roll along the bottom rim — one frame down-forward, no lingering
+    # in full-down (that crouch-cancels the dash).
+    x = if dir_right?(tech), do: 0.65, else: 0.35
+    {:cont, %{tech | phase: :roll}, [{:tilt, :main, x, 0.08}]}
+  end
+
+  defp moonwalk(%{phase: :roll} = tech, _player) do
+    # The park must dodge two cancels: |x| >= 0.8 back smash-turns,
+    # and deep down crouch-cancels the dash. Down-back at (~-0.7,
+    # ~-0.5) reverses the velocity while the dash keeps playing.
+    x = if dir_right?(tech), do: 0.12, else: 0.88
+    n = Keyword.get(tech.opts, :slide_frames, 20)
+    {:cont, %{tech | phase: :sliding, counter: n}, [{:tilt, :main, x, 0.25}]}
+  end
+
+  defp moonwalk(%{phase: :sliding, counter: c} = tech, _player) when c > 1,
+    do: {:cont, %{tech | counter: c - 1}, []}
+
+  defp moonwalk(%{phase: :sliding} = tech, _player), do: {:done, tech, [:release_all]}
+
+  # Fox trot: chain initial dashes with a one-frame gap — never let
+  # the dash mature into a run.
+  defp fox_trot(%{phase: :init} = tech, %{on_ground: true}) do
+    reps = Keyword.get(tech.opts, :reps, 3)
+    x = if dir_right?(tech), do: 1.0, else: 0.0
+    {:cont, %{tech | phase: :dashing, counter: 0, aux: reps}, [{:tilt, :main, x, 0.5}]}
+  end
+
+  defp fox_trot(%{phase: :init} = tech, _player), do: {:cont, tech, []}
+
+  defp fox_trot(%{phase: :dashing, counter: c, aux: reps} = tech, player) do
+    hold = Keyword.get(tech.opts, :dash_frames, 7)
+    x = if dir_right?(tech), do: 1.0, else: 0.0
+
+    # Regap off the DASH's own frame counter — a wall-clock hold can
+    # outlast the initial-dash window (entering the dash costs frames
+    # too) and mature into the run a trot must never reach.
+    mature? = int(player.action) == @dashing and player.action_frame >= hold
+
+    cond do
+      not mature? and c < hold + 8 ->
+        {:cont, %{tech | counter: c + 1}, [{:tilt, :main, x, 0.5}]}
+
+      reps <= 1 ->
+        {:done, tech, [:release_all]}
+
+      true ->
+        {:cont, %{tech | phase: :gap, counter: 0, aux: reps - 1}, [{:tilt, :main, 0.5, 0.5}]}
+    end
+  end
+
+  # The initial dash ANIMATION completes regardless of the stick —
+  # re-smashing mid-dash just feeds a forward-hold into the run. Stay
+  # neutral until the dash action actually ends, then re-smash.
+  defp fox_trot(%{phase: :gap, counter: c} = tech, player) do
+    x = if dir_right?(tech), do: 1.0, else: 0.0
+
+    cond do
+      int(player.action) == @dashing and c < 20 ->
+        {:cont, %{tech | counter: c + 1}, []}
+
+      c >= 20 ->
+        {:done, tech, [:release_all]}
+
+      true ->
+        {:cont, %{tech | phase: :dashing, counter: 0}, [{:tilt, :main, x, 0.5}]}
+    end
+  end
+
+  # Crouch cancel: full-down BEFORE the hit multiplies incoming
+  # knockback by 2/3, and the held c-stick adds ASDI down. Holds
+  # through hitlag plus the resolution frame.
+  defp crouch_cancel(%{phase: :init} = tech, player) do
+    if player.hitlag_left > 0 do
+      {:cont, %{tech | phase: :hitlag}, [{:tilt, :main, 0.5, 0.0}, {:tilt, :c, 0.5, 0.0}]}
+    else
+      {:cont, tech, [{:tilt, :main, 0.5, 0.0}, {:tilt, :c, 0.5, 0.0}]}
+    end
+  end
+
+  defp crouch_cancel(%{phase: :hitlag} = tech, player) do
+    if player.hitlag_left > 0 do
+      {:cont, tech, [{:tilt, :main, 0.5, 0.0}, {:tilt, :c, 0.5, 0.0}]}
+    else
+      {:done, tech, [{:tilt, :main, 0.5, 0.0}, {:tilt, :c, 0.5, 0.5}]}
+    end
+  end
+
+  # Wavedash out of shield: shield on R, jump-cancel it, airdodge
+  # diagonally with L on the first airborne frame.
+  defp wavedash_oos(%{phase: :init} = tech, %{on_ground: true}),
+    do: {:cont, %{tech | phase: :shielding, counter: 0}, [{:press, :r}]}
+
+  defp wavedash_oos(%{phase: :init} = tech, _player), do: {:cont, tech, []}
+
+  defp wavedash_oos(%{phase: :shielding, counter: c} = tech, player) do
+    cond do
+      MapSet.member?(@shield_actions, int(player.action)) ->
+        {:cont, %{tech | phase: :jumping}, [{:press, :y}]}
+
+      c >= 20 ->
+        {:done, tech, [:release_all]}
+
+      true ->
+        {:cont, %{tech | counter: c + 1}, []}
+    end
+  end
+
+  defp wavedash_oos(%{phase: :jumping} = tech, player) do
+    if player.on_ground do
+      {:cont, tech, [{:release, :y}]}
+    else
+      x =
+        case Keyword.get(tech.opts, :direction, :neutral) do
+          :left -> 0.05
+          :right -> 0.95
+          :neutral -> 0.5
+        end
+
+      {:cont, %{tech | phase: :airdodge, counter: 0},
+       [{:release, :y}, {:release, :r}, {:tilt, :main, x, 0.2}, {:press, :l}]}
+    end
+  end
+
+  defp wavedash_oos(%{phase: :airdodge, counter: c} = tech, player) do
+    cond do
+      player.action == @landing_special -> {:done, tech, [:release_all]}
+      c >= 2 -> {:cont, %{tech | counter: c + 1}, [{:release, :l}]}
+      true -> {:cont, %{tech | counter: c + 1}, []}
+    end
+  end
+
+  # Powershield: a shield press whose first 2 frames overlap the hit
+  # (GuardReflect 0xB6). The routine is the press + verification —
+  # the CALLER times `new/3` off its own projectile tracking, since
+  # routines only see the player.
+  defp powershield(%{phase: :init} = tech, _player),
+    do: {:cont, %{tech | phase: :holding, counter: 0}, [{:press, :r}]}
+
+  defp powershield(%{phase: :holding, counter: c} = tech, player) do
+    cond do
+      int(player.action) == @shield_reflect -> {:done, tech, [:release_all]}
+      c >= 20 -> {:done, tech, [:release_all]}
+      c >= 8 -> {:cont, %{tech | counter: c + 1}, [{:release, :r}]}
+      true -> {:cont, %{tech | counter: c + 1}, []}
+    end
+  end
+
+  # Shield drop: on a platform, shield and tilt into the narrow down
+  # band that drops through without spot-dodging or rolling.
+  defp shield_drop(%{phase: :init} = tech, %{on_ground: true}),
+    do: {:cont, %{tech | phase: :shielding, counter: 0}, [{:press, :r}]}
+
+  defp shield_drop(%{phase: :init} = tech, _player), do: {:cont, tech, []}
+
+  defp shield_drop(%{phase: :shielding, counter: c} = tech, player) do
+    cond do
+      MapSet.member?(@shield_actions, int(player.action)) ->
+        y = Keyword.get(tech.opts, :notch_y, 0.16)
+        {:cont, %{tech | phase: :dropping, counter: 0}, [{:tilt, :main, 0.5, y}]}
+
+      c >= 20 ->
+        {:done, tech, [:release_all]}
+
+      true ->
+        {:cont, %{tech | counter: c + 1}, []}
+    end
+  end
+
+  defp shield_drop(%{phase: :dropping, counter: c} = tech, player) do
+    cond do
+      int(player.action) == @platform_drop or not player.on_ground ->
+        {:done, tech, [:release_all]}
+
+      c >= 20 ->
+        {:done, tech, [:release_all]}
+
+      true ->
+        {:cont, %{tech | counter: c + 1}, []}
+    end
+  end
+
+  ## ------------------------------------------------------------------
+  ## Tier 5: spacie extensions
+  ## ------------------------------------------------------------------
+
+  # Drillshine: SHFFL'd dair (as a sub-machine), then pulse B+down
+  # from the L-cancelled landing until the shine comes out.
+  defp drillshine(%{phase: :init} = tech, player) do
+    sub = new(:shffl, tech.character, aerial: :dair)
+    drillshine(%{tech | phase: :drill, aux: sub}, player)
+  end
+
+  defp drillshine(%{phase: :drill, aux: sub} = tech, player) do
+    case step(sub, player) do
+      {:done, _sub, _commands} ->
+        {:cont, %{tech | phase: :shine, counter: 0}, [{:press, :b}, {:tilt, :main, 0.5, 0.0}]}
+
+      {:cont, sub, commands} ->
+        {:cont, %{tech | aux: sub}, commands}
+    end
+  end
+
+  defp drillshine(%{phase: :shine, counter: c} = tech, player) do
+    cond do
+      int(player.action) in [@shine_ground_start, @shine_ground] ->
+        {:done, tech, [:release_all]}
+
+      c >= 14 ->
+        {:done, tech, [:release_all]}
+
+      # Pulse the B edge through the landing lag so the first
+      # actionable frame catches a press.
+      rem(c, 2) == 0 ->
+        {:cont, %{tech | counter: c + 1}, [{:release, :b}]}
+
+      true ->
+        {:cont, %{tech | counter: c + 1}, [{:press, :b}, {:tilt, :main, 0.5, 0.0}]}
+    end
+  end
+
+  # Falco short-hop double laser: B edges pulsed through the hop.
+  defp double_laser(%{phase: :init} = tech, %{on_ground: true}),
+    do: {:cont, %{tech | phase: :hop}, [{:press, :y}]}
+
+  defp double_laser(%{phase: :init} = tech, _player), do: {:cont, tech, []}
+
+  defp double_laser(%{phase: :hop} = tech, player) do
+    if player.on_ground do
+      {:cont, tech, [{:release, :y}]}
+    else
+      {:cont, %{tech | phase: :firing, counter: 0}, [{:release, :y}, {:press, :b}]}
+    end
+  end
+
+  defp double_laser(%{phase: :firing, counter: c} = tech, player) do
+    cond do
+      player.on_ground ->
+        {:done, tech, [:release_all]}
+
+      rem(c, 2) == 0 ->
+        {:cont, %{tech | counter: c + 1}, [{:release, :b}]}
+
+      true ->
+        {:cont, %{tech | counter: c + 1}, [{:press, :b}]}
+    end
+  end
+
+  # Shine turnaround: tap back mid-shine — the facing flips without
+  # leaving the shine.
+  defp shine_turnaround(%{phase: :init} = tech, %{on_ground: true} = player) do
+    {:cont, %{tech | phase: :shining, counter: 0, aux: player.facing},
+     [{:press, :b}, {:tilt, :main, 0.5, 0.0}]}
+  end
+
+  defp shine_turnaround(%{phase: :init} = tech, _player), do: {:cont, tech, []}
+
+  defp shine_turnaround(%{phase: :shining, counter: c} = tech, player) do
+    in_shine? =
+      int(player.action) in [@shine_ground_start, @shine_ground, @shine_stun]
+
+    cond do
+      in_shine? and player.action_frame >= 4 ->
+        x = if tech.aux, do: 0.0, else: 1.0
+        {:cont, %{tech | phase: :turning, counter: 0}, [{:release, :b}, {:tilt, :main, x, 0.5}]}
+
+      c >= 20 ->
+        {:done, tech, [:release_all]}
+
+      true ->
+        {:cont, %{tech | counter: c + 1}, [{:release, :b}]}
+    end
+  end
+
+  defp shine_turnaround(%{phase: :turning, counter: c} = tech, player) do
+    cond do
+      player.facing != tech.aux -> {:done, tech, [:release_all]}
+      c >= 15 -> {:done, tech, [:release_all]}
+      true -> {:cont, %{tech | counter: c + 1}, [{:tilt, :main, 0.5, 0.5}]}
+    end
+  end
+
+  defp dir_right?(tech), do: Keyword.get(tech.opts, :direction, :right) == :right
 
   defp int(a) when is_integer(a), do: a
   defp int(a) when is_number(a), do: trunc(a)

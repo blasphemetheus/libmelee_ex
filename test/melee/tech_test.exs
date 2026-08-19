@@ -391,4 +391,147 @@ defmodule Melee.TechTest do
       {:done, _tech, [:release_all]} = Tech.step(tech, player(%{on_ground: false, action: 0xFD}))
     end
   end
+
+  describe "tier 5 universal batch" do
+    test "jc_grab presses Z during jumpsquat and finishes on the catch" do
+      tech = Tech.new(:jc_grab, :fox)
+
+      {:cont, tech, [{:press, :y}]} = Tech.step(tech, player(%{action: 0x14}))
+      {:cont, tech, commands} = Tech.step(tech, player(%{action: 0x18}))
+      assert {:press, :z} in commands
+      {:done, _tech, [:release_all]} = Tech.step(tech, player(%{action: 0xD4}))
+    end
+
+    test "moonwalk dashes, rolls through down, parks in down-back" do
+      tech = Tech.new(:moonwalk, :fox, direction: :right, dash_frames: 2, slide_frames: 2)
+
+      {:cont, tech, [{:tilt, :main, 1.0, 0.5}]} = Tech.step(tech, player(%{}))
+      {:cont, tech, []} = Tech.step(tech, player(%{action: 0x14}))
+      # Roll frame: down-forward along the rim.
+      {:cont, tech, [{:tilt, :main, 0.65, 0.08}]} = Tech.step(tech, player(%{action: 0x14}))
+      # Then the down-back park (no smash-turn, no crouch).
+      {:cont, tech, [{:tilt, :main, 0.12, 0.25}]} = Tech.step(tech, player(%{action: 0x14}))
+      {:cont, tech, []} = Tech.step(tech, player(%{action: 0x14}))
+      {:done, _tech, [:release_all]} = Tech.step(tech, player(%{action: 0x14}))
+    end
+
+    test "fox_trot regaps off the dash's own frame counter" do
+      tech = Tech.new(:fox_trot, :fox, direction: :right, reps: 2, dash_frames: 2)
+
+      {:cont, tech, [{:tilt, :main, 1.0, 0.5}]} = Tech.step(tech, player(%{}))
+
+      {:cont, tech, [{:tilt, :main, 1.0, 0.5}]} =
+        Tech.step(tech, player(%{action: 0x14, action_frame: 1}))
+
+      # The dash reached its regap frame: neutral gap.
+      {:cont, tech, [{:tilt, :main, 0.5, 0.5}]} =
+        Tech.step(tech, player(%{action: 0x14, action_frame: 2}))
+
+      # Neutral holds until the dash animation actually ENDS.
+      {:cont, tech, []} = Tech.step(tech, player(%{action: 0x14, action_frame: 3}))
+      {:cont, tech, []} = Tech.step(tech, player(%{action: 0x14, action_frame: 4}))
+
+      # Dash over (standing): re-smash.
+      {:cont, tech, [{:tilt, :main, 1.0, 0.5}]} =
+        Tech.step(tech, player(%{action: 0x0E, action_frame: 1}))
+
+      {:cont, tech, [{:tilt, :main, 1.0, 0.5}]} =
+        Tech.step(tech, player(%{action: 0x14, action_frame: 1}))
+
+      {:done, _tech, [:release_all]} =
+        Tech.step(tech, player(%{action: 0x14, action_frame: 2}))
+    end
+
+    test "crouch_cancel holds down + c-down through hitlag then resolves" do
+      tech = Tech.new(:crouch_cancel, :fox)
+
+      {:cont, tech, commands} = Tech.step(tech, player(%{action: 0x28}))
+      assert {:tilt, :main, 0.5, 0.0} in commands
+      assert {:tilt, :c, 0.5, 0.0} in commands
+
+      {:cont, tech, _} = Tech.step(tech, player(%{action: 0x28, hitlag_left: 4}))
+      {:cont, tech, _} = Tech.step(tech, player(%{action: 0x28, hitlag_left: 1}))
+      {:done, _tech, commands} = Tech.step(tech, player(%{action: 0x28, hitlag_left: 0}))
+      assert {:tilt, :main, 0.5, 0.0} in commands
+    end
+
+    test "wavedash_oos shields, jump-cancels, airdodges" do
+      tech = Tech.new(:wavedash_oos, :fox, direction: :left)
+
+      {:cont, tech, [{:press, :r}]} = Tech.step(tech, player(%{}))
+      {:cont, tech, [{:press, :y}]} = Tech.step(tech, player(%{action: 179}))
+      {:cont, tech, [{:release, :y}]} = Tech.step(tech, player(%{action: 0x18}))
+
+      {:cont, tech, commands} = Tech.step(tech, player(%{on_ground: false, action: 0x19}))
+      assert {:press, :l} in commands
+      assert {:tilt, :main, 0.05, 0.2} in commands
+      assert {:release, :r} in commands
+
+      {:done, _tech, [:release_all]} = Tech.step(tech, player(%{action: 0x2B}))
+    end
+
+    test "powershield presses R and finishes on GuardReflect" do
+      tech = Tech.new(:powershield, :fox)
+      {:cont, tech, [{:press, :r}]} = Tech.step(tech, player(%{}))
+      {:cont, tech, []} = Tech.step(tech, player(%{action: 178}))
+      {:done, _tech, [:release_all]} = Tech.step(tech, player(%{action: 0xB6}))
+    end
+
+    test "shield_drop tilts into the notch band and finishes airborne" do
+      tech = Tech.new(:shield_drop, :fox)
+
+      {:cont, tech, [{:press, :r}]} = Tech.step(tech, player(%{}))
+      {:cont, tech, [{:tilt, :main, 0.5, 0.16}]} = Tech.step(tech, player(%{action: 179}))
+      {:cont, tech, []} = Tech.step(tech, player(%{action: 179}))
+      {:done, _tech, [:release_all]} = Tech.step(tech, player(%{on_ground: false, action: 0xF4}))
+    end
+  end
+
+  describe "tier 5 spacie extensions" do
+    test "drillshine runs a dair shffl then pulses the shine out of the landing" do
+      tech = Tech.new(:drillshine, :fox)
+
+      # Sub-machine: the shffl hop.
+      {:cont, tech, [{:press, :y}]} = Tech.step(tech, player(%{}))
+      {:cont, tech, commands} = Tech.step(tech, player(%{on_ground: false, action: 0x19}))
+      assert {:tilt, :c, 0.5, 0.0} in commands
+
+      # Landing ends the shffl: shine press same step.
+      {:cont, tech, commands} = Tech.step(tech, player(%{action: 0x4A, on_ground: true}))
+      assert {:press, :b} in commands
+      assert {:tilt, :main, 0.5, 0.0} in commands
+
+      {:done, _tech, [:release_all]} =
+        Tech.step(tech, player(%{action: Melee.Enums.Action.to_id(:down_b_ground_start)}))
+    end
+
+    test "double_laser pulses B edges through the hop and ends on landing" do
+      tech = Tech.new(:double_laser, :falco)
+
+      {:cont, tech, [{:press, :y}]} = Tech.step(tech, player(%{}))
+      {:cont, tech, commands} = Tech.step(tech, player(%{on_ground: false, action: 0x19}))
+      assert {:press, :b} in commands
+      {:cont, tech, [{:release, :b}]} = Tech.step(tech, player(%{on_ground: false, action: 0x19}))
+      {:cont, tech, [{:press, :b}]} = Tech.step(tech, player(%{on_ground: false, action: 0x19}))
+      {:done, _tech, [:release_all]} = Tech.step(tech, player(%{action: 0x2A}))
+    end
+
+    test "shine_turnaround taps back mid-shine and finishes when facing flips" do
+      tech = Tech.new(:shine_turnaround, :fox)
+      shine = Melee.Enums.Action.to_id(:down_b_ground_start)
+
+      {:cont, tech, commands} = Tech.step(tech, player(%{facing: true}))
+      assert {:press, :b} in commands
+
+      {:cont, tech, _} = Tech.step(tech, player(%{action: shine, action_frame: 2, facing: true}))
+
+      {:cont, tech, commands} =
+        Tech.step(tech, player(%{action: shine, action_frame: 5, facing: true}))
+
+      assert {:tilt, :main, 0.0, 0.5} in commands
+
+      {:done, _tech, [:release_all]} =
+        Tech.step(tech, player(%{action: shine, action_frame: 7, facing: false}))
+    end
+  end
 end
