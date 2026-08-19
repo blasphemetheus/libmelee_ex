@@ -45,6 +45,12 @@ defmodule Melee.Tech do
   | `:waveshine` | `direction:` | Fox/Falco shine, jump-cancel, wavedash out |
   | `:short_hop_laser` | — | Fox/Falco SH laser with fast fall |
   | `:djc_aerial` | `aerial:` | Ness/Mewtwo/Yoshi/Peach double-jump-cancelled aerial |
+  | `:di` | `stick: :up \\| :down \\| :left \\| :right \\| {x, y}` | hold launch DI through hitlag plus the resolution frame |
+  | `:sdi` | `direction:` | alternate cardinal/diagonal each hitlag frame (fresh input per frame) |
+  | `:asdi_down` | — | park the c-stick down through hitlag; compose with `:tech` for the Amsah tech |
+  | `:shadow_ball_charge` | `frames:` (default 60) | Mewtwo charge; shield-cancel stores it (a full charge parks in its own hold loop) |
+  | `:shadow_ball_fire` | — | B resumes the stored charge; a SECOND B edge releases the ball |
+  | `:teledgehog` | `direction:`, `edge_x:` (default 85.57, FD), `dive_y:` | turn to face the stage, hop out past the lip, sink, snap the ledge (teleport up through the grab zone as the fallback) |
 
   ## Timing sources
 
@@ -73,6 +79,12 @@ defmodule Melee.Tech do
           | :waveshine
           | :short_hop_laser
           | :djc_aerial
+          | :di
+          | :sdi
+          | :asdi_down
+          | :shadow_ball_charge
+          | :shadow_ball_fire
+          | :teledgehog
   @type command ::
           {:press, Controller.button()}
           | {:release, Controller.button()}
@@ -144,7 +156,13 @@ defmodule Melee.Tech do
   @hitstun_air MapSet.new(Enum.to_list(0x54..0x5B) ++ [@tumbling])
   @tech_states [0xC7, 0xC8, 0xC9]
   @missed_tech_states [0xB7, 0xBF]
+  @edge_catch 0xFC
   @edge_hanging 0xFD
+  @shield_actions MapSet.new([178, 179, 180])
+  @neutral_b_charging 0x156
+  @neutral_b_full 0x157
+  @neutral_b_cancel 0x158
+  @neutral_b_fire 0x159
 
   @aerial_stick %{
     nair: nil,
@@ -181,7 +199,13 @@ defmodule Melee.Tech do
     :ledgedash,
     :waveshine,
     :short_hop_laser,
-    :djc_aerial
+    :djc_aerial,
+    :di,
+    :sdi,
+    :asdi_down,
+    :shadow_ball_charge,
+    :shadow_ball_fire,
+    :teledgehog
   ]
 
   @spec new(routine(), atom() | integer(), keyword()) :: t()
@@ -229,6 +253,12 @@ defmodule Melee.Tech do
   defp dispatch(:waveshine, tech, player), do: waveshine(tech, player)
   defp dispatch(:short_hop_laser, tech, player), do: short_hop_laser(tech, player)
   defp dispatch(:djc_aerial, tech, player), do: djc_aerial(tech, player)
+  defp dispatch(:di, tech, player), do: di(tech, player)
+  defp dispatch(:sdi, tech, player), do: sdi(tech, player)
+  defp dispatch(:asdi_down, tech, player), do: asdi_down(tech, player)
+  defp dispatch(:shadow_ball_charge, tech, player), do: shadow_ball_charge(tech, player)
+  defp dispatch(:shadow_ball_fire, tech, player), do: shadow_ball_fire(tech, player)
+  defp dispatch(:teledgehog, tech, player), do: teledgehog(tech, player)
 
   @doc "Step and apply the commands to a `Melee.Controller`."
   @spec step(t(), PlayerState.t(), GenServer.server()) :: {status(), t()}
@@ -495,7 +525,7 @@ defmodule Melee.Tech do
   defp ground_tech(%{phase: :init} = tech, player) do
     armed? =
       not player.on_ground and MapSet.member?(@hitstun_air, int(player.action)) and
-        player.speed_y_self < 0 and
+        player.speed_y_self + player.speed_y_attack < 0 and
         player.position.y < Keyword.get(tech.opts, :height, 8.0)
 
     if armed? do
@@ -729,6 +759,264 @@ defmodule Melee.Tech do
 
     {:cont, tech, commands}
   end
+
+  ## ------------------------------------------------------------------
+  ## Tier 4: hit-response — DI, SDI, ASDI
+  ## ------------------------------------------------------------------
+
+  # Trajectory DI: the launch angle is influenced by the stick position
+  # when hitlag RESOLVES, so hold the chosen position through hitlag
+  # and one frame past it.
+  defp di(%{phase: :init} = tech, player) do
+    if player.hitlag_left > 0 do
+      {x, y} = di_stick(tech)
+      {:cont, %{tech | phase: :holding}, [{:tilt, :main, x, y}]}
+    else
+      {:cont, tech, []}
+    end
+  end
+
+  defp di(%{phase: :holding} = tech, player) do
+    {x, y} = di_stick(tech)
+
+    if player.hitlag_left > 0 do
+      {:cont, tech, [{:tilt, :main, x, y}]}
+    else
+      # One extra held frame covers the resolution frame, then neutral.
+      {:done, tech, [{:tilt, :main, x, y}]}
+    end
+  end
+
+  defp di_stick(tech) do
+    case Keyword.get(tech.opts, :stick, :up) do
+      {x, y} -> {x, y}
+      :up -> {0.5, 1.0}
+      :down -> {0.5, 0.0}
+      :left -> {0.0, 0.5}
+      :right -> {1.0, 0.5}
+    end
+  end
+
+  # Smash DI: each re-entry of the stick into a new zone during hitlag
+  # is one SDI input (~6 units each). Alternate between the chosen
+  # cardinal and its neighboring diagonal every frame for the maximum
+  # input rate.
+  defp sdi(%{phase: :init} = tech, player) do
+    if player.hitlag_left > 0 do
+      sdi(%{tech | phase: :mashing, counter: 0}, player)
+    else
+      {:cont, tech, []}
+    end
+  end
+
+  defp sdi(%{phase: :mashing, counter: c} = tech, player) do
+    if player.hitlag_left > 0 do
+      {cardinal, diagonal} =
+        case Keyword.get(tech.opts, :direction, :up) do
+          :up -> {{0.5, 1.0}, {0.85, 0.9}}
+          :down -> {{0.5, 0.0}, {0.85, 0.1}}
+          :left -> {{0.0, 0.5}, {0.1, 0.85}}
+          :right -> {{1.0, 0.5}, {0.9, 0.85}}
+        end
+
+      {x, y} = if rem(c, 2) == 0, do: cardinal, else: diagonal
+      {:cont, %{tech | counter: c + 1}, [{:tilt, :main, x, y}]}
+    else
+      {:done, tech, [{:tilt, :main, 0.5, 0.5}]}
+    end
+  end
+
+  # ASDI down: the c-stick position at the END of hitlag gives an
+  # automatic half-unit shift — down is the survival one (into the
+  # ground, where :tech converts it into an Amsah tech). The c-stick
+  # overrides the main stick for ASDI, so this composes with :di.
+  defp asdi_down(%{phase: :init} = tech, player) do
+    if player.hitlag_left > 0 do
+      {:cont, %{tech | phase: :holding}, [{:tilt, :c, 0.5, 0.0}]}
+    else
+      {:cont, tech, []}
+    end
+  end
+
+  defp asdi_down(%{phase: :holding} = tech, player) do
+    if player.hitlag_left > 0 do
+      {:cont, tech, [{:tilt, :c, 0.5, 0.0}]}
+    else
+      {:done, tech, [{:tilt, :c, 0.5, 0.5}]}
+    end
+  end
+
+  ## ------------------------------------------------------------------
+  ## Mewtwo: shadow ball, teledgehog
+  ## ------------------------------------------------------------------
+
+  # Charge shadow ball for `frames:`, then shield-cancel — the charge
+  # is STORED and a later :shadow_ball_fire releases it.
+  defp shadow_ball_charge(%{phase: :init} = tech, %{on_ground: true}),
+    do: {:cont, %{tech | phase: :starting}, [{:press, :b}]}
+
+  defp shadow_ball_charge(%{phase: :init} = tech, _player), do: {:cont, tech, []}
+
+  defp shadow_ball_charge(%{phase: :starting} = tech, player) do
+    if int(player.action) == @neutral_b_charging do
+      {:cont, %{tech | phase: :charging, counter: 0}, [{:release, :b}]}
+    else
+      {:cont, tech, [{:release, :b}]}
+    end
+  end
+
+  defp shadow_ball_charge(%{phase: :charging, counter: c} = tech, player) do
+    cond do
+      # A full charge parks in its own hold loop; cancel out of it too.
+      int(player.action) == @neutral_b_full or
+          c >= Keyword.get(tech.opts, :frames, 60) ->
+        {:cont, %{tech | phase: :cancelling, counter: 0}, [{:press, :l}]}
+
+      true ->
+        {:cont, %{tech | counter: c + 1}, []}
+    end
+  end
+
+  defp shadow_ball_charge(%{phase: :cancelling, counter: c} = tech, player) do
+    cond do
+      int(player.action) == @neutral_b_cancel or
+        MapSet.member?(@shield_actions, int(player.action)) or
+          int(player.action) == @standing ->
+        {:done, tech, [:release_all]}
+
+      c >= 2 ->
+        {:cont, %{tech | counter: c + 1}, [{:release, :l}]}
+
+      true ->
+        {:cont, %{tech | counter: c + 1}, []}
+    end
+  end
+
+  # Release the (stored) shadow ball. A B press with a stored charge
+  # RESUMES charging — the release itself needs a SECOND B edge from
+  # inside the charge loop.
+  defp shadow_ball_fire(%{phase: :init} = tech, %{on_ground: true}),
+    do: {:cont, %{tech | phase: :resuming, counter: 0}, [{:press, :b}]}
+
+  defp shadow_ball_fire(%{phase: :init} = tech, _player), do: {:cont, tech, []}
+
+  defp shadow_ball_fire(%{phase: :resuming, counter: c} = tech, player) do
+    cond do
+      int(player.action) in [@neutral_b_charging, @neutral_b_full] ->
+        {:cont, %{tech | phase: :refire, counter: 0}, [{:release, :b}]}
+
+      c >= 30 ->
+        {:done, tech, [:release_all]}
+
+      true ->
+        {:cont, %{tech | counter: c + 1}, [{:release, :b}]}
+    end
+  end
+
+  defp shadow_ball_fire(%{phase: :refire, counter: c} = tech, _player) do
+    if c >= 2 do
+      {:cont, %{tech | phase: :firing, counter: 0}, [{:press, :b}]}
+    else
+      {:cont, %{tech | counter: c + 1}, []}
+    end
+  end
+
+  defp shadow_ball_fire(%{phase: :firing, counter: c} = tech, player) do
+    cond do
+      int(player.action) == @neutral_b_fire -> {:done, tech, [:release_all]}
+      c >= 30 -> {:done, tech, [:release_all]}
+      true -> {:cont, %{tech | counter: c + 1}, []}
+    end
+  end
+
+  # Teledgehog: hop past the ledge (backward drift keeps the facing
+  # toward the stage), fall below ledge level, then teleport UP so the
+  # travel passes through the ledge's grab zone and snaps to the hang.
+  # `direction:` is which side's ledge (default :right); `edge_x:` is
+  # the stage lip's |x| (default 85.57, FD).
+  defp teledgehog(%{phase: :init} = tech, %{on_ground: true} = player) do
+    facing_ledge? = if ledge_right?(tech), do: player.facing, else: not player.facing
+
+    if facing_ledge? do
+      # A fall only grabs a ledge it FACES: turn away before hopping.
+      x = if ledge_right?(tech), do: 0.2, else: 0.8
+      {:cont, tech, [{:tilt, :main, x, 0.5}]}
+    else
+      {:cont, %{tech | phase: :hop}, [{:tilt, :main, 0.5, 0.5}, {:press, :y}]}
+    end
+  end
+
+  defp teledgehog(%{phase: :init} = tech, _player), do: {:cont, tech, []}
+
+  defp teledgehog(%{phase: :hop} = tech, player) do
+    if player.on_ground do
+      {:cont, tech, [{:release, :y}]}
+    else
+      {:cont, %{tech | phase: :out, counter: 0}, [{:release, :y}]}
+    end
+  end
+
+  # Backward-drift off the stage, sink below ledge level, then up-B.
+  defp teledgehog(%{phase: :out, counter: c} = tech, player) do
+    out = Keyword.get(tech.opts, :edge_x, 85.57) + 2.0
+    past? = abs(player.position.x) > out
+    dive_y = Keyword.get(tech.opts, :dive_y, -15.0)
+    x = if ledge_right?(tech), do: 0.9, else: 0.1
+
+    cond do
+      # The lip-hugging fall can grab the ledge on its own — done.
+      int(player.action) in [@edge_catch, @edge_hanging] ->
+        {:done, tech, [:release_all]}
+
+      c >= 120 ->
+        {:done, tech, [:release_all]}
+
+      past? and player.position.y < dive_y ->
+        # Aim mostly up, a touch toward the stage: the travel crosses
+        # the grab zone just below the lip.
+        aim_x = if ledge_right?(tech), do: 0.35, else: 0.65
+
+        {:cont, %{tech | phase: :teleporting, counter: 0},
+         [{:tilt, :main, aim_x, 1.0}, {:press, :b}]}
+
+      past? ->
+        # Hold back toward the stage: kill the outward momentum so the
+        # sink hugs the lip.
+        back = if ledge_right?(tech), do: 0.1, else: 0.9
+        {:cont, %{tech | counter: c + 1}, [{:tilt, :main, back, 0.5}]}
+
+      true ->
+        {:cont, %{tech | counter: c + 1}, [{:tilt, :main, x, 0.5}]}
+    end
+  end
+
+  defp teledgehog(%{phase: :teleporting, counter: c} = tech, player) do
+    action = int(player.action)
+    aim_x = if ledge_right?(tech), do: 0.35, else: 0.65
+    back = if ledge_right?(tech), do: 0.1, else: 0.9
+
+    cond do
+      action in [@edge_catch, @edge_hanging] ->
+        {:done, tech, [:release_all]}
+
+      c >= 120 ->
+        {:done, tech, [:release_all]}
+
+      # Reappeared onto the stage: stop (no snap this attempt).
+      c > 5 and player.on_ground and action < 0x40 ->
+        {:done, tech, [:release_all]}
+
+      # Reappeared into a fall: drift toward the stage so the fall
+      # hugs the ledge.
+      c > 5 and not player.on_ground and action < 0x40 ->
+        {:cont, %{tech | counter: c + 1}, [{:tilt, :main, back, 0.5}]}
+
+      true ->
+        {:cont, %{tech | counter: c + 1}, [{:release, :b}, {:tilt, :main, aim_x, 1.0}]}
+    end
+  end
+
+  defp ledge_right?(tech), do: Keyword.get(tech.opts, :direction, :right) == :right
 
   defp int(a) when is_integer(a), do: a
   defp int(a) when is_number(a), do: trunc(a)

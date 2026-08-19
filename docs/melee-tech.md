@@ -24,11 +24,17 @@ references (SmashWiki's [Advanced technique](https://www.ssbwiki.com/Advanced_te
 | Fast fall | `:fast_fall` | (inside `:shffl`'s lag proof; standalone routine) |
 | Waveland | `:waveland` | airdodge-landing (`landing_special`) from a full hop |
 | Empty pivot | `:pivot` | facing flips, ends standing within ~12 units (a run-stop takes ~40) |
-| Ground tech | `:tech` | unit-verified single-press arming (a live proof needs a scripted hit — see below) |
+| Ground tech | `:tech` | 0xC7 tech-in-place on the fall from a scripted 58% launch (`--only dolphin_defense`) |
 | Ledgedash | `:ledgedash` | grab -> DJ above the lip -> dodge in -> `landing_special` ON STAGE with ledge invincibility intact (galint) |
 | Waveshine | `:waveshine` | 4/4 shines jump-cancelled into 4/4 wavedashes out |
 | Short-hop laser | `:short_hop_laser` | the laser projectile observed mid-air (`ProjectileType` 0x36) |
-| DJC aerial | `:djc_aerial` | Ness DJC nair at apex 2.91 — a fraction of his jump height |
+| DJC aerial | `:djc_aerial` | Ness DJC nair at apex 2.91 — a fraction of his jump height; Mewtwo at 2.72 (`--only dolphin_mewtwo`) |
+| DI | `:di` | vs a control launch off falco's up-smash: knockback dx −9.2 vs 0.5 over 20 frames (`--only dolphin_defense`) |
+| SDI | `:sdi` | 22.7 units of slide during a 7-frame hitlag vs 0.0 in the control run |
+| ASDI down | `:asdi_down` | unit-pinned (c-stick parked through hitlag); composes with `:tech` for the Amsah tech |
+| Shadow ball store | `:shadow_ball_charge` | charge loop observed, shield-cancel lands in SpecialNCancel (0x158) with the charge stored |
+| Shadow ball fire | `:shadow_ball_fire` | release state (0x159) reached and the projectile observed in `gs.projectiles` |
+| Teledgehog | `:teledgehog` | ends hanging: CliffCatch (0xFC) at (90.5, −10.9) off FD's right lip |
 
 The composability check that closed the loop: the ledgedash test's
 ledge GRAB is itself built from the primitives — walk to the edge,
@@ -43,8 +49,25 @@ Hard-won geometry facts (each cost a dead Fox):
   (`dodge_height`, default +1.0).
 - `:tech` must never pulse L — an early press is a 40-frame lockout.
   It arms once, close to the ground, from tumble/damage-fall states.
-  A live proof needs an opponent scripted to launch the subject
-  (future work; the state machine is unit-pinned).
+  Its arming check must read `speed_y_self + speed_y_attack` — during
+  knockback the downward velocity lives ENTIRELY in the attack
+  component, and a self-speed-only check never fires.
+- Mewtwo's shadow ball state map (learned by trace, one wrong guess at
+  a time): 0x155 start, 0x156 charge loop, 0x157 FULL-charge hold loop
+  (it does NOT auto-exit — release_all leaves him parked there
+  forever), 0x158 shield-cancel/store, 0x159 release. Pressing B with
+  a stored charge RESUMES the charge; firing takes a second B edge.
+- Teledgehog geometry: FD's lip is x = ±85.57 (not Battlefield's
+  68.4 — a run of overshoots taught us which stage we were on), the
+  teleport travels a FIXED ~38–43 units and hugs the ground, and a
+  fall only grabs a ledge it FACES. The routine therefore turns away
+  from the ledge first (the teleport's direction is stick-controlled,
+  facing-independent), hops out past the lip with backward drift, and
+  holds stage-ward through the sink — the lip-hugging fall catches the
+  ledge (CliffCatch 0xFC, a wide box: caught at 5 units out) before
+  the teleport is even needed; the up-aimed teleport stays as the
+  deep-miss fallback. Watch for 0xFC as well as 0xFD: pressing B on
+  the catch frame teleports OFF the freshly caught ledge.
 
 Key implementation facts, all live-measured:
 
@@ -69,8 +92,7 @@ Key implementation facts, all live-measured:
 Universal: jump-cancel grab / shine grab; wavedash out of shield;
 powershield (2-frame window, feasible against seen projectiles);
 moonwalk, fox trot, crouch cancel, shield drop (axis-notch emulation
-is trivial for a virtual controller); a LIVE proof for `:tech` (needs
-an opponent scripted to launch the subject).
+is trivial for a virtual controller).
 
 Character-specific: Fox/Falco drillshine, double laser, thunders,
 shine turnaround; Peach float-cancel aerials; Samus missile cancel /
@@ -79,17 +101,38 @@ visible as `player.nana`) and handoffs; Marth pivot-tipper spacing
 (pairs with `FrameData.in_range/3`); Yoshi parry; Falcon/Ganon
 gentleman and instant reverse aerials.
 
-## Tier 4 — reactive defense (needs opponent modeling)
+## Tier 4 — hit response
 
-SDI/ASDI patterns, Amsah tech, DI mixups, tech chases,
-edgeguard/ledge-hog decision trees. These are policies more than
-primitives — the natural place for them is on top of `Melee.GameEvents`
-(roadmap item 4) rather than in this module.
+The PRIMITIVES landed in this module: `:di`, `:sdi`, `:asdi_down`,
+plus the live `:tech` proof, all measured A/B against control runs
+under a scripted falco up-smash launcher
+(`test/melee/integration/defense_test.exs`, `--only dolphin_defense`).
+The vertical launch makes both measurements percent-robust: SDI is
+displacement DURING hitlag (the control is frozen), DI is the
+horizontal drift of the post-hitlag knockback path (the control flies
+straight up).
+
+What remains policy rather than primitive — DI *mixups*, tech chases,
+edgeguard decision trees — belongs on top of `Melee.GameEvents`, not
+in this module.
+
+## Character kits
+
+Mewtwo (`--only dolphin_mewtwo`): DJC nair (`:djc_aerial` — his
+double jump is a slow roll and still cancels), `:shadow_ball_charge` /
+`:shadow_ball_fire` (shield-stored charge, two-B-edge release),
+`:teledgehog`. Backlog: teleport-cancel (near-ground endlag cancel).
 
 ## Verification convention
 
 Every routine lands with an assertion that cannot pass vacuously
 (apex ratios, landing-action counts, an A/B lag comparison against a
 control run, cycle-rate floors) in
-`test/melee/integration/tech_movement_test.exs`, plus pure unit tests
-over the step machines in `test/melee/tech_test.exs`.
+`test/melee/integration/tech_movement_test.exs`,
+`test/melee/integration/defense_test.exs` (a scripted port-2 falco
+launcher for the hit-response tier), and
+`test/melee/integration/mewtwo_tech_test.exs`, plus pure unit tests
+over the step machines in `test/melee/tech_test.exs`. The launcher
+tests boot with `boot_rules: [stock: 99, time_limit: 99]` — Melee's
+factory default is a 2-MINUTE TIMED match, which an FFW run blows
+through mid-test.

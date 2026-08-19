@@ -448,10 +448,27 @@ in the order agreed:
    waveshine (4/4 into wavedash-outs), short_hop_laser (projectile
    observed), djc_aerial (Ness nair at apex 2.91). The ledge-grab
    test setup composes the primitives themselves: pivot + backward
-   wavedash off the edge. Remaining backlog (JC grab, powershield,
-   moonwalk, shield drop, drillshine, float cancel, ICs desyncs...)
-   in docs/melee-tech.md; reactive defense (SDI, tech chases) belongs
-   atop GameEvents.
+   wavedash off the edge. TIER 4 + MEWTWO SHIPPED (2026-08-18):
+   `:di`/`:sdi`/`:asdi_down` proven A/B against control runs under a
+   scripted port-2 falco up-smash launcher (`--only dolphin_defense`:
+   SDI slid 22.7 units during hitlag vs 0.0; DI bent knockback dx to
+   −9.2 vs 0.5), which also delivered the deferred LIVE `:tech` proof
+   (0xC7 on a 58% launch — the arming check had to read
+   speed_y_self + speed_y_attack; knockback's fall speed is all in
+   the attack component). Mewtwo kit (`--only dolphin_mewtwo`): DJC
+   nair apex 2.72, `:shadow_ball_charge`/`:shadow_ball_fire` (state
+   map learned by trace: 0x157 is a NON-exiting full-charge hold
+   loop, 0x158 shield-store, 0x159 release; B with a stored charge
+   RESUMES, firing needs a second B edge), `:teledgehog` (turn away —
+   falls only grab ledges they FACE — hop out past FD's lip at
+   ±85.57, hug stage-ward, CliffCatch 0xFC; up-teleport kept as the
+   deep-miss fallback). Launcher tests need
+   `boot_rules: [stock: 99, time_limit: 99]` — Melee's factory
+   default is a 2-minute TIMED match and FFW blows through it
+   mid-test. Remaining backlog (JC grab, powershield, moonwalk,
+   shield drop, drillshine, float cancel, ICs desyncs, Mewtwo
+   teleport-cancel...) in docs/melee-tech.md; DI mixups/tech-chase
+   POLICY belongs atop GameEvents.
 4. **Richer `GameEvents` — SHIPPED (2026-08-18).** Four new
    post-frame fields (last_attack_landed 0x1E, combo_count 0x1F,
    last_hit_by 0x20 wire-0-based -> ports, l_cancel 0x33) feed two

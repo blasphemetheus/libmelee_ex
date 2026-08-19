@@ -283,4 +283,112 @@ defmodule Melee.TechTest do
       {:done, _tech, [:release_all]} = Tech.step(tech, player(%{on_ground: true, action: 0x4A}))
     end
   end
+
+  describe "tier 4 hit-response" do
+    test "di holds the stick through hitlag plus one resolution frame" do
+      tech = Tech.new(:di, :fox, stick: :up)
+
+      {:cont, tech, []} = Tech.step(tech, player(%{hitlag_left: 0}))
+      {:cont, tech, [{:tilt, :main, 0.5, 1.0}]} = Tech.step(tech, player(%{hitlag_left: 5}))
+      {:cont, tech, [{:tilt, :main, 0.5, 1.0}]} = Tech.step(tech, player(%{hitlag_left: 2}))
+      # Hitlag over: hold ONE more frame (the resolution frame), then done.
+      {:done, _tech, [{:tilt, :main, 0.5, 1.0}]} = Tech.step(tech, player(%{hitlag_left: 0}))
+    end
+
+    test "sdi alternates zones every hitlag frame and stops with hitlag" do
+      tech = Tech.new(:sdi, :fox, direction: :up)
+
+      {:cont, tech, [{:tilt, :main, 0.5, 1.0}]} = Tech.step(tech, player(%{hitlag_left: 6}))
+      {:cont, tech, [{:tilt, :main, 0.85, 0.9}]} = Tech.step(tech, player(%{hitlag_left: 5}))
+      {:cont, tech, [{:tilt, :main, 0.5, 1.0}]} = Tech.step(tech, player(%{hitlag_left: 4}))
+      {:done, _tech, [{:tilt, :main, 0.5, 0.5}]} = Tech.step(tech, player(%{hitlag_left: 0}))
+    end
+
+    test "asdi_down parks the c-stick down for the whole hitlag" do
+      tech = Tech.new(:asdi_down, :fox)
+      {:cont, tech, [{:tilt, :c, 0.5, 0.0}]} = Tech.step(tech, player(%{hitlag_left: 4}))
+      {:cont, tech, [{:tilt, :c, 0.5, 0.0}]} = Tech.step(tech, player(%{hitlag_left: 1}))
+      {:done, _tech, [{:tilt, :c, 0.5, 0.5}]} = Tech.step(tech, player(%{hitlag_left: 0}))
+    end
+  end
+
+  describe "mewtwo kit" do
+    test "shadow ball charges for N frames then shield-cancels to store" do
+      tech = Tech.new(:shadow_ball_charge, :mewtwo, frames: 3)
+
+      {:cont, tech, [{:press, :b}]} = Tech.step(tech, player(%{}))
+      {:cont, tech, [{:release, :b}]} = Tech.step(tech, player(%{action: 0x156}))
+      {:cont, tech, []} = Tech.step(tech, player(%{action: 0x156}))
+      {:cont, tech, []} = Tech.step(tech, player(%{action: 0x156}))
+      {:cont, tech, []} = Tech.step(tech, player(%{action: 0x156}))
+      # Budget reached: shield-cancel.
+      {:cont, tech, [{:press, :l}]} = Tech.step(tech, player(%{action: 0x156}))
+      {:done, _tech, [:release_all]} = Tech.step(tech, player(%{action: 179}))
+    end
+
+    test "a full charge (its own hold loop) cancels immediately" do
+      tech = Tech.new(:shadow_ball_charge, :mewtwo, frames: 300)
+      {:cont, tech, _} = Tech.step(tech, player(%{}))
+      {:cont, tech, _} = Tech.step(tech, player(%{action: 0x156}))
+      {:cont, tech, [{:press, :l}]} = Tech.step(tech, player(%{action: 0x157}))
+      {:done, _tech, [:release_all]} = Tech.step(tech, player(%{action: 0x158}))
+    end
+
+    test "firing a stored ball resumes the charge, then B-edges out" do
+      tech = Tech.new(:shadow_ball_fire, :mewtwo)
+
+      {:cont, tech, [{:press, :b}]} = Tech.step(tech, player(%{}))
+      # The press resumed the charge, not fired it.
+      {:cont, tech, [{:release, :b}]} = Tech.step(tech, player(%{action: 0x156}))
+      {:cont, tech, []} = Tech.step(tech, player(%{action: 0x156}))
+      {:cont, tech, []} = Tech.step(tech, player(%{action: 0x156}))
+      # Second edge fires.
+      {:cont, tech, [{:press, :b}]} = Tech.step(tech, player(%{action: 0x156}))
+      {:done, _tech, [:release_all]} = Tech.step(tech, player(%{action: 0x159}))
+    end
+
+    test "teledgehog turns away, drifts out below the lip, teleports up into the hang" do
+      tech = Tech.new(:teledgehog, :mewtwo, direction: :right, edge_x: 60.0)
+
+      # Facing the ledge: turn away first (the fall only grabs a ledge
+      # it faces).
+      {:cont, tech, [{:tilt, :main, 0.2, 0.5}]} = Tech.step(tech, player(%{facing: true}))
+
+      {:cont, tech, commands} = Tech.step(tech, player(%{facing: false}))
+      assert {:press, :y} in commands
+
+      {:cont, tech, [{:release, :y}]} = Tech.step(tech, player(%{action: 0x18, facing: false}))
+
+      # Airborne: backward-drift out toward the ledge.
+      {:cont, tech, [{:release, :y}]} = Tech.step(tech, player(%{on_ground: false, action: 0x19}))
+
+      {:cont, tech, [{:tilt, :main, 0.9, 0.5}]} =
+        Tech.step(tech, player(%{on_ground: false, action: 0x1D}))
+
+      # Past the lip but not deep enough: hold back stage-ward, keep
+      # sinking hugging the lip.
+      {:cont, tech, [{:tilt, :main, 0.1, 0.5}]} =
+        Tech.step(
+          tech,
+          player(%{on_ground: false, action: 0x1D})
+          |> Map.put(:position, %Melee.Position{x: 63.0, y: -5.0})
+        )
+
+      # Below dive depth: up-B aimed mostly up, a touch stage-ward.
+      {:cont, tech, commands} =
+        Tech.step(
+          tech,
+          player(%{on_ground: false, action: 0x1D})
+          |> Map.put(:position, %Melee.Position{x: 64.0, y: -16.0})
+        )
+
+      assert {:press, :b} in commands
+      assert {:tilt, :main, 0.35, 1.0} in commands
+
+      {:cont, tech, commands} = Tech.step(tech, player(%{on_ground: false, action: 0x170}))
+      assert {:tilt, :main, 0.35, 1.0} in commands
+
+      {:done, _tech, [:release_all]} = Tech.step(tech, player(%{on_ground: false, action: 0xFD}))
+    end
+  end
 end
