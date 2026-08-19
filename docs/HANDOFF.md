@@ -465,10 +465,25 @@ in the order agreed:
    deep-miss fallback). Launcher tests need
    `boot_rules: [stock: 99, time_limit: 99]` — Melee's factory
    default is a 2-minute TIMED match and FFW blows through it
-   mid-test. Remaining backlog (JC grab, powershield, moonwalk,
-   shield drop, drillshine, float cancel, ICs desyncs, Mewtwo
-   teleport-cancel...) in docs/melee-tech.md; DI mixups/tech-chase
-   POLICY belongs atop GameEvents.
+   mid-test. BACKLOG CLEARED (2026-08-19), 17 more routines in three
+   batches, all live-verified:
+   `--only dolphin_universal` (fox trot, moonwalk A/B'd by dash-end
+   velocity, wavedash OOS, shine turnaround into 0x16C, drillshine
+   gap 9f, JC grab = standing Catch out of a dash, crouch cancel
+   peak 0.0 vs 9.59, powershield GuardReflect on a tracked laser,
+   shine grab chain, shield drop through a BF platform, Yoshi egg
+   shield mapped to 0x156/0x159, falco SH double laser);
+   `--only dolphin_characters` (Peach float + float-aerials
+   0x158..0x15C, Falcon gentleman jab3-no-rapid + instant RAR,
+   Marth pivot fsmash, Samus SH missile + the measured fact that
+   landing inside ANY special anim is a ~30f heavy landing, ICs grab
+   desync: Nana blizzards solo while Popo holds — her 6-frame-late
+   grab whiff must end before the B). What remains in
+   docs/melee-tech.md is research-grade: Peach's folkloric 40% FC
+   (did not reproduce, measurements recorded), Samus edge-cancelled
+   missile / bomb jump / grapple, ICs handoffs, tipper SPACING,
+   Yoshi parry intangibility pin, Mewtwo teleport-cancel, thunders.
+   DI mixups/tech-chase POLICY belongs atop GameEvents.
 4. **Richer `GameEvents` — SHIPPED (2026-08-18).** Four new
    post-frame fields (last_attack_landed 0x1E, combo_count 0x1F,
    last_hit_by 0x20 wire-0-based -> ports, l_cancel 0x33) feed two

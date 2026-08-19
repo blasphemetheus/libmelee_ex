@@ -66,6 +66,8 @@ defmodule Melee.Tech do
   | `:pivot_smash` | `direction:`, `dash_frames:` | Marth pivot with a c-stick fsmash on the turn frame |
   | `:sh_missile` | `direction:` | Samus SH side-B missile (landing inside the animation is ALWAYS the 30f heavy landing — measured) |
   | `:ics_desync` | — | Popo's grab connects (Nana's whiffs), then B has only Nana answer: solo blizzard |
+  | `:shine_grab` | — | Fox/Falco shine, jump-cancel, Z in jumpsquat: the JC grab out of a shine |
+  | `:instant_rar` | `direction:`, `run_frames:` | run, turnaround jump, bair while drifting the original way |
 
   ## Timing sources
 
@@ -115,6 +117,8 @@ defmodule Melee.Tech do
           | :pivot_smash
           | :sh_missile
           | :ics_desync
+          | :shine_grab
+          | :instant_rar
   @type command ::
           {:press, Controller.button()}
           | {:release, Controller.button()}
@@ -260,7 +264,9 @@ defmodule Melee.Tech do
     :gentleman,
     :pivot_smash,
     :sh_missile,
-    :ics_desync
+    :ics_desync,
+    :shine_grab,
+    :instant_rar
   ]
 
   @spec new(routine(), atom() | integer(), keyword()) :: t()
@@ -329,6 +335,8 @@ defmodule Melee.Tech do
   defp dispatch(:pivot_smash, tech, player), do: pivot_smash(tech, player)
   defp dispatch(:sh_missile, tech, player), do: sh_missile(tech, player)
   defp dispatch(:ics_desync, tech, player), do: ics_desync(tech, player)
+  defp dispatch(:shine_grab, tech, player), do: shine_grab(tech, player)
+  defp dispatch(:instant_rar, tech, player), do: instant_rar(tech, player)
 
   @doc "Step and apply the commands to a `Melee.Controller`."
   @spec step(t(), PlayerState.t(), GenServer.server()) :: {status(), t()}
@@ -1523,6 +1531,99 @@ defmodule Melee.Tech do
 
       true ->
         {:cont, %{tech | counter: c + 1}, []}
+    end
+  end
+
+  # Fox/Falco shine grab: shine, jump-cancel it, Z during the
+  # jumpsquat — the JC grab out of a (connected) shine.
+  defp shine_grab(%{phase: :init} = tech, %{on_ground: true}),
+    do: {:cont, %{tech | phase: :shining}, [{:press, :b}, {:tilt, :main, 0.5, 0.0}]}
+
+  defp shine_grab(%{phase: :init} = tech, _player), do: {:cont, tech, []}
+
+  defp shine_grab(%{phase: :shining} = tech, player) do
+    cancellable? =
+      int(player.action) in [@shine_ground_start, @shine_stun] and player.action_frame >= 3 and
+        player.on_ground
+
+    if cancellable? do
+      {:cont, %{tech | phase: :jc}, [{:release, :b}, {:tilt, :main, 0.5, 0.5}, {:press, :y}]}
+    else
+      {:cont, tech, [{:release, :b}]}
+    end
+  end
+
+  defp shine_grab(%{phase: :jc} = tech, player) do
+    if int(player.action) == @knee_bend do
+      {:cont, %{tech | phase: :grabbing, counter: 0}, [{:release, :y}, {:press, :z}]}
+    else
+      {:cont, tech, [{:release, :y}]}
+    end
+  end
+
+  defp shine_grab(%{phase: :grabbing, counter: c} = tech, player) do
+    cond do
+      int(player.action) in @grab_actions -> {:done, tech, [:release_all]}
+      c >= 15 -> {:done, tech, [:release_all]}
+      true -> {:cont, %{tech | counter: c + 1}, [{:release, :z}]}
+    end
+  end
+
+  # Instant RAR (reverse aerial rush): run, flick backward into the
+  # turn, jump out of the turn, and bair while drifting the ORIGINAL
+  # way — the momentum carries forward, the attack points backward.
+  defp instant_rar(%{phase: :init} = tech, %{on_ground: true} = player) do
+    if int(player.action) == @standing do
+      x = if dir_right?(tech), do: 1.0, else: 0.0
+      run = Keyword.get(tech.opts, :run_frames, 8)
+      {:cont, %{tech | phase: :running, counter: run}, [{:tilt, :main, x, 0.5}]}
+    else
+      {:cont, tech, [{:tilt, :main, 0.5, 0.5}]}
+    end
+  end
+
+  defp instant_rar(%{phase: :init} = tech, _player), do: {:cont, tech, []}
+
+  defp instant_rar(%{phase: :running, counter: c} = tech, _player) when c > 1,
+    do: {:cont, %{tech | counter: c - 1}, []}
+
+  defp instant_rar(%{phase: :running} = tech, _player) do
+    x = if dir_right?(tech), do: 0.0, else: 1.0
+    {:cont, %{tech | phase: :turn, counter: 0}, [{:tilt, :main, x, 0.5}]}
+  end
+
+  defp instant_rar(%{phase: :turn, counter: c} = tech, player) do
+    cond do
+      int(player.action) in [@turning, 0x13] ->
+        {:cont, %{tech | phase: :jumping}, [{:tilt, :main, 0.5, 0.5}, {:press, :y}]}
+
+      c >= 10 ->
+        {:done, tech, [:release_all]}
+
+      true ->
+        {:cont, %{tech | counter: c + 1}, []}
+    end
+  end
+
+  defp instant_rar(%{phase: :jumping} = tech, player) do
+    if player.on_ground do
+      {:cont, tech, [{:release, :y}]}
+    else
+      # Airborne: drift the ORIGINAL direction, bair via the c-stick
+      # (which now points the same way — behind the flipped facing).
+      x = if dir_right?(tech), do: 0.85, else: 0.15
+
+      {:cont, %{tech | phase: :attacking, counter: 0},
+       [{:release, :y}, {:tilt, :main, x, 0.5}, {:tilt, :c, x, 0.5}]}
+    end
+  end
+
+  defp instant_rar(%{phase: :attacking, counter: c} = tech, player) do
+    cond do
+      player.on_ground -> {:done, tech, [:release_all]}
+      c >= 60 -> {:done, tech, [:release_all]}
+      c >= 2 -> {:cont, %{tech | counter: c + 1}, [{:tilt, :c, 0.5, 0.5}]}
+      true -> {:cont, %{tech | counter: c + 1}, []}
     end
   end
 

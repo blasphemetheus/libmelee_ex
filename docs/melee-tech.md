@@ -36,6 +36,9 @@ references (SmashWiki's [Advanced technique](https://www.ssbwiki.com/Advanced_te
 | Shadow ball fire | `:shadow_ball_fire` | release state (0x159) reached and the projectile observed in `gs.projectiles` |
 | Teledgehog | `:teledgehog` | ends hanging: CliffCatch (0xFC) at (90.5, −10.9) off FD's right lip |
 | JC grab | `:jc_grab` | Catch (0xD4, the STANDING grab) out of a dash, via Z in jumpsquat (`--only dolphin_universal`) |
+| Shine grab | `:shine_grab` | shine -> jump-cancel -> Z: shine, knee_bend, Catch all in one chain |
+| Instant RAR | `:instant_rar` | bair with facing flipped and 38.7 units of run-direction drift (`--only dolphin_characters`) |
+| Yoshi egg shield | (`:powershield` inputs) | egg states 0x156/0x159 mapped; laser crosses with zero damage/stun |
 | Moonwalk | `:moonwalk` | dash-end speed 0.19 u/f vs 2.2 in the stick-held control — the down-back park kills the dash velocity with no turn |
 | Fox trot | `:fox_trot` | 3 initial-dash starts, run (0x15) never entered |
 | Crouch cancel | `:crouch_cancel` | launch peak 0.0 (never left the ground) vs 9.59 control, at HIGHER percent |
@@ -118,12 +121,15 @@ Key implementation facts, all live-measured:
 
 ## Remaining backlog
 
-Universal: shine grab; thunders combo. Character-specific: Peach
-float-cancel aerials; Samus missile cancel / bomb jump / extended
-grapple; Ice Climbers desyncs (Nana is already visible as
-`player.nana`) and handoffs; Marth pivot-tipper spacing (pairs with
-`FrameData.in_range/3`); Yoshi parry; Falcon/Ganon gentleman and
-instant reverse aerials; Mewtwo teleport-cancel.
+What's left is research-grade rather than routine-grade: the thunders
+combo (a combo, not a primitive); Peach's folkloric 40% float cancel
+(did not reproduce — measurements above); Samus's platform
+EDGE-cancelled missile, bomb jump, and extended grapple; ICs
+handoffs (the grab desync is done); Marth pivot-tipper SPACING (the
+pivot fsmash is done; the tipper needs `FrameData.in_range/3`
+distance control); Yoshi's parry intangibility pin (egg-shield
+behavior mapped above); Mewtwo teleport-cancel (platform/edge
+variant).
 
 ## Tier 4 — hit response
 
@@ -175,6 +181,18 @@ Hard-won facts from this batch:
   the state feed), or she eats the input in lag and stays synced.
 - **The gentleman is a patience test**: press A only after each jab
   reaches frame 3+; mashing buffers the rapid jab (0x2F).
+- **Yoshi's shield is not a shield**: the egg lives in the SPECIAL
+  action range (0x156 hold, 0x159 release — not 178..180), it never
+  GuardReflects, and the `invulnerable` flag stays false through it.
+  A falco laser crosses a shielding yoshi with zero damage and zero
+  stun (parry-consistent); pinning the parry's intangible startup
+  frames specifically needs hitbox-level data (backlog).
+
+Batch 3 (in the same suites): `:shine_grab` (shine -> jump-cancel ->
+Z in jumpsquat: shine, knee_bend, and Catch 0xD4 all observed — the
+shined target slides out of range, so the catch whiffs by design),
+`:instant_rar` (run, turnaround jump, bair mid-drift: bair lands with
+the facing flipped and 38.7 units of run-direction drift).
 
 ## Verification convention
 

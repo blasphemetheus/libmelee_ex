@@ -624,4 +624,44 @@ defmodule Melee.TechTest do
       {:cont, _tech, [{:release, :b}]} = Tech.step(tech, player(%{action: 0xD8}))
     end
   end
+
+  describe "tier 5 batch 3" do
+    test "shine_grab shines, jump-cancels, and Zs the jumpsquat" do
+      tech = Tech.new(:shine_grab, :fox)
+      shine = Melee.Enums.Action.to_id(:down_b_ground_start)
+
+      {:cont, tech, commands} = Tech.step(tech, player(%{}))
+      assert {:press, :b} in commands
+
+      {:cont, tech, commands} =
+        Tech.step(tech, player(%{action: shine, action_frame: 4}))
+
+      assert {:press, :y} in commands
+
+      {:cont, tech, commands} = Tech.step(tech, player(%{action: 0x18}))
+      assert {:press, :z} in commands
+
+      {:done, _tech, [:release_all]} = Tech.step(tech, player(%{action: 0xD4}))
+    end
+
+    test "instant_rar runs, turns, jumps, and bairs while drifting forward" do
+      tech = Tech.new(:instant_rar, :cptfalcon, direction: :right, run_frames: 2)
+
+      {:cont, tech, [{:tilt, :main, 1.0, 0.5}]} = Tech.step(tech, player(%{}))
+      {:cont, tech, []} = Tech.step(tech, player(%{action: 0x14}))
+      # Flick backward into the turn.
+      {:cont, tech, [{:tilt, :main, 0.0, 0.5}]} = Tech.step(tech, player(%{action: 0x14}))
+
+      {:cont, tech, commands} = Tech.step(tech, player(%{action: 0x12}))
+      assert {:press, :y} in commands
+
+      {:cont, tech, [{:release, :y}]} = Tech.step(tech, player(%{action: 0x18}))
+
+      {:cont, tech, commands} = Tech.step(tech, player(%{on_ground: false, action: 0x19}))
+      assert {:tilt, :main, 0.85, 0.5} in commands
+      assert {:tilt, :c, 0.85, 0.5} in commands
+
+      {:done, _tech, [:release_all]} = Tech.step(tech, player(%{on_ground: true, action: 0x48}))
+    end
+  end
 end

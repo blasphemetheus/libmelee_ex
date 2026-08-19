@@ -117,6 +117,37 @@ defmodule Melee.Integration.TechCharactersTest do
         IO.puts("\n[dolphin] gentleman: jab3=#{jab3?} rapid=#{rapid?}")
         assert jab3?
         refute rapid?
+
+        # --- Instant RAR: run, turnaround jump, bair drifting the
+        # original way.
+        probe = settle(probe)
+        f0 = player(probe).facing
+        dir = if f0, do: :right, else: :left
+        x0 = player(probe).position.x
+        bair = Enums.Action.to_id(:bair)
+
+        {probe, {bair?, flipped_at_bair?}} =
+          run_tech(
+            probe,
+            Tech.new(:instant_rar, :cptfalcon, direction: dir),
+            90,
+            fn {b, fl}, p ->
+              hit = p.action == bair
+              {b or hit, fl or (hit and p.facing != f0)}
+            end,
+            {false, false}
+          )
+
+        drift = player(probe).position.x - x0
+        drift = if dir == :right, do: drift, else: -drift
+
+        IO.puts(
+          "[dolphin] instant RAR: bair=#{bair?} facing_flipped_at_bair=#{flipped_at_bair?} run-direction drift=#{Float.round(drift, 1)}"
+        )
+
+        assert bair?
+        assert flipped_at_bair?
+        assert drift > 2.0
         _ = probe
       after
         Probe.stop(probe)

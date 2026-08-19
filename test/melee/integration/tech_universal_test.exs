@@ -171,6 +171,68 @@ defmodule Melee.Integration.TechUniversalTest do
         IO.puts("[dolphin] powershield: GuardReflect=#{ps?}")
         assert ps?
 
+        # --- Shine grab: shine, jump-cancel, Z in jumpsquat. The
+        # shined falco slides out of range, so the proof is the input
+        # chain: shine -> knee_bend -> Catch (0xD4).
+        probe = settle_both(probe)
+        probe = approach_falco(probe, 7.0)
+
+        {probe, {shined?, sg_squat?, sg_catch?}} =
+          run_tech(
+            probe,
+            Tech.new(:shine_grab, :fox),
+            60,
+            fn {s, q, c}, p ->
+              {s or p.action in @shine_states, q or p.action == @knee_bend,
+               c or p.action == @catch_standing}
+            end,
+            {false, false, false}
+          )
+
+        IO.puts(
+          "[dolphin] shine grab: shine=#{shined?} jumpsquat=#{sg_squat?} catch=#{sg_catch?}"
+        )
+
+        assert shined?
+        assert sg_squat?
+        assert sg_catch?
+
+        _ = probe
+      after
+        Probe.stop(probe)
+      end
+    end
+  end
+
+  test "Yoshi parry: the timed shield press against a falco laser", ctx do
+    if ctx[:skip] do
+      IO.puts("\n[dolphin] skipped: #{ctx.skip}")
+    else
+      probe = boot(ctx, 52_087, :yoshi, :final_destination)
+
+      try do
+        probe = Probe.idle!(probe, 90)
+        probe = settle_both(probe)
+
+        # Yoshi's shield is NOT the standard 178..180 family — the egg
+        # lives in the special range (0x156 hold, 0x159 release,
+        # discovered by trace), it never GuardReflects, and the
+        # `invulnerable` flag stays false. What we CAN pin: the egg
+        # states, and a laser crossing his position with zero damage
+        # and zero stun — parry-consistent (full parry detection needs
+        # hitbox-level data; see docs/melee-tech.md).
+        me_x = player(probe, 1).position.x
+        {probe, {egg?, crossed?, stunned?, trace}} = yoshi_egg_laser(probe, me_x)
+        pct = player(probe, 1).percent
+
+        IO.puts(
+          "\n[dolphin] yoshi egg vs laser: egg_states=#{egg?} laser_crossed=#{crossed?} stunned=#{stunned?} percent=#{pct} trace=#{inspect(Enum.take(trace, 6), base: :hex)}"
+        )
+
+        assert egg?
+        assert crossed?
+        assert pct == 0.0
+        refute stunned?
         _ = probe
       after
         Probe.stop(probe)
@@ -623,7 +685,13 @@ defmodule Melee.Integration.TechUniversalTest do
 
         probe = Probe.step!(probe)
         fox = Probe.gamestate(probe).players[1]
-        seen = seen or fox.action == @shield_reflect
+
+        # Success is GuardReflect (0xB6) — or, for Yoshi, whose
+        # powershield doesn't reflect, the parry: INTANGIBLE shield
+        # startup as the laser arrives.
+        seen =
+          seen or fox.action == @shield_reflect or
+            (fox.action in [178, 179] and fox.invulnerable)
 
         if seen do
           {:halt, {probe, true}}
@@ -639,6 +707,65 @@ defmodule Melee.Integration.TechUniversalTest do
     Melee.Controller.release_all(probe.controllers[1])
     Melee.Controller.release_all(probe.controllers[2])
     {probe, seen}
+  end
+
+  # One falco SH laser at a shielding yoshi. Returns whether the egg
+  # states appeared, whether the laser crossed yoshi's x, and whether
+  # yoshi ever took stun.
+  defp yoshi_egg_laser(probe, me_x) do
+    probe = settle_both(probe)
+    fox_x = player(probe, 1).position.x
+
+    probe =
+      walk_port(
+        probe,
+        2,
+        if(player(probe, 2).position.x > fox_x + 46.0, do: 0.28, else: 0.72),
+        fn p -> abs(p.position.x - (fox_x + 45.0)) < 6.0 end
+      )
+
+    probe =
+      Enum.reduce(1..3, probe, fn _i, probe ->
+        Melee.Controller.tilt_analog(probe.controllers[2], :main, 0.3, 0.5)
+        Probe.step!(probe)
+      end)
+
+    probe = settle_both(probe)
+    falco_tech = Tech.new(:short_hop_laser, :falco)
+
+    # Shield the whole time; watch the laser cross.
+    Melee.Controller.press_button(probe.controllers[1], :r)
+
+    {probe, _ft, {egg, crossed, stunned, trace}} =
+      Enum.reduce(1..70, {probe, falco_tech, {false, false, false, []}}, fn _i,
+                                                                            {probe, ft,
+                                                                             {egg, crossed,
+                                                                              stunned, tr}} ->
+        gs = Probe.gamestate(probe)
+
+        ft =
+          if ft do
+            {status, ft2} = Tech.step(ft, gs.players[2], probe.controllers[2])
+            if status == :done, do: nil, else: ft2
+          end
+
+        probe = Probe.step!(probe)
+        gs = Probe.gamestate(probe)
+        me = gs.players[1]
+        laser = List.first(gs.projectiles)
+
+        egg = egg or me.action in 0x155..0x15A
+        crossed = crossed or (laser != nil and laser.position.x < me_x)
+        stunned = stunned or me.hitlag_left > 0
+
+        entry = {me.action, me.hitlag_left, laser && Float.round(laser.position.x, 0)}
+        tr = if tr == [] or hd(tr) != entry, do: [entry | tr], else: tr
+        {probe, ft, {egg, crossed, stunned, tr}}
+      end)
+
+    Melee.Controller.release_all(probe.controllers[1])
+    Melee.Controller.release_all(probe.controllers[2])
+    {settle_both(probe), {egg, crossed, stunned, Enum.reverse(trace)}}
   end
 
   # Advance an in-flight powershield, or arm one when the tracked
