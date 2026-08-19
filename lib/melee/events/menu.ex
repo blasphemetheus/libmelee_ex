@@ -30,6 +30,28 @@ defmodule Melee.Events.Menu do
 
   @stage_no_stage 0
 
+  # Special Melee scene MAJORS, measured 2026-08-18 (one fresh session
+  # per menu row, tmp/special_scenes2.exs). The scene word is
+  # (minor <<< 8) ||| major, and these majors follow the VS-mode minor
+  # convention: 0 = character select, 1 = stage select, 2 = in game.
+  # Menu row order: camera 0x0A, stamina 0x1F, super sudden death
+  # 0x10, giant 0x1E, tiny 0x1D, invisible 0x11, fixed camera 0x2A,
+  # single button 0x2C, lightning 0x13, slo-mo 0x12.
+  @special_melee_majors [0x0A, 0x10, 0x11, 0x12, 0x13, 0x1D, 0x1E, 0x1F, 0x2A, 0x2C]
+
+  @special_melee_names %{
+    0x0A => :camera,
+    0x1F => :stamina,
+    0x10 => :super_sudden_death,
+    0x1E => :giant,
+    0x1D => :tiny,
+    0x11 => :invisible,
+    0x2A => :fixed_camera,
+    0x2C => :single_button,
+    0x13 => :lightning,
+    0x12 => :slo_mo
+  }
+
   @doc """
   Parse a menu event into an updated `Melee.GameState`.
 
@@ -47,7 +69,7 @@ defmodule Melee.Events.Menu do
         0x0001 -> {@main_menu, false}
         0x0008 -> {@slippi_online_css, true}
         0x0000 -> {@press_start, false}
-        _ -> {@unknown_menu, false}
+        s -> classify_special_melee(s)
       end
 
     # Preserve the raw scene so an @unknown_menu stays identifiable (the
@@ -104,6 +126,7 @@ defmodule Melee.Events.Menu do
           | :slippi_online_css
           | :press_start
           | :boot
+          | {:special_melee_css | :special_melee_sss | :special_melee_game, atom()}
           | {:unknown, integer() | nil}
   def scene_name(0x02), do: :character_select
   def scene_name(s) when s in [0x0102, 0x0108], do: :stage_select
@@ -124,9 +147,40 @@ defmodule Melee.Events.Menu do
   # So MenuHelper gives it a short grace (auto-advance case), then
   # falls back to the blind A-pulse (prompt case).
   def scene_name(0x28), do: :boot
+
+  def scene_name(s) when is_integer(s) do
+    if Integer.mod(s, 256) in @special_melee_majors do
+      mode = @special_melee_names[Integer.mod(s, 256)]
+
+      case div(s, 256) do
+        0 -> {:special_melee_css, mode}
+        1 -> {:special_melee_sss, mode}
+        2 -> {:special_melee_game, mode}
+        _ -> {:unknown, s}
+      end
+    else
+      {:unknown, s}
+    end
+  end
+
   def scene_name(other), do: {:unknown, other}
 
   ## Character-select-screen fields (CSS and Slippi Online CSS)
+
+  # A Special Melee scene classifies by its minor exactly like VS mode;
+  # anything else stays unknown.
+  defp classify_special_melee(scene) do
+    if Integer.mod(scene, 256) in @special_melee_majors do
+      case div(scene, 256) do
+        0 -> {@character_select, true}
+        1 -> {@stage_select, true}
+        2 -> {@in_game, false}
+        _ -> {@unknown_menu, false}
+      end
+    else
+      {@unknown_menu, false}
+    end
+  end
 
   defp css_fields(%GameState{menu_state: menu} = gamestate, bin)
        when menu in [@character_select, @slippi_online_css] do

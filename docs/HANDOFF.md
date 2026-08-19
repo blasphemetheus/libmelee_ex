@@ -441,9 +441,19 @@ in the order agreed:
    reward shaping, corpus filtering for imitation, and bot evals
    beyond win rate. Differential-test against slippi-js stats where
    definitions overlap.
-5. **Special Melee (VS menu row 2).** Map it with the now-routine
-   method (menu_selection + GAME_START byte-diff + behavioral pin):
-   lightning/giant/tiny/fixed-camera etc. as `Match.play` options.
+5. **Special Melee — EXPLORED, blocked on Slippi itself (2026-08-18).**
+   Everything is mapped and drivable (per-mode scene majors typed in
+   Melee.Events.Menu, open-loop CSS/SSS recipes, matches verifiably
+   start and play — windowed frame dumps), BUT special-melee scenes
+   emit ZERO game events: the Slippi recording gecko only instruments
+   VS/online scenes (measured: 300 in-match packets, all menu 0x3E).
+   No GAME_START, no frames -> nothing for a bot to observe. Full
+   findings in melee-menus.md "Special Melee". UNLOCK: extend
+   slippi-ssbm-asm's recording scene gate to these majors (fork-level
+   ASM work) — everything else is already in place. Also note two
+   traps found: special CSS/SSS readbacks lie (selection works but
+   coin/cursor fields stay blind), and gamestate.stage's FD DEFAULT
+   makes stage "readbacks" vacuous without a GAME_START.
 6. **DBLEVEL MASTER mystery — SOLVED (2026-08-18).** Two lines in
    Slippi's `$Required: General Codes` (Sys GALE01r2.ini) remap the
    Tournament Melee row to Melee's debug menu (`0422D638 38000006` —

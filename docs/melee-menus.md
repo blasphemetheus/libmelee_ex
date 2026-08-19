@@ -412,6 +412,47 @@ from `menu_selection`:
 Everything here persists per session like the rest of the rules
 screen, and the mask only matters once the frequency is above none.
 
+## Special Melee: navigable, playable — and INVISIBLE to Slippi
+
+Explored 2026-08-18 (headless mapping + windowed frame-dump
+verification). The verdict up front: **special-melee matches emit NO
+game events** — the Slippi recording gecko only instruments the VS and
+online scenes, so a running Lightning match streams nothing but menu
+events (measured: 300 in-match packets, all 0x3E). No GAME_START, no
+frames, no player state — nothing for a bot to observe. Until
+slippi-ssbm-asm's recording is extended to these scenes (a fork-level
+ASM project), Special Melee cannot be productized for play. What WAS
+established, so the next attempt starts warm:
+
+- The submenu (VS row 2, `submenu == 12`) navigates normally: rows
+  0-9 wrap, in menu order camera / stamina / super sudden death /
+  giant / tiny / invisible / fixed camera / single button /
+  lightning / slo-mo.
+- **Each mode has its own scene MAJOR** (0x0A, 0x1F, 0x10, 0x1E,
+  0x1D, 0x11, 0x2A, 0x2C, 0x13, 0x12 in menu order), following the VS
+  minor convention (0 CSS, 1 SSS, 2 in-game). `Melee.Events.Menu` now
+  classifies all thirty scenes (`scene_name/1` returns e.g.
+  `{:special_melee_css, :lightning}`), so `MenuHelper` navigates
+  their menus and never strands on them.
+- **The special CSS lies to the gecko readbacks**: the portrait grid
+  is exactly the normal one (hover-scanned, all 27 cells match), and
+  selection WORKS — but `coin_down` stays false and `character` keeps
+  hover semantics after a pick (the "4-man survival test!" CSS stores
+  selection somewhere the menu-info gecko does not read). Frame-dump
+  screenshots proved the pick lands (panel shows Fox/HMN). Selection
+  is therefore OPEN-LOOP: aim at the normal grid coordinates, tap A,
+  trust it.
+- The special SSS is the full stage grid with the hand starting
+  BELOW it, and its cursor readback is dead (0,0). Blind recipe that
+  reaches a stage on the flush+ffw build: up-tilt 30 frames (onto the
+  grid), down-tilt 30 (clamps onto the bottom special-stages row),
+  A. A match then genuinely starts and plays (verified by windowed
+  frame dumps: Lightning on Battlefield, timer running).
+- Beware vacuous readbacks while probing here: `gamestate.stage`
+  DEFAULTS to FD (0x19), so with no GAME_START it reads FD forever —
+  a stage "readback" in special melee is the struct default, not
+  data. (This bit the first calibration pass.)
+
 ## The debug menu behind Tournament Melee (mystery solved)
 
 VS Mode row 1 ("Tournament Melee") opens Melee's DEBUG MENU (raw
