@@ -45,7 +45,10 @@ defmodule Melee.GameEvents do
       end_frame: f1, moves: [%{frame, move_id, damage}], damage: total,
       did_kill: boolean, opening: :neutral_win | :counter_attack |
       :trade}}` — a punish in the slippi-js `ConversionComputer` mold:
-      OPENS when a player takes attributed damage (`last_hit_by`),
+      OPENS when a player takes attributed damage (`last_hit_by`;
+      damage taken while GRABBED carries last_hit_by = 0 on the wire,
+      so there the attacker is inferred as the port holding a grab —
+      which is what lets an ICs wobble land as ONE conversion),
       ACCUMULATES every further damage instance as a move (move ids
       from the attacker's `last_attack_landed`), and CLOSES once the
       defender has been out of combo states (hitstun / grabbed /
@@ -325,10 +328,25 @@ defmodule Melee.GameEvents do
     # of this frame.
     attacker_moves = Map.new(players, fn {port, p} -> {port, p.last_attack_landed} end)
 
+    # Damage taken while GRABBED carries last_hit_by = 0 on the wire
+    # (measured: an ICs wobble never attributes), so infer the
+    # attacker: the port holding a grab this frame.
+    grabbers = for {port, p} <- players, int(p.action) in 0xD4..0xDA, do: port
+
     Enum.reduce(players, {[], tracker.conversions}, fn {port, p}, {events, conversions} ->
       case tracker.players do
         %{^port => prev} ->
-          step_conversion(port, prev, p, frame, tracker, attacker_moves, events, conversions)
+          step_conversion(
+            port,
+            prev,
+            p,
+            frame,
+            tracker,
+            attacker_moves,
+            grabbers,
+            events,
+            conversions
+          )
 
         _ ->
           {events, conversions}
@@ -336,11 +354,21 @@ defmodule Melee.GameEvents do
     end)
   end
 
-  defp step_conversion(port, prev, p, frame, tracker, attacker_moves, events, conversions) do
+  defp step_conversion(
+         port,
+         prev,
+         p,
+         frame,
+         tracker,
+         attacker_moves,
+         grabbers,
+         events,
+         conversions
+       ) do
     active = Map.get(conversions, port)
     died? = is_integer(prev.stock) and is_integer(p.stock) and p.stock < prev.stock
     damaged? = is_number(prev.percent) and p.percent > prev.percent + 0.001
-    attacker = p.last_hit_by
+    attacker = resolve_attacker(p, port, grabbers)
 
     cond do
       died? and active != nil ->
@@ -356,6 +384,24 @@ defmodule Melee.GameEvents do
 
       true ->
         {events, conversions}
+    end
+  end
+
+  # last_hit_by, unless the victim is in a grabbed state with no
+  # attribution — then the (single) port holding a grab.
+  defp resolve_attacker(p, port, grabbers) do
+    cond do
+      p.last_hit_by in 1..4 ->
+        p.last_hit_by
+
+      int(p.action) in 0xDF..0xE8 ->
+        case grabbers -- [port] do
+          [grabber] -> grabber
+          _ -> p.last_hit_by
+        end
+
+      true ->
+        p.last_hit_by
     end
   end
 

@@ -4,37 +4,52 @@ Written 2026-08-05, at the end of the session that built the port. Read
 this first; it is the live resume point. Everything below is verified
 unless it says otherwise.
 
-## RESUME HERE (2026-08-19): next tech round is picked and specced
+## RESUME HERE (2026-08-19, round complete): tech round shipped
 
-`Melee.Tech` has 41 live-verified routines across 6 dolphin suites
-(`dolphin_movement`, `_defense`, `_mewtwo`, `_universal`,
-`_characters`, `_research` — all green, ~2 min total). The FULL
-remaining catalog with per-item implementation notes is in
-**docs/melee-tech.md "The full remaining catalog"** — the picked
-next round, in order:
+The picked round LANDED (this session, headless throughout).
+`Melee.Tech` now has 47 routines across 7 dolphin suites (the new
+`--only dolphin_geometry` joins movement/defense/mewtwo/universal/
+characters/research — all green). Round outcomes, full detail in
+**docs/melee-tech.md**:
 
-1. Edge-cancelled aerials (BF platform boot, slide-off landing)
-2. No-impact land (apex-crosses-lip timing sweep)
-3. V-cancel (airdodge 1-2f pre-hit, defense-launcher A/B)
-4. Ness Thunder Jacket (PKT2 after the reproduced yo-yo glitch)
-5. Walljump + walltech (FD side walls, launcher-assisted)
-6. ICs wobbling (as one many-move GameEvents conversion)
+1. Edge cancel — PROVEN as the wavedash slide-off (instant DJ out of
+   the slip). FINDING: aerial-landing slides CLAMP at platform edges
+   (rest exactly -20.0 even at dash speed) — "edge-cancelled
+   aerials" via landing slides don't exist on this engine.
+2. No-impact land — PROVEN on Fountain of Dreams (its platforms
+   sweep height continuously; a fixed platform is unreachable — the
+   DJ apex grid is ~1.3 units coarse, measured). NIL = NO Landing
+   action at all + 0-frame actionability.
+3. V-cancel — PROVEN: falco drift-hops into fox's fixed-KB SHINE;
+   press_frame 45 = 94.3% travel; earlier presses airdodge and whiff
+   (self-labelling sweep).
+4. Ness PKT2 self-hit — PROVEN (`:pkt2` steer plans; bolt turns
+   6 deg/f, r~19, dies on floors, and Slippi's item stream can
+   silently stop reporting a LIVE bolt — trust hitlag). The thunder
+   JACKET arming did NOT reproduce (jab/grab interruptions) —
+   windowed follow-up.
+5. Walljump + walltech — NOT reproduced: every probed entry on
+   FD/PS/YS falls past the lips without wall contact (maps in
+   melee-tech.md); routines shipped unit-tested; windowed follow-up.
+6. ICs wobbling — PROVEN: 9-move 21% single conversion. Two
+   mechanics pinned: stick throws fire on EDGES (park the down in
+   CatchPull), and grab damage carries last_hit_by=0 on the wire —
+   `Melee.GameEvents` now infers the grabber as attacker.
 
-Hard-won methodology to reuse (details in melee-tech.md):
+New test-side lore (now encoded in helpers): walks TEETER at every
+lip (escape by dashing); teeter/knockdown/ledge-hang idle FOREVER on
+a released stick (settle helpers nudge); walking one character
+through another bulldozes the victim (park the far actor first).
 
-- **Lag = ACTIONABILITY, never idle animation length** (hold a
-  movement input through touchdown; it exits into a WALK — no dash
-  edge). This artifact once produced two false verdicts.
-- Frame-perfect windows: SWEEP the frame offset (deterministic game;
-  see `:super_wavedash`'s flick_frame 39 and the mewtwo TC margins).
-- When an attempt fails, MAP it: a frame-by-frame walkthrough script
-  (scratchpad `yoyo_map.exs` pattern) beats blind parameter sweeps.
-- Settle to STANDING (0x0E); recenter actors between attempts (scenes
-  drift into edges/ledge-hangs); launcher tests need
-  `boot_rules: [stock: 99, time_limit: 99]`.
-- Test files to copy patterns from: `tech_research_test.exs` (probes,
-  recover/1, walk/settle helpers), `defense_test.exs` (launcher),
-  `tech_universal_test.exs` (BF platform boot).
+Suggested next: the windowed session (walljump/walltech wall-finding
++ jacket arming — the user likes guiding these); then the
+feasible-unpicked pool in melee-tech.md, or back to the main queue
+(hex publish still deferred; real hardware).
+
+Old methodology notes (still true): lag = ACTIONABILITY; sweep frame
+offsets (deterministic); MAP failures frame-by-frame before
+re-sweeping; settle to STANDING 0x0E; recenter between attempts;
+launcher tests need `boot_rules: [stock: 99, time_limit: 99]`.
 
 Checks before each commit: `mix format`, full `mix test`
 (445 green), the touched dolphin suites, `mix credo` (baseline: 2

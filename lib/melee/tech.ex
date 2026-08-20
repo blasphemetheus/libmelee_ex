@@ -72,10 +72,10 @@ defmodule Melee.Tech do
   | `:super_wavedash` | `direction:`, `flick_frame:` (sweep it), `slide_frames:` | Samus SWD: standing bomb, away-then-toward on the morph ball touchdown frames |
   | `:no_impact_land` | `trigger_y:` (sweep it), `hop: :short \\| :full` | NIL: double-jump timed so the apex barely crosses a platform lip — ZERO landing frames |
   | `:v_cancel` | `press_frame:` (sweep it) | full hop, then an airdodge INPUT 1-2f before an incoming hit: ~5% less knockback, the dodge never comes out |
-  | `:pkt2` | `steer_frames:` | Ness grounded PK Thunder steered straight down into his own head |
+  | `:pkt2` | `steer:` (segments of `{tilt_x, tilt_y, frames}`) | Ness grounded PK Thunder walked around a climb-then-loop back into his own head (bolt turns ~6 deg/frame, radius ~19 — measured) |
   | `:walljump` | `direction:`, `edge_x:`, `out_frames:`, `pin_frames:` | get beside the wall (hop-out or ledge drop), hug in to contact, tap AWAY (UNVERIFIED live: no probed entry ever registered wall contact — see melee-tech.md) |
   | `:walltech` | `wall_x:`, `margin:` | ONE L press + both sticks INTO the wall from a damage state near the wall plane (UNVERIFIED live, same caveat) |
-  | `:wobble` | `interval:` (sweep ~20-32), `reps:` | ICs: desync grab, then down+A on a metronome — Popo pummels while Nana (6f late) dtilts |
+  | `:wobble` | `interval:` (sweep ~28-36), `reps:` | ICs: desync grab, then down+A on a metronome — Popo pummels while Nana (6f late) dtilts; the down is PARKED in CatchPull (a fresh edge in CatchWait is a throw) |
 
   `:shffl` also takes `drift: :left \\| :right` — the main stick held
   through the hop and fall, for landings that slide (edge cancels).
@@ -2047,36 +2047,58 @@ defmodule Melee.Tech do
     end
   end
 
-  # Ness PKT2 into himself: grounded PK Thunder, then the stick held
-  # straight down loops the bolt back into his own head — the recipe's
-  # second half for the thunder jacket (do it with the yo-yo glitch
-  # armed and the stale hitbox attaches to his body).
+  # Ness PKT2 into himself: grounded PK Thunder, then `steer:` (a list
+  # of `{tilt_x, tilt_y, frames}` segments) walks the bolt around a
+  # loop back into his own head — the recipe's second half for the
+  # thunder jacket. The bolt turns ~6 deg/frame toward the held
+  # direction (turn radius ~22 units, measured), so a full self-hit
+  # loop dips ~10 units BELOW the cast height and must hang over open
+  # air: cast at a lip and loop offstage — over ground the bolt dies
+  # on the floor. The default plan loops to ness's right.
   defp pkt2(%{phase: :init} = tech, %{on_ground: true}),
     do: {:cont, %{tech | phase: :casting, counter: 0}, [{:tilt, :main, 0.5, 1.0}, {:press, :b}]}
 
   defp pkt2(%{phase: :init} = tech, _player), do: {:cont, tech, []}
 
-  defp pkt2(%{phase: :casting, counter: c} = tech, _player) do
-    # A few frames for the cast to register, then steer the bolt down.
-    if c >= 3 do
-      {:cont, %{tech | phase: :steering, counter: 0}, [{:release, :b}, {:tilt, :main, 0.5, 0.0}]}
+  defp pkt2(%{phase: :casting, counter: c} = tech, player) do
+    # Wait the cast out (the bolt spawns as the hold anim begins),
+    # then run the steer plan.
+    if int(player.action) == 0x167 or c >= 30 do
+      plan =
+        Keyword.get(tech.opts, :steer, [
+          {1.0, 0.5, 15},
+          {0.5, 0.0, 15},
+          {0.0, 0.5, 15},
+          {0.5, 1.0, 40}
+        ])
+
+      pkt2(%{tech | phase: :steering, counter: 0, aux: plan}, player)
     else
-      {:cont, %{tech | counter: c + 1}, [{:release, :b}]}
+      # Neutral the stick during the cast — the held direction at the
+      # bolt's spawn frame AIMS it (a latched up-tilt spawned the bolt
+      # low inside ness, where it died instantly).
+      {:cont, %{tech | counter: c + 1}, [{:release, :b}, {:tilt, :main, 0.5, 0.0}]}
     end
   end
 
-  defp pkt2(%{phase: :steering, counter: c} = tech, player) do
+  defp pkt2(%{phase: :steering, aux: plan, counter: c} = tech, player) do
     cond do
       # The bolt connected: ness takes the PKT2 launch (hitlag on
       # himself marks the contact).
       player.hitlag_left > 0 ->
         {:cont, %{tech | phase: :launched, counter: 0}, [{:tilt, :main, 0.5, 0.5}]}
 
-      c >= Keyword.get(tech.opts, :steer_frames, 90) ->
+      plan == [] ->
         {:done, tech, [:release_all]}
 
       true ->
-        {:cont, %{tech | counter: c + 1}, []}
+        [{x, y, frames} | rest] = plan
+
+        if c + 1 >= frames do
+          {:cont, %{tech | aux: rest, counter: 0}, [{:tilt, :main, x, y}]}
+        else
+          {:cont, %{tech | counter: c + 1}, [{:tilt, :main, x, y}]}
+        end
     end
   end
 
@@ -2270,16 +2292,23 @@ defmodule Melee.Tech do
 
   defp wobble(%{phase: :grabbing, counter: c} = tech, player) do
     # Same arming as :ics_desync: Popo's grab connected and Nana's
-    # 6-frame-late whiff has ended.
+    # 6-frame-late whiff has ended. The down-tilt must be PARKED as
+    # soon as the grab connects (CatchPull) — a fresh down EDGE in
+    # CatchWait is a down-THROW (stick throws fire on edges, never on
+    # holds: the thunders finding, inverted).
+    a = int(player.action)
     nana_ready? = player.nana == nil or int(player.nana.action) < 0x40
 
     cond do
-      int(player.action) in [0xD5, 0xD8] and nana_ready? ->
+      a in [0xD5, 0xD8] and nana_ready? ->
         reps = Keyword.get(tech.opts, :reps, 8)
         {:cont, %{tech | phase: :wobbling, counter: 0, aux: reps}, [{:tilt, :main, 0.5, 0.0}]}
 
       c >= 90 ->
         {:done, tech, [:release_all]}
+
+      a in 0xD4..0xD8 ->
+        {:cont, %{tech | counter: c + 1}, [{:release, :z}, {:tilt, :main, 0.5, 0.0}]}
 
       true ->
         {:cont, %{tech | counter: c + 1}, [{:release, :z}]}

@@ -363,25 +363,7 @@ defmodule Melee.Integration.DefenseTest do
 
         probe = Probe.step!(probe)
         falco = player(probe, 2)
-        res = if falco.on_ground, do: res, else: %{res | air: res.air + 1}
-
-        res =
-          cond do
-            not res.hit? and falco.hitlag_left > 0 and not falco.on_ground ->
-              %{res | hit?: true, hit_air: res.air, x0: falco.position.x}
-
-            res.hit? and falco.hitlag_left == 0 and not falco.on_ground ->
-              %{
-                res
-                | post: res.post + 1,
-                  travel: max(res.travel, abs(falco.position.x - res.x0))
-              }
-
-            true ->
-              res
-          end
-
-        res = if falco.action == 0xEC, do: %{res | dodged?: true}, else: res
+        res = measure_shine_frame(res, falco)
 
         done? =
           res.post >= 10 or (res.hit? and falco.on_ground and falco.hitlag_left == 0) or
@@ -400,6 +382,25 @@ defmodule Melee.Integration.DefenseTest do
        hit_air: res.hit_air,
        travel: Float.round(res.travel * 1.0, 2)
      }}
+  end
+
+  # Fold one post-step frame into the shine-attempt measurement.
+  defp measure_shine_frame(res, falco) do
+    res = if falco.on_ground, do: res, else: %{res | air: res.air + 1}
+
+    res =
+      cond do
+        not res.hit? and falco.hitlag_left > 0 and not falco.on_ground ->
+          %{res | hit?: true, hit_air: res.air, x0: falco.position.x}
+
+        res.hit? and falco.hitlag_left == 0 and not falco.on_ground ->
+          %{res | post: res.post + 1, travel: max(res.travel, abs(falco.position.x - res.x0))}
+
+        true ->
+          res
+      end
+
+    if falco.action == 0xEC, do: %{res | dodged?: true}, else: res
   end
 
   # Fox near center; falco parked `gap` units to his right.

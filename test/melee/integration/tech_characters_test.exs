@@ -4,15 +4,18 @@ defmodule Melee.Integration.TechCharactersTest do
   @moduledoc """
   Character kits, live: Peach's float cancel (actionable ~2 frames
   after touchdown), Falcon's gentleman + instant RAR, Marth's pivot
-  fsmash, Samus's missile land-cancel (~2 frames), and the Ice
-  Climbers grab desync (Nana blizzards solo while Popo holds).
+  fsmash, Samus's missile land-cancel (~2 frames), the Ice Climbers
+  grab desync (Nana blizzards solo while Popo holds), and WOBBLING —
+  the down+A metronome (down parked in CatchPull: a fresh edge in
+  CatchWait is a dthrow) holding falco through a 9-move, 21%
+  GameEvents conversion over ~190 grabbed frames.
 
       MELEE_DOLPHIN_PATH=~/.local/share/slippi/exi-ai-flush/dolphin-emu-headless \\
       MELEE_ISO_PATH=~/isos/melee.iso \\
       mix test --only dolphin_characters
   """
 
-  alias Melee.{Enums, Probe, Tech}
+  alias Melee.{Enums, GameEvents, Probe, Tech}
 
   @moduletag :dolphin
   @moduletag :dolphin_characters
@@ -270,6 +273,112 @@ defmodule Melee.Integration.TechCharactersTest do
     end
   end
 
+  test "ICs wobbling: the down+A metronome holds falco in a many-move conversion", ctx do
+    if ctx[:skip] do
+      IO.puts("\n[dolphin] skipped: #{ctx.skip}")
+    else
+      probe = boot(ctx, 52_115, :popo)
+
+      try do
+        probe = Probe.idle!(probe, 90)
+        probe = settle(probe)
+        tracker = GameEvents.new()
+
+        # Sweep the metronome interval: too fast buffers pummels, too
+        # slow lets the grab decay. Success = falco never leaves the
+        # grabbed family while a single conversion racks up moves.
+        {probe, _tracker, result} =
+          Enum.reduce_while([32, 32, 32, 36, 36, 28], {probe, tracker, nil}, fn interval,
+                                                                                {probe, tracker,
+                                                                                 _} ->
+            {probe, tracker, res} = wobble_round(probe, tracker, interval)
+            IO.puts("[dolphin] interval #{interval}: #{inspect(res)}")
+
+            if res.wobbled?,
+              do: {:halt, {probe, tracker, {interval, res}}},
+              else: {:cont, {probe, tracker, nil}}
+          end)
+
+        IO.puts("[dolphin] wobble: #{inspect(result)}")
+        assert result != nil
+        {_iv, best} = result
+        assert best.dmg >= 20.0
+        assert best.moves >= 5
+        _ = probe
+      after
+        Probe.stop(probe)
+      end
+    end
+  end
+
+  # One wobble: approach, grab-desync, then down+A on the interval;
+  # events folded throughout so the infinite lands as ONE conversion.
+  defp wobble_round(probe, tracker, interval) do
+    probe = settle(probe)
+
+    # Recenter falco if earlier knockbacks pushed the scene outward.
+    fx = Probe.gamestate(probe).players[2].position.x
+
+    probe =
+      if abs(fx) > 40.0 do
+        probe =
+          walk_port(probe, 2, if(fx > 0, do: 0.28, else: 0.72), fn x -> abs(x) < 20.0 end)
+
+        Melee.Controller.release_all(probe.controllers[2])
+        settle(probe)
+      else
+        probe
+      end
+
+    falco_x = Probe.gamestate(probe).players[2].position.x
+    me_x = player(probe).position.x
+    tilt = if falco_x > me_x, do: 0.72, else: 0.28
+    probe = walk_until(probe, tilt, fn x -> abs(x - falco_x) < 6.5 end)
+    probe = settle(probe)
+
+    pct0 = Probe.gamestate(probe).players[2].percent
+    tech = Tech.new(:wobble, :popo, interval: interval, reps: 22)
+
+    {probe, tracker, _tech, events, grabbed} =
+      Enum.reduce_while(1..1100, {probe, tracker, tech, [], 0}, fn _i,
+                                                                   {probe, tracker, tech, events,
+                                                                    grabbed} ->
+        pl = player(probe)
+        {status, tech} = Tech.step(tech, pl, probe.controllers[1])
+        probe = Probe.step!(probe)
+        {new, tracker} = GameEvents.step(tracker, Probe.gamestate(probe))
+        falco = Probe.gamestate(probe).players[2]
+        grabbed = if falco.action in 0xDF..0xE8, do: grabbed + 1, else: grabbed
+        acc = {probe, tracker, tech, events ++ new, grabbed}
+        if status == :done, do: {:halt, acc}, else: {:cont, acc}
+      end)
+
+    Melee.Controller.release_all(probe.controllers[1])
+
+    # Drain the conversion (it closes 45 actionable frames after the
+    # last hit).
+    {probe, tracker, events} =
+      Enum.reduce(1..120, {probe, tracker, events}, fn _i, {probe, tracker, events} ->
+        probe = Probe.step!(probe)
+        {new, tracker} = GameEvents.step(tracker, Probe.gamestate(probe))
+        {probe, tracker, events ++ new}
+      end)
+
+    dmg = Probe.gamestate(probe).players[2].percent - pct0
+    conversions = for {:conversion, c} <- events, c.by == 1, do: c
+    best = if conversions != [], do: Enum.max_by(conversions, &length(&1.moves))
+    moves = if best, do: length(best.moves), else: 0
+    probe = wait_actionable(probe)
+
+    {probe, tracker,
+     %{
+       wobbled?: dmg >= 20.0 and moves >= 5 and grabbed >= 60,
+       dmg: Float.round(dmg * 1.0, 1),
+       moves: moves,
+       grabbed_frames: grabbed
+     }}
+  end
+
   ## drivers -----------------------------------------------------------
 
   defp boot(ctx, port, character) do
@@ -363,11 +472,36 @@ defmodule Melee.Integration.TechCharactersTest do
         a != nil and b != nil and a.on_ground and a.action < 0x40 and b.action < 0x40
       end,
       fn p ->
-        Melee.Controller.release_all(p.controllers[1])
+        nudge_settled(p, 1)
+        nudge_settled(p, 2)
         p
       end,
       timeout_frames: 900
     )
+  end
+
+  # States that idle FOREVER on a released stick get a nudge: knocked
+  # down -> getup, ledge hang -> climb, lip teeter -> step back in.
+  defp nudge_settled(probe, port) do
+    pl = Probe.gamestate(probe).players[port]
+
+    cond do
+      pl == nil ->
+        :ok
+
+      pl.action in 0xB7..0xC6 and pl.on_ground ->
+        Melee.Controller.tilt_analog(probe.controllers[port], :main, 0.5, 1.0)
+
+      pl.action == 0xFD ->
+        Melee.Controller.press_button(probe.controllers[port], :y)
+
+      pl.action in [0xF5, 0xF6] ->
+        x = if pl.facing, do: 0.28, else: 0.72
+        Melee.Controller.tilt_analog(probe.controllers[port], :main, x, 0.5)
+
+      true ->
+        Melee.Controller.release_all(probe.controllers[port])
+    end
   end
 
   defp run_tech(probe, tech, budget, fold, acc0) do
@@ -418,15 +552,22 @@ defmodule Melee.Integration.TechCharactersTest do
     )
   end
 
-  defp walk_until(probe, tilt_x, done?) do
+  defp walk_until(probe, tilt_x, done?), do: walk_port(probe, 1, tilt_x, done?)
+
+  defp walk_port(probe, port, tilt_x, done?) do
     Probe.until!(
       probe,
       fn p ->
-        pl = Probe.gamestate(p).players[1]
+        pl = Probe.gamestate(p).players[port]
         pl != nil and done?.(pl.position.x)
       end,
       fn p ->
-        Melee.Controller.tilt_analog(p.controllers[1], :main, tilt_x, 0.5)
+        pl = Probe.gamestate(p).players[port]
+
+        # A WALK never crosses a lip — it teeters and stalls; smash
+        # the stick to dash off and keep going.
+        x = if pl != nil and pl.action in [0xF5, 0xF6], do: round(tilt_x) * 1.0, else: tilt_x
+        Melee.Controller.tilt_analog(p.controllers[port], :main, x, 0.5)
         p
       end,
       timeout_frames: 900

@@ -209,16 +209,41 @@ takes in this harness. NEXT ROUND (picked, in priority order):
    frame-indexed launcher hits the hop's first airborne frame,
    before any press could land. Also: air-drift has a stick
    deadzone (~0.29 from center — tilt 0.36 does not drift at all).
-2. **Ness Thunder Jacket** — after the (reproduced) yo-yo glitch,
-   PKT2 into the ground attaches the stale hitbox to ness's body.
-   One step past `yoyo_round/1` in tech_research_test: add PKT2
-   (up-B, steer the bolt into himself), then falco walks into
-   ness with no attack out -> takes damage = jacket.
-3. **ICs wobbling** — from the proven `:ics_desync` grab: down+A on
-   a metronome while Popo holds; assert as ONE GameEvents conversion
-   with many moves (an infinite the tracker should capture).
+2. **Ness PKT2 self-hit — PROVEN; the jacket arming — NOT
+   (2026-08-19, `--only dolphin_research`).** `:pkt2` casts grounded
+   PK Thunder and walks the bolt through a `steer:` plan of
+   `{tilt_x, tilt_y, frames}` segments. Bolt physics, measured:
+   speed 2.0 u/f, turns ~6 deg/frame TOWARD the held direction and
+   stops when aligned (radius ~19), lifespan 119 frames, dies on
+   floor contact; a full 360-loop only GRAZES its own spawn point.
+   The connecting plan: climb 11 frames, then three 17-frame quarter
+   turns (right, down, left) — the 270-degree exit crosses back at
+   torso height moving inward: ness enters 0x16D (PKT2) on contact.
+   Traps found: the stick held at the CAST FRAME mis-aims the spawn
+   (a latched up-tilt spawned the bolt inside ness where it died
+   instantly), and Slippi's item stream can silently STOP reporting
+   a live bolt (the game-side PKT keeps running — trust hitlag, not
+   item visibility). The thunder jacket itself did NOT reproduce:
+   jab and grab interruptions of the yo-yo charge, followed by the
+   connecting PKT2 and a falco walk-in probe, produced zero contact
+   damage every time. Windowed follow-up for the arming folklore.
+3. **ICs wobbling — PROVEN (2026-08-19, `--only
+   dolphin_characters`).** `:wobble`: desync grab, then down+A on a
+   metronome — interval 36 held falco for ~190 grabbed frames while
+   pummel+dtilt alternated to 21.4%, and GameEvents recorded it as
+   ONE conversion with NINE moves. Two mechanics pinned along the
+   way: (a) stick throws fire on EDGES only — the down must be
+   PARKED during CatchPull; a fresh down edge in CatchWait is a
+   dthrow (the thunders finding, inverted); (b) damage taken while
+   GRABBED carries last_hit_by = 0 on the wire, so
+   `Melee.GameEvents` now infers the attacker as the port holding a
+   grab (without it the wobble was invisible to the conversion
+   tracker).
 4. **Walljump + walltech, windowed** — see the geometry-round
    findings above; blocked on locating the actual wall collision.
+5. **Thunder jacket arming, windowed** — see item 2; the PKT2 half
+   is productized, the yo-yo interruption that stores the hitbox is
+   the open question.
 
 Feasible, unpicked (do after or on request): ledge-cancelled
 specials (Fox/Falco Illusion off platform edges); Illusion/Phantasm

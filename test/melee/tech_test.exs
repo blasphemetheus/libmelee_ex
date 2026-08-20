@@ -781,24 +781,27 @@ defmodule Melee.TechTest do
   end
 
   describe "pkt2" do
-    test "casts up-B, steers down, rides the launch out" do
-      tech = Tech.new(:pkt2, :ness, steer_frames: 30)
+    test "casts up-B, walks the steer plan, rides the launch out" do
+      tech = Tech.new(:pkt2, :ness, steer: [{1.0, 0.5, 2}, {0.5, 0.0, 2}])
 
       {:cont, tech, commands} = Tech.step(tech, player(%{}))
       assert {:press, :b} in commands
       assert {:tilt, :main, 0.5, 1.0} in commands
 
-      casting = player(%{action: 0x159})
-      {:cont, tech, [{:release, :b}]} = Tech.step(tech, casting)
-      {:cont, tech, [{:release, :b}]} = Tech.step(tech, casting)
-      {:cont, tech, [{:release, :b}]} = Tech.step(tech, casting)
+      # Casting: wait for the hold animation (0x167).
+      casting = player(%{action: 0x166})
+      {:cont, tech, [{:release, :b}, {:tilt, :main, 0.5, +0.0}]} = Tech.step(tech, casting)
+      {:cont, tech, [{:release, :b}, {:tilt, :main, 0.5, +0.0}]} = Tech.step(tech, casting)
 
-      {:cont, tech, commands} = Tech.step(tech, casting)
-      assert {:tilt, :main, 0.5, 0.0} in commands
+      # Bolt out: the steer plan runs segment by segment.
+      holding = player(%{action: 0x167})
+      {:cont, tech, [{:tilt, :main, 1.0, 0.5}]} = Tech.step(tech, holding)
+      {:cont, tech, [{:tilt, :main, 1.0, 0.5}]} = Tech.step(tech, holding)
+      {:cont, tech, [{:tilt, :main, 0.5, +0.0}]} = Tech.step(tech, holding)
 
       # The bolt lands on his own head: hitlag marks the contact.
       {:cont, _tech, [{:tilt, :main, 0.5, 0.5}]} =
-        Tech.step(tech, player(%{action: 0x159, hitlag_left: 4}))
+        Tech.step(tech, player(%{action: 0x167, hitlag_left: 4}))
     end
   end
 

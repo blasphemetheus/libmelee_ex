@@ -6,9 +6,12 @@ defmodule Melee.Integration.TechResearchTest do
   Peach float cancel (PROVEN: actionable in ~2 frames - lag must be
   measured as ACTIONABILITY, not idle animation length), Mewtwo
   teleport edge-cancel, Marth FrameData-spaced tipper, the thunders
-  combo through GameEvents, Samus super wavedash (126 units), and
-  the Ness yo-yo glitch (the stale hitbox re-activating at 28.8
-  units mid-charge-hold). Findings in docs/melee-tech.md.
+  combo through GameEvents, Samus super wavedash (126 units), the
+  Ness yo-yo glitch (the stale hitbox re-activating at 28.8 units
+  mid-charge-hold), and the Ness PKT2 self-hit (a climb-then-loop
+  steer plan lands the bolt on his own head; the thunder-jacket
+  arming did NOT reproduce under jab/grab interruptions — windowed
+  follow-up). Findings in docs/melee-tech.md.
 
       MELEE_DOLPHIN_PATH=~/.local/share/slippi/exi-ai-flush/dolphin-emu-headless \\
       MELEE_ISO_PATH=~/isos/melee.iso \\
@@ -330,11 +333,36 @@ defmodule Melee.Integration.TechResearchTest do
         end)
       end,
       fn p ->
-        Enum.each(ports, &Melee.Controller.release_all(p.controllers[&1]))
+        Enum.each(ports, &nudge_settled(p, &1))
         p
       end,
       timeout_frames: 900
     )
+  end
+
+  # States that idle FOREVER on a released stick get a nudge: knocked
+  # down -> getup (up-tilt), ledge hang -> climb (Y), lip teeter ->
+  # step back in.
+  defp nudge_settled(probe, port) do
+    pl = Probe.gamestate(probe).players[port]
+
+    cond do
+      pl == nil ->
+        :ok
+
+      pl.action in 0xB7..0xC6 and pl.on_ground ->
+        Melee.Controller.tilt_analog(probe.controllers[port], :main, 0.5, 1.0)
+
+      pl.action == 0xFD ->
+        Melee.Controller.press_button(probe.controllers[port], :y)
+
+      pl.action in [0xF5, 0xF6] ->
+        x = if pl.facing, do: 0.28, else: 0.72
+        Melee.Controller.tilt_analog(probe.controllers[port], :main, x, 0.5)
+
+      true ->
+        Melee.Controller.release_all(probe.controllers[port])
+    end
   end
 
   defp walk_until(probe, tilt_x, done?), do: walk_port(probe, 1, tilt_x, done?)
@@ -788,6 +816,220 @@ defmodule Melee.Integration.TechResearchTest do
         Probe.stop(probe)
       end
     end
+  end
+
+  test "Ness PKT2 self-hit: the steered bolt loop connects (jacket arming: exploratory)", ctx do
+    if ctx[:skip] do
+      IO.puts("\n[dolphin] skipped: #{ctx.skip}")
+    else
+      probe = boot(ctx, 52_113, :ness)
+
+      try do
+        probe = Probe.idle!(probe, 90)
+        probe = settle(probe)
+
+        # TEMP map: the climb-loop plan with a visible bolt (falco
+        # untouched — walking him kills the item stream's view).
+        probe = center_at(probe, 0.0)
+
+        tech0 =
+          Tech.new(:pkt2, :ness,
+            steer: [
+              {0.5, 1.0, 11},
+              {1.0, 0.5, 17},
+              {0.5, 0.0, 17},
+              {0.0, 0.5, 17},
+              {0.0, 0.5, 45}
+            ]
+          )
+
+        {probe, _tech0} =
+          Enum.reduce(1..120, {probe, tech0}, fn i, {probe, tech0} ->
+            ness = player(probe)
+            {_s, tech0} = Tech.step(tech0, ness, probe.controllers[1])
+            probe = Probe.step!(probe)
+            ness = player(probe)
+            bolt = List.first(Probe.gamestate(probe).projectiles)
+
+            if i in 18..110 do
+              IO.puts(
+                "[pktmap] #{i}: a=#{Integer.to_string(ness.action, 16)} hitlag=#{ness.hitlag_left} " <>
+                  "pct=#{ness.percent} bolt=#{inspect(bolt && {bolt.type, Float.round(bolt.position.x, 1), Float.round(bolt.position.y, 1), Float.round(bolt.speed.x, 2), Float.round(bolt.speed.y, 2), bolt.expiration_frames})}"
+              )
+            end
+
+            {probe, tech0}
+          end)
+
+        Melee.Controller.release_all(probe.controllers[1])
+        probe = settle_ports(probe, [1, 2])
+
+        # Control: PKT2 into himself with NO broken charge, then falco
+        # walks into ness — contact alone must deal nothing.
+        {probe, control} = jacket_round(probe, nil)
+        IO.puts("\n[dolphin] control (no armed yo-yo): #{inspect(control)}")
+
+        # Armed arms: falco interrupts ness's yo-yo charge at frame k
+        # (a GRAB is the canonical hitbox-storing interruption), then
+        # PKT2, then the walk-in probe.
+        arms = [{:grab, 10}, {:jab, 10}]
+
+        {probe, result} =
+          Enum.reduce_while(arms, {probe, nil}, fn arm, {probe, _} ->
+            {probe, res} = jacket_round(probe, arm)
+            IO.puts("[dolphin] #{inspect(arm)}: #{inspect(res)}")
+
+            if res.jacket?,
+              do: {:halt, {probe, {arm, res}}},
+              else: {:cont, {probe, nil}}
+          end)
+
+        IO.puts("[dolphin] thunder jacket: #{inspect(result)}")
+        assert control.pkt2?
+        refute control.jacket?
+
+        if result == nil,
+          do:
+            IO.puts("[dolphin] jacket did NOT reproduce (windowed follow-up; see melee-tech.md)")
+
+        _ = probe
+      after
+        Probe.stop(probe)
+      end
+    end
+  end
+
+  ## thunder jacket ------------------------------------------------------
+
+  # One jacket attempt: optionally break ness's yo-yo charge with a
+  # falco jab at charge frame `k`, PKT2 into himself, then the probe —
+  # falco walks INTO the idle ness and only a jacket deals damage.
+  # Falco point-blank, ness charges the yo-yo, falco interrupts it at
+  # charge frame `k` — the canonical arming is a GRAB (jab kept as a
+  # sweep alternative).
+  defp arm_yoyo(probe, {method, k}) do
+    ness_x = player(probe).position.x
+    fx = Probe.gamestate(probe).players[2].position.x
+    tilt = if fx > ness_x + 7.0, do: 0.28, else: 0.72
+    probe = walk_port(probe, 2, tilt, fn p -> abs(p.position.x - ness_x) < 7.0 end)
+    probe = settle_ports(probe, [1, 2])
+
+    Melee.Controller.tilt_analog(probe.controllers[1], :main, 0.5, 1.0)
+    Melee.Controller.press_button(probe.controllers[1], :a)
+    btn = if method == :grab, do: :z, else: :a
+
+    probe =
+      Enum.reduce(1..(k + 60), probe, fn i, probe ->
+        if i == k, do: Melee.Controller.press_button(probe.controllers[2], btn)
+        if i == k + 2, do: Melee.Controller.release_button(probe.controllers[2], btn)
+        if i == k + 3, do: Melee.Controller.release_all(probe.controllers[1])
+
+        # A connected grab needs a throw to end: tilt falco back.
+        if method == :grab and i == k + 14 do
+          Melee.Controller.tilt_analog(probe.controllers[2], :main, 0.28, 0.5)
+        end
+
+        if method == :grab and i == k + 20 do
+          Melee.Controller.release_all(probe.controllers[2])
+        end
+
+        Probe.step!(probe)
+      end)
+
+    Melee.Controller.release_all(probe.controllers[1])
+    Melee.Controller.release_all(probe.controllers[2])
+    settle_ports(probe, [1, 2])
+  end
+
+  defp jacket_round(probe, arm) do
+    probe = settle_ports(probe, [1, 2])
+    probe = center_at(probe, 0.0)
+
+    probe = if arm != nil, do: arm_yoyo(probe, arm), else: probe
+
+    # Falco parks 35 out on HIS OWN side (walking through ness would
+    # bulldoze him off his mark), ness re-centers facing right — the
+    # climb keeps the whole loop above the floor, so mid-stage works.
+    ness_x = player(probe).position.x
+    fx0 = Probe.gamestate(probe).players[2].position.x
+
+    probe =
+      if fx0 > ness_x do
+        walk_port(probe, 2, 0.72, fn p -> p.position.x > ness_x + 35.0 end)
+      else
+        walk_port(probe, 2, 0.28, fn p -> p.position.x < ness_x - 35.0 end)
+      end
+
+    probe = settle_ports(probe, [1, 2])
+    probe = center_at(probe, 0.0)
+
+    probe =
+      Enum.reduce(1..2, probe, fn _i, probe ->
+        Melee.Controller.tilt_analog(probe.controllers[1], :main, 0.7, 0.5)
+        Probe.step!(probe)
+      end)
+
+    probe = settle_ports(probe, [1, 2])
+
+    # PKT2 into his own side: climb `u` frames, then a 270-degree
+    # loop over the offstage air (quarter turn = 15 frames at
+    # 6 deg/frame, radius ~19) exits moving LEFT at height 2u - 11
+    # relative to the cast — straight into ness. A full 360 loop only
+    # GRAZES its own spawn point (measured), so the climb is what
+    # aims the horizontal pass at his torso; sweep it.
+    {probe, pkt2?} =
+      Enum.reduce_while([11, 12, 10, 13], {probe, false}, fn u, {probe, _} ->
+        {probe, hit?} =
+          run_tech(
+            probe,
+            Tech.new(:pkt2, :ness,
+              steer: [
+                {0.5, 1.0, u},
+                {1.0, 0.5, 17},
+                {0.5, 0.0, 17},
+                {0.0, 0.5, 17},
+                {0.0, 0.5, 45}
+              ]
+            ),
+            240,
+            fn hit, p -> hit or p.hitlag_left > 0 end,
+            false
+          )
+
+        probe = settle_ports(probe, [1, 2])
+        probe = center_at(probe, 81.0)
+
+        if hit?, do: {:halt, {probe, true}}, else: {:cont, {probe, false}}
+      end)
+
+    probe = settle_ports(probe, [1, 2])
+
+    # The probe: falco walks INTO ness for 80 frames; ness holds
+    # still. Contact damage with ness idle = the jacket.
+    ness_x = player(probe).position.x
+    fx = Probe.gamestate(probe).players[2].position.x
+    pct0 = Probe.gamestate(probe).players[2].percent
+    walk_in = if fx > ness_x, do: 0.28, else: 0.72
+
+    {probe, ness_attacked?} =
+      Enum.reduce(1..80, {probe, false}, fn _i, {probe, atk} ->
+        Melee.Controller.tilt_analog(probe.controllers[2], :main, walk_in, 0.5)
+        probe = Probe.step!(probe)
+        ness = player(probe)
+        {probe, atk or (ness.action >= 0x2C and ness.action < 0x140)}
+      end)
+
+    Melee.Controller.release_all(probe.controllers[2])
+    dmg = Probe.gamestate(probe).players[2].percent - pct0
+    probe = settle_ports(probe, [1, 2])
+
+    {probe,
+     %{
+       pkt2?: pkt2?,
+       jacket?: dmg > 0.0 and not ness_attacked?,
+       dmg: Float.round(dmg * 1.0, 1),
+       ness_attacked?: ness_attacked?
+     }}
   end
 
   # One yo-yo round: falco walks into the held charge, parks after the
