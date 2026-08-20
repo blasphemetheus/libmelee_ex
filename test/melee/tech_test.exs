@@ -722,4 +722,230 @@ defmodule Melee.TechTest do
       {:done, _tech, [:release_all]} = Tech.step(tech, player(%{action: 0x0E}))
     end
   end
+
+  describe "no impact land" do
+    test "hops, double-jumps at trigger_y, done on touchdown" do
+      tech = Tech.new(:no_impact_land, :marth, trigger_y: 6.0, hop: :full)
+
+      {:cont, tech, [{:press, :y}]} = Tech.step(tech, player(%{}))
+      # Full hop: hold through jumpsquat.
+      {:cont, tech, [{:press, :y}]} = Tech.step(tech, player(%{action: 0x18}))
+
+      {:cont, tech, [{:release, :y}]} =
+        Tech.step(tech, player(%{on_ground: false, action: 0x19, position: %{x: 0.0, y: 1.0}}))
+
+      # Below the trigger: wait.
+      {:cont, tech, []} =
+        Tech.step(tech, player(%{on_ground: false, action: 0x1D, position: %{x: 0.0, y: 4.0}}))
+
+      # At the trigger: the DJ press.
+      {:cont, tech, [{:press, :x}]} =
+        Tech.step(tech, player(%{on_ground: false, action: 0x1D, position: %{x: 0.0, y: 6.2}}))
+
+      {:cont, tech, [{:release, :x}]} =
+        Tech.step(tech, player(%{on_ground: false, action: 0x1B, position: %{x: 0.0, y: 12.0}}))
+
+      {:done, _tech, [:release_all]} = Tech.step(tech, player(%{action: 0x0E}))
+    end
+
+    test "gives up cleanly if it lands without the trigger firing" do
+      tech = Tech.new(:no_impact_land, :marth, trigger_y: 99.0)
+      {:cont, tech, [{:press, :y}]} = Tech.step(tech, player(%{}))
+      {:cont, tech, [{:release, :y}]} = Tech.step(tech, player(%{on_ground: false, action: 0x1D}))
+      {:done, _tech, [:release_all]} = Tech.step(tech, player(%{action: 0x2A}))
+    end
+  end
+
+  describe "v-cancel" do
+    test "full hop, L at press_frame, done on hitlag" do
+      tech = Tech.new(:v_cancel, :fox, press_frame: 2)
+
+      {:cont, tech, [{:press, :y}]} = Tech.step(tech, player(%{}))
+      {:cont, tech, [{:press, :y}]} = Tech.step(tech, player(%{action: 0x18}))
+
+      {:cont, tech, [{:release, :y}]} =
+        Tech.step(tech, player(%{on_ground: false, action: 0x19}))
+
+      airborne = player(%{on_ground: false, action: 0x1D})
+      {:cont, tech, []} = Tech.step(tech, airborne)
+      {:cont, tech, []} = Tech.step(tech, airborne)
+      # Frame press_frame: the L press (the input that v-cancels).
+      {:cont, tech, [{:press, :l}]} = Tech.step(tech, airborne)
+
+      # Hit inside the window: done in hitlag.
+      {:done, _tech, [:release_all]} =
+        Tech.step(tech, player(%{on_ground: false, action: 0x54, hitlag_left: 5}))
+    end
+  end
+
+  describe "pkt2" do
+    test "casts up-B, steers down, rides the launch out" do
+      tech = Tech.new(:pkt2, :ness, steer_frames: 30)
+
+      {:cont, tech, commands} = Tech.step(tech, player(%{}))
+      assert {:press, :b} in commands
+      assert {:tilt, :main, 0.5, 1.0} in commands
+
+      casting = player(%{action: 0x159})
+      {:cont, tech, [{:release, :b}]} = Tech.step(tech, casting)
+      {:cont, tech, [{:release, :b}]} = Tech.step(tech, casting)
+      {:cont, tech, [{:release, :b}]} = Tech.step(tech, casting)
+
+      {:cont, tech, commands} = Tech.step(tech, casting)
+      assert {:tilt, :main, 0.5, 0.0} in commands
+
+      # The bolt lands on his own head: hitlag marks the contact.
+      {:cont, _tech, [{:tilt, :main, 0.5, 0.5}]} =
+        Tech.step(tech, player(%{action: 0x159, hitlag_left: 4}))
+    end
+  end
+
+  describe "walljump" do
+    test "hops out, hugs in, detects wall contact, flicks away, done on upward velocity" do
+      tech = Tech.new(:walljump, :fox, direction: :right, pin_frames: 1, out_frames: 1)
+
+      # Grounded: hop out with a little outward drift.
+      {:cont, tech, commands} = Tech.step(tech, player(%{}))
+      assert {:press, :y} in commands
+      assert {:tilt, :main, 0.62, 0.5} in commands
+
+      {:cont, tech, [{:release, :y}]} = Tech.step(tech, player(%{action: 0x18}))
+
+      # Airborne but not yet past the lip: keep drifting out.
+      {:cont, tech, commands} =
+        Tech.step(
+          tech,
+          player(%{on_ground: false, action: 0x19, position: %{x: 84.0, y: 4.0}})
+        )
+
+      assert {:tilt, :main, 0.62, 0.5} in commands
+
+      # One out_frame of drift...
+      {:cont, tech, []} =
+        Tech.step(
+          tech,
+          player(%{on_ground: false, action: 0x1D, position: %{x: 86.0, y: 6.0}})
+        )
+
+      # ...then hold hard INTO the wall.
+      {:cont, tech, [{:tilt, :main, 0.05, 0.5}]} =
+        Tech.step(
+          tech,
+          player(%{on_ground: false, action: 0x1D, position: %{x: 88.6, y: 3.0}})
+        )
+
+      # Sinking with the x still moving: no contact yet.
+      tech =
+        Enum.reduce([88.5, 88.2, 87.9, 87.6, 87.3, 87.0], tech, fn x, tech ->
+          {:cont, tech, []} =
+            Tech.step(
+              tech,
+              player(%{
+                on_ground: false,
+                action: 0x1D,
+                speed_y_self: -2.0,
+                position: %{x: x, y: -6.0}
+              })
+            )
+
+          tech
+        end)
+
+      # x stopped while falling: CONTACT. Pin, then the away flick.
+      pinned =
+        player(%{
+          on_ground: false,
+          action: 0x1D,
+          speed_y_self: -2.0,
+          position: %{x: 87.0, y: -9.0}
+        })
+
+      {:cont, tech, []} = Tech.step(tech, pinned)
+      {:cont, tech, []} = Tech.step(tech, pinned)
+      {:cont, tech, [{:tilt, :main, 1.0, 0.5}]} = Tech.step(tech, pinned)
+
+      # Upward velocity with no jump spent: the walljump came out.
+      {:done, _tech, [:release_all]} =
+        Tech.step(
+          tech,
+          player(%{on_ground: false, action: 0x1D, speed_y_self: 2.6})
+        )
+    end
+  end
+
+  describe "walltech" do
+    test "one L press near the wall from tumble, done on the wall tech state" do
+      tech = Tech.new(:walltech, :fox, wall_x: 85.57, margin: 8.0)
+
+      # Tumbling but far from the wall: hold fire.
+      {:cont, tech, []} =
+        Tech.step(
+          tech,
+          player(%{
+            on_ground: false,
+            action: 0x26,
+            speed_y_attack: -1.5,
+            position: %{x: 40.0, y: 5.0}
+          })
+        )
+
+      # Rising past the wall: still not armed (the press waits for
+      # the way DOWN).
+      {:cont, tech, []} =
+        Tech.step(
+          tech,
+          player(%{
+            on_ground: false,
+            action: 0x26,
+            speed_y_attack: 2.0,
+            position: %{x: 80.0, y: 20.0}
+          })
+        )
+
+      # Falling onto the wall: the single press, held into the wall.
+      {:cont, tech, commands} =
+        Tech.step(
+          tech,
+          player(%{
+            on_ground: false,
+            action: 0x26,
+            speed_y_attack: -1.5,
+            position: %{x: 80.0, y: -5.0}
+          })
+        )
+
+      assert {:press, :l} in commands
+      # Into the wall = toward the stage (the character is OUTSIDE).
+      assert {:tilt, :main, +0.0, 0.5} in commands
+
+      {:done, _tech, [:release_all]} =
+        Tech.step(tech, player(%{on_ground: false, action: 0xCA}))
+    end
+  end
+
+  describe "wobble" do
+    test "grabs, then down+A on the interval until reps run out" do
+      tech = Tech.new(:wobble, :popo, interval: 4, reps: 2)
+
+      {:cont, tech, [{:press, :z}]} = Tech.step(tech, player(%{}))
+
+      # Grab connected, Nana ready: park the stick down.
+      holding = player(%{action: 0xD8})
+      {:cont, tech, [{:tilt, :main, 0.5, +0.0}]} = Tech.step(tech, holding)
+
+      # Rep 1: the down+A press, released two frames later.
+      {:cont, tech, commands} = Tech.step(tech, holding)
+      assert {:press, :a} in commands
+      {:cont, tech, []} = Tech.step(tech, holding)
+      {:cont, tech, [{:release, :a}]} = Tech.step(tech, holding)
+      {:cont, tech, []} = Tech.step(tech, holding)
+      # Interval elapsed: recycle into rep 2.
+      {:cont, tech, []} = Tech.step(tech, holding)
+      {:cont, tech, commands} = Tech.step(tech, holding)
+      assert {:press, :a} in commands
+
+      # The victim escaping ends the routine.
+      {:done, _tech, [:release_all]} = Tech.step(tech, player(%{action: 0x0E}))
+    end
+  end
 end

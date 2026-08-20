@@ -70,6 +70,15 @@ defmodule Melee.Tech do
   | `:instant_rar` | `direction:`, `run_frames:` | run, turnaround jump, bair while drifting the original way |
   | `:uthrow_uair` | — | thunders combo: grab, up-throw, full-hop uair into the hitstun |
   | `:super_wavedash` | `direction:`, `flick_frame:` (sweep it), `slide_frames:` | Samus SWD: standing bomb, away-then-toward on the morph ball touchdown frames |
+  | `:no_impact_land` | `trigger_y:` (sweep it), `hop: :short \\| :full` | NIL: double-jump timed so the apex barely crosses a platform lip — ZERO landing frames |
+  | `:v_cancel` | `press_frame:` (sweep it) | full hop, then an airdodge INPUT 1-2f before an incoming hit: ~5% less knockback, the dodge never comes out |
+  | `:pkt2` | `steer_frames:` | Ness grounded PK Thunder steered straight down into his own head |
+  | `:walljump` | `direction:`, `edge_x:`, `out_frames:`, `pin_frames:` | get beside the wall (hop-out or ledge drop), hug in to contact, tap AWAY (UNVERIFIED live: no probed entry ever registered wall contact — see melee-tech.md) |
+  | `:walltech` | `wall_x:`, `margin:` | ONE L press + both sticks INTO the wall from a damage state near the wall plane (UNVERIFIED live, same caveat) |
+  | `:wobble` | `interval:` (sweep ~20-32), `reps:` | ICs: desync grab, then down+A on a metronome — Popo pummels while Nana (6f late) dtilts |
+
+  `:shffl` also takes `drift: :left \\| :right` — the main stick held
+  through the hop and fall, for landings that slide (edge cancels).
 
   ## Timing sources
 
@@ -123,6 +132,12 @@ defmodule Melee.Tech do
           | :instant_rar
           | :uthrow_uair
           | :super_wavedash
+          | :no_impact_land
+          | :v_cancel
+          | :pkt2
+          | :walljump
+          | :walltech
+          | :wobble
   @type command ::
           {:press, Controller.button()}
           | {:release, Controller.button()}
@@ -190,10 +205,15 @@ defmodule Melee.Tech do
   @shine_stun Enums.Action.to_id(:down_b_stun)
   @aerial_attacks 0x41..0x45
   @aerial_landings 0x46..0x4A
-  # Damage-fall family + tumble: the states a tech is armed from.
-  @hitstun_air MapSet.new(Enum.to_list(0x54..0x5B) ++ [@tumbling])
+  # Damage family + tumble: the states a tech is armed from (an
+  # up-smash launch rides 0x50 DamageHi through the arc, so the whole
+  # 0x4B..0x5B block counts; grounded-only members are filtered by the
+  # airborne check at the arming site).
+  @hitstun_air MapSet.new(Enum.to_list(0x4B..0x5B) ++ [@tumbling])
   @tech_states [0xC7, 0xC8, 0xC9]
   @missed_tech_states [0xB7, 0xBF]
+  @wall_tech 0xCA
+  @wall_tech_jump 0xCB
   # Catch (212) through CatchWait (216): the grab came out / connected.
   @grab_actions 0xD4..0xD8
   @jab1 0x2C
@@ -272,7 +292,13 @@ defmodule Melee.Tech do
     :shine_grab,
     :instant_rar,
     :uthrow_uair,
-    :super_wavedash
+    :super_wavedash,
+    :no_impact_land,
+    :v_cancel,
+    :pkt2,
+    :walljump,
+    :walltech,
+    :wobble
   ]
 
   @spec new(routine(), atom() | integer(), keyword()) :: t()
@@ -345,6 +371,12 @@ defmodule Melee.Tech do
   defp dispatch(:instant_rar, tech, player), do: instant_rar(tech, player)
   defp dispatch(:uthrow_uair, tech, player), do: uthrow_uair(tech, player)
   defp dispatch(:super_wavedash, tech, player), do: super_wavedash(tech, player)
+  defp dispatch(:no_impact_land, tech, player), do: no_impact_land(tech, player)
+  defp dispatch(:v_cancel, tech, player), do: v_cancel(tech, player)
+  defp dispatch(:pkt2, tech, player), do: pkt2(tech, player)
+  defp dispatch(:walljump, tech, player), do: walljump(tech, player)
+  defp dispatch(:walltech, tech, player), do: walltech(tech, player)
+  defp dispatch(:wobble, tech, player), do: wobble(tech, player)
 
   @doc "Step and apply the commands to a `Melee.Controller`."
   @spec step(t(), PlayerState.t(), GenServer.server()) :: {status(), t()}
@@ -487,10 +519,14 @@ defmodule Melee.Tech do
     else
       aerial = Keyword.get(tech.opts, :aerial, :nair)
 
+      # `drift:` holds the main stick sideways through the hop and
+      # fall so the landing carries slide momentum (edge cancels).
+      # Only c-stick aerials compose with it: a drifted main turns a
+      # plain A press into fair/bair.
       commands =
         case @aerial_stick[aerial] do
           nil -> [{:release, :y}, {:press, :a}]
-          {cx, cy} -> [{:release, :y}, {:tilt, :c, cx, cy}]
+          {cx, cy} -> [{:release, :y}, {:tilt, :main, drift_x(tech), 0.5}, {:tilt, :c, cx, cy}]
         end
 
       {:cont, %{tech | phase: :attack, counter: 0}, commands}
@@ -506,7 +542,7 @@ defmodule Melee.Tech do
       player.speed_y_self < 0 ->
         # Falling: fast fall once, then run the L pulse.
         {:cont, %{tech | phase: :fall, counter: 0},
-         [{:release, :a}, {:tilt, :c, 0.5, 0.5}, {:tilt, :main, 0.5, 0.0}]}
+         [{:release, :a}, {:tilt, :c, 0.5, 0.5}, {:tilt, :main, drift_x(tech), 0.0}]}
 
       true ->
         {:cont, tech, [{:release, :a}, {:tilt, :c, 0.5, 0.5}]}
@@ -1438,6 +1474,14 @@ defmodule Melee.Tech do
 
   defp dir_right?(tech), do: Keyword.get(tech.opts, :direction, :right) == :right
 
+  defp drift_x(tech) do
+    case Keyword.get(tech.opts, :drift) do
+      :left -> 0.15
+      :right -> 0.85
+      _ -> 0.5
+    end
+  end
+
   ## ------------------------------------------------------------------
   ## Tier 5: character kits
   ## ------------------------------------------------------------------
@@ -1890,6 +1934,377 @@ defmodule Melee.Tech do
       c >= 25 -> {:done, tech, [:release_all]}
       c >= 1 -> {:cont, %{tech | counter: c + 1}, [{:release, :b}]}
       true -> {:cont, %{tech | counter: c + 1}, []}
+    end
+  end
+
+  ## ------------------------------------------------------------------
+  ## Round 6: geometry + launcher techs
+  ## ------------------------------------------------------------------
+
+  # No-impact land: a double jump timed so its APEX barely crosses a
+  # platform lip — the game snaps to the surface with ZERO landing
+  # frames (no Landing action at all). A double jump's apex is exactly
+  # press-height + the character's fixed DJ rise, so `trigger_y:` (the
+  # height to press the second jump at) IS the apex dial: the caller
+  # measures the rise live and sweeps trigger_y = lip + eps - rise.
+  defp no_impact_land(%{phase: :init} = tech, %{on_ground: true}),
+    do: {:cont, %{tech | phase: :hop}, [{:press, :y}]}
+
+  defp no_impact_land(%{phase: :init} = tech, _player), do: {:cont, tech, []}
+
+  defp no_impact_land(%{phase: :hop} = tech, player) do
+    cond do
+      not player.on_ground ->
+        {:cont, %{tech | phase: :rising}, [{:release, :y}]}
+
+      Keyword.get(tech.opts, :hop, :full) == :short ->
+        {:cont, tech, [{:release, :y}]}
+
+      true ->
+        {:cont, tech, [{:press, :y}]}
+    end
+  end
+
+  defp no_impact_land(%{phase: :rising} = tech, player) do
+    trigger = Keyword.get(tech.opts, :trigger_y, 10.0)
+
+    # `on: :fall` fires the DJ on the way DOWN instead — the two
+    # branches sample different press heights (different velocity at
+    # the crossing), doubling the apex grid a sweep can reach.
+    fire? =
+      case Keyword.get(tech.opts, :on, :rise) do
+        :rise -> player.position.y >= trigger
+        :fall -> player.speed_y_self < 0 and player.position.y <= trigger
+      end
+
+    cond do
+      # Landed without the DJ (trigger above the hop's own apex).
+      player.on_ground ->
+        {:done, tech, [:release_all]}
+
+      fire? ->
+        {:cont, %{tech | phase: :dj, counter: 0}, [{:press, :x}]}
+
+      true ->
+        {:cont, tech, []}
+    end
+  end
+
+  defp no_impact_land(%{phase: :dj, counter: c} = tech, player) do
+    cond do
+      player.on_ground -> {:done, tech, [:release_all]}
+      c >= 150 -> {:done, tech, [:release_all]}
+      true -> {:cont, %{tech | counter: c + 1}, [{:release, :x}]}
+    end
+  end
+
+  # V-cancel: an airdodge INPUT 1-2 frames before getting hit while
+  # airborne shaves ~5% off the launch knockback; the dodge itself
+  # never comes out. Full hop, then L at `press_frame:` airborne
+  # frames — sweep it against a scripted launcher (too early = a real
+  # airdodge whose intangibility whiffs the hit, a self-labelling
+  # attempt).
+  defp v_cancel(%{phase: :init} = tech, %{on_ground: true}),
+    do: {:cont, %{tech | phase: :hop}, [{:press, :y}]}
+
+  defp v_cancel(%{phase: :init} = tech, _player), do: {:cont, tech, []}
+
+  defp v_cancel(%{phase: :hop} = tech, player) do
+    if player.on_ground do
+      # Full hop: hold the jump through jumpsquat.
+      {:cont, tech, [{:press, :y}]}
+    else
+      {:cont, %{tech | phase: :airborne, counter: 0}, [{:release, :y}]}
+    end
+  end
+
+  defp v_cancel(%{phase: :airborne, counter: c} = tech, player) do
+    cond do
+      player.hitlag_left > 0 ->
+        {:done, tech, [:release_all]}
+
+      player.on_ground ->
+        {:done, tech, [:release_all]}
+
+      c >= Keyword.get(tech.opts, :press_frame, 10) ->
+        {:cont, %{tech | phase: :pressed, counter: 0}, [{:press, :l}]}
+
+      true ->
+        {:cont, %{tech | counter: c + 1}, []}
+    end
+  end
+
+  defp v_cancel(%{phase: :pressed, counter: c} = tech, player) do
+    cond do
+      player.hitlag_left > 0 -> {:done, tech, [:release_all]}
+      player.on_ground -> {:done, tech, [:release_all]}
+      c >= 60 -> {:done, tech, [:release_all]}
+      c >= 2 -> {:cont, %{tech | counter: c + 1}, [{:release, :l}]}
+      true -> {:cont, %{tech | counter: c + 1}, []}
+    end
+  end
+
+  # Ness PKT2 into himself: grounded PK Thunder, then the stick held
+  # straight down loops the bolt back into his own head — the recipe's
+  # second half for the thunder jacket (do it with the yo-yo glitch
+  # armed and the stale hitbox attaches to his body).
+  defp pkt2(%{phase: :init} = tech, %{on_ground: true}),
+    do: {:cont, %{tech | phase: :casting, counter: 0}, [{:tilt, :main, 0.5, 1.0}, {:press, :b}]}
+
+  defp pkt2(%{phase: :init} = tech, _player), do: {:cont, tech, []}
+
+  defp pkt2(%{phase: :casting, counter: c} = tech, _player) do
+    # A few frames for the cast to register, then steer the bolt down.
+    if c >= 3 do
+      {:cont, %{tech | phase: :steering, counter: 0}, [{:release, :b}, {:tilt, :main, 0.5, 0.0}]}
+    else
+      {:cont, %{tech | counter: c + 1}, [{:release, :b}]}
+    end
+  end
+
+  defp pkt2(%{phase: :steering, counter: c} = tech, player) do
+    cond do
+      # The bolt connected: ness takes the PKT2 launch (hitlag on
+      # himself marks the contact).
+      player.hitlag_left > 0 ->
+        {:cont, %{tech | phase: :launched, counter: 0}, [{:tilt, :main, 0.5, 0.5}]}
+
+      c >= Keyword.get(tech.opts, :steer_frames, 90) ->
+        {:done, tech, [:release_all]}
+
+      true ->
+        {:cont, %{tech | counter: c + 1}, []}
+    end
+  end
+
+  defp pkt2(%{phase: :launched, counter: c} = tech, player) do
+    cond do
+      c > 10 and player.on_ground and int(player.action) < 0x40 -> {:done, tech, [:release_all]}
+      c >= 120 -> {:done, tech, [:release_all]}
+      true -> {:cont, %{tech | counter: c + 1}, []}
+    end
+  end
+
+  # Walljump (the 8 walljumpers): the wall band is only the ~15 units
+  # right under the lip (mapped live: FD and PS undersides recede
+  # inward faster than air drift converges, and a ledge hang sits ~2
+  # units OUTSIDE the plane), so the entry is from ABOVE — hop out
+  # barely past the lip, hold hard INTO the wall on the way down, and
+  # detect contact as "x stopped moving while falling". Pin a couple
+  # of frames, then flick AWAY. `direction:` picks the side,
+  # `edge_x:` the lip's |x| (85.57 FD / 87.75 PS), `dive_y:` the
+  # bail-out floor, `pin_frames:` frames of contact before the flick.
+  defp walljump(%{phase: :init} = tech, %{on_ground: false} = player) do
+    cond do
+      int(player.action) == @edge_hanging ->
+        # The RELIABLE entry: a hanging body already rests on the wall
+        # contact plane (mapped live on FD and PS). Release with a
+        # SOFT down tap — past the drop threshold, short of the
+        # fastfall one — so the first falling frames stay inside the
+        # wall band.
+        {:cont, %{tech | phase: :release, counter: 0}, [{:tilt, :main, 0.5, 0.35}]}
+
+      # Already airborne just outside the lip (e.g. handed over from a
+      # wavedash slide-off — the tightest entry): hug straight away.
+      abs(player.position.x) > Keyword.get(tech.opts, :edge_x, 85.57) and
+          player.position.y < 2.0 ->
+        into = if ledge_right?(tech), do: 0.05, else: 0.95
+        {:cont, %{tech | phase: :hugging, counter: 0, aux: nil}, [{:tilt, :main, into, 0.22}]}
+
+      true ->
+        {:cont, tech, []}
+    end
+  end
+
+  defp walljump(%{phase: :release, counter: c} = tech, player) do
+    cond do
+      int(player.action) != @edge_hanging ->
+        # Falling on the plane: press gently in, then flick within
+        # the first frames (the band is only ~15 units tall).
+        into = if ledge_right?(tech), do: 0.3, else: 0.7
+        {:cont, %{tech | phase: :pinning, counter: 0}, [{:tilt, :main, into, 0.4}]}
+
+      c >= 30 ->
+        {:done, tech, [:release_all]}
+
+      true ->
+        {:cont, %{tech | counter: c + 1}, [{:tilt, :main, 0.5, 0.35}]}
+    end
+  end
+
+  defp walljump(%{phase: :init} = tech, %{on_ground: true} = player) do
+    if int(player.action) == @standing do
+      x = if ledge_right?(tech), do: 0.62, else: 0.38
+      {:cont, %{tech | phase: :hop}, [{:tilt, :main, x, 0.5}, {:press, :y}]}
+    else
+      {:cont, tech, [{:tilt, :main, 0.5, 0.5}]}
+    end
+  end
+
+  defp walljump(%{phase: :hop} = tech, player) do
+    if player.on_ground do
+      {:cont, tech, [{:release, :y}]}
+    else
+      x = if ledge_right?(tech), do: 0.62, else: 0.38
+      {:cont, %{tech | phase: :out, counter: 0}, [{:release, :y}, {:tilt, :main, x, 0.5}]}
+    end
+  end
+
+  defp walljump(%{phase: :out, counter: c} = tech, player) do
+    cond do
+      # `out_frames:` of outward drift, then hold hard IN — the frame
+      # quantization is the dial that sets how tightly the descent
+      # crosses back over the lip (sweep it).
+      c >= Keyword.get(tech.opts, :out_frames, 6) ->
+        into = if ledge_right?(tech), do: 0.05, else: 0.95
+        {:cont, %{tech | phase: :hugging, counter: 0, aux: nil}, [{:tilt, :main, into, 0.5}]}
+
+      player.on_ground ->
+        {:done, tech, [:release_all]}
+
+      true ->
+        {:cont, %{tech | counter: c + 1}, []}
+    end
+  end
+
+  defp walljump(%{phase: :hugging, counter: c, aux: prev} = tech, player) do
+    x = player.position.x
+    falling = player.speed_y_self < 0
+
+    cond do
+      int(player.action) in [@edge_catch, @edge_hanging] ->
+        {:done, tech, [:release_all]}
+
+      player.on_ground ->
+        {:done, tech, [:release_all]}
+
+      # Contact: the in-drift stopped moving us while falling, NEAR
+      # the wall plane (the near-check rejects the outward-speed
+      # zero-crossing at the top of the excursion).
+      c >= 2 and falling and prev != nil and abs(x - prev) < 0.02 and
+          abs(x) < Keyword.get(tech.opts, :edge_x, 85.57) + 2.0 ->
+        {:cont, %{tech | phase: :pinning, counter: 0}, []}
+
+      player.position.y < Keyword.get(tech.opts, :dive_y, -40.0) ->
+        {:done, tech, [:release_all]}
+
+      c >= 150 ->
+        {:done, tech, [:release_all]}
+
+      true ->
+        {:cont, %{tech | counter: c + 1, aux: x}, []}
+    end
+  end
+
+  defp walljump(%{phase: :pinning, counter: c} = tech, _player) do
+    if c >= Keyword.get(tech.opts, :pin_frames, 2) do
+      # The flick: smash the stick AWAY from the wall.
+      away = if ledge_right?(tech), do: 1.0, else: 0.0
+      {:cont, %{tech | phase: :flicking, counter: 0}, [{:tilt, :main, away, 0.5}]}
+    else
+      {:cont, %{tech | counter: c + 1}, []}
+    end
+  end
+
+  defp walljump(%{phase: :flicking, counter: c} = tech, player) do
+    cond do
+      # Upward velocity with no button pressed: the walljump came out.
+      player.speed_y_self > 0.5 ->
+        {:done, tech, [:release_all]}
+
+      c >= 20 ->
+        {:done, tech, [:release_all]}
+
+      true ->
+        {:cont, %{tech | counter: c + 1}, []}
+    end
+  end
+
+  # Walltech: ONE L press (never pulsed — early = 40f lockout) when a
+  # damage-state character is within `margin:` units of the wall PLANE
+  # at `wall_x:` (85.57 FD). Techable characters are OUTSIDE the
+  # stage, so "into the wall" means toward the stage — held on BOTH
+  # sticks: the c-stick's ASDI shifts the body INTO the wall when
+  # hitlag resolves, manufacturing the wall impact the tech needs
+  # (the sideways Amsah tech). Arms during hitlag (the ASDI must be
+  # parked before resolution) or on the way down.
+  defp walltech(%{phase: :init} = tech, player) do
+    wall_x = Keyword.get(tech.opts, :wall_x, 85.57)
+    margin = Keyword.get(tech.opts, :margin, 6.0)
+
+    armed? =
+      not player.on_ground and MapSet.member?(@hitstun_air, int(player.action)) and
+        (player.hitlag_left > 0 or player.speed_y_self + player.speed_y_attack < 0) and
+        abs(abs(player.position.x) - wall_x) < margin
+
+    if armed? do
+      x = if player.position.x > 0, do: 0.0, else: 1.0
+
+      {:cont, %{tech | phase: :pressed, counter: 0},
+       [{:press, :l}, {:tilt, :main, x, 0.5}, {:tilt, :c, x, 0.5}]}
+    else
+      {:cont, tech, []}
+    end
+  end
+
+  defp walltech(%{phase: :pressed, counter: c} = tech, player) do
+    cond do
+      int(player.action) in [@wall_tech, @wall_tech_jump] -> {:done, tech, [:release_all]}
+      c >= 40 -> {:done, tech, [:release_all]}
+      c >= 2 -> {:cont, %{tech | counter: c + 1}, [{:release, :l}]}
+      true -> {:cont, %{tech | counter: c + 1}, []}
+    end
+  end
+
+  # Wobbling: from the desync grab (Popo holds, Nana free), down+A on
+  # a metronome — Popo pummels while Nana (6 frames late) dtilts, and
+  # the alternation keeps the victim in permanent hitstun. `interval:`
+  # frames between presses (sweep ~20-32), `reps:` total presses.
+  defp wobble(%{phase: :init} = tech, %{on_ground: true}),
+    do: {:cont, %{tech | phase: :grabbing, counter: 0}, [{:press, :z}]}
+
+  defp wobble(%{phase: :init} = tech, _player), do: {:cont, tech, []}
+
+  defp wobble(%{phase: :grabbing, counter: c} = tech, player) do
+    # Same arming as :ics_desync: Popo's grab connected and Nana's
+    # 6-frame-late whiff has ended.
+    nana_ready? = player.nana == nil or int(player.nana.action) < 0x40
+
+    cond do
+      int(player.action) in [0xD5, 0xD8] and nana_ready? ->
+        reps = Keyword.get(tech.opts, :reps, 8)
+        {:cont, %{tech | phase: :wobbling, counter: 0, aux: reps}, [{:tilt, :main, 0.5, 0.0}]}
+
+      c >= 90 ->
+        {:done, tech, [:release_all]}
+
+      true ->
+        {:cont, %{tech | counter: c + 1}, [{:release, :z}]}
+    end
+  end
+
+  defp wobble(%{phase: :wobbling, counter: c, aux: reps} = tech, player) do
+    interval = Keyword.get(tech.opts, :interval, 24)
+
+    cond do
+      # The victim escaped (no grab-family action on us): stop.
+      int(player.action) not in [0xD5, 0xD8, 0xD9] ->
+        {:done, tech, [:release_all]}
+
+      reps <= 0 ->
+        {:done, tech, [:release_all]}
+
+      c == 0 ->
+        {:cont, %{tech | counter: c + 1}, [{:press, :a}, {:tilt, :main, 0.5, 0.0}]}
+
+      c == 2 ->
+        {:cont, %{tech | counter: c + 1}, [{:release, :a}]}
+
+      c >= interval ->
+        {:cont, %{tech | counter: 0, aux: reps - 1}, []}
+
+      true ->
+        {:cont, %{tech | counter: c + 1}, []}
     end
   end
 

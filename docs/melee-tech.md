@@ -148,35 +148,69 @@ Ness usmash state map: 0x156 charge (hitting part ~frames 11-12),
 0x157 charge hold (multi-hits a CLOSE target on a ~6-frame cycle),
 0x158 the released swing (auto-releases at max charge, reach ~12).
 
+## The geometry round (`--only dolphin_geometry`, 2026-08-19)
+
+Two live proofs and two measured engine facts, in
+`tech_geometry_test.exs`:
+
+- **Aerial landings CLAMP at platform edges.** A dash-jumped uair
+  landed at -21.9 slid to EXACTLY -20.0 (BF left platform's inner
+  edge) and stopped; walk-drift landings clamp too. "Edge-cancelled
+  aerials" via landing slides do not exist on this engine — sliding
+  edge cancels belong to SPECIAL landings and end animations.
+- **Edge cancel, the real one: the wavedash slide-off.** A wavedash
+  started 12 units from the lip slides off mid-lag into instant
+  actionability — proven with the teleport-edge-cancel
+  discriminator (a double jump the same frame as the slip). Note
+  the slide-vs-clamp boundary is sharp: one unit shorter and the
+  slide dies AT the lip in a permanent teeter (0xF5/0xF6 idles
+  forever on a released stick — settle helpers must escape it).
+- **No-impact land is real, and unreachable on fixed platforms.**
+  The DJ-press height is frame-quantized along a hop, so the
+  achievable apex-vs-lip grid is ~1.2-1.3 units coarse (measured on
+  BF across full/short hops and rise/fall triggers: best 1.3 above
+  the lip, all normal landings). On FOUNTAIN OF DREAMS the side
+  platforms sweep their height continuously, so a repeated fixed
+  short hop samples every offset: rep 1 landed with NO Landing
+  action at all (fall -> Wait 0x0E directly) and 0-frame
+  actionability, vs the control's 0x2A + lag.
+
+**Walljump / walltech: attempted, mapped, NOT reproduced.** Every
+entry was tried against FD, Pokemon Stadium, and Yoshi's Story:
+ledge drops (soft-down and away releases), hop-outs with swept
+drift, and wavedash slide-off handovers, always holding hard into
+the stage — and NO attempt ever registered wall contact (positions
+never pinned; falls sailed through the nominal wall planes).
+Mapped facts for the next attempt: FD hang sits at x=87.5 and a
+full-in-hold fall passes x=85.5 at y=-42 with no collision; PS hang
+at 89.6, same pass-through; the reachable "wall band" — if there is
+one — is only the ~15 units under the lip, and every descent
+crosses it 1-3 units outside the plane. ASDI-into-the-wall from a
+dair'd ledge hang (the sideways Amsah tech) also produced no
+0xCA/0xCB. The `:walljump` and `:walltech` routines are shipped and
+unit-tested but UNVERIFIED live; cracking this wants a WINDOWED
+session (watch where the walls actually are).
+
 ## The full remaining catalog
 
 Everything surveyed and not yet implemented, grouped by what it
 takes in this harness. NEXT ROUND (picked, in priority order):
 
-1. **Edge-cancelled aerials** — land with slide momentum so the
-   landing slips off a platform/stage edge, cancelling ALL lag. Same
-   geometry discipline as the proven Mewtwo teleport edge-cancel;
-   platform work like the shield-drop test (Battlefield boot).
-   Assert with the actionability probe (see Research findings — the
-   idle-animation trap).
-2. **No-impact land (NIL)** — time a jump so the character's center
-   crosses the platform lip at the apex: ZERO landing frames. Pure
-   timing/height; sweep jump heights like the SWD flick sweep.
-3. **V-cancel** — airdodge input 1-2 frames BEFORE being hit reduces
+1. **V-cancel** — airdodge input 1-2 frames BEFORE being hit reduces
    knockback ~5%. Reuse the defense-test falco launcher A/B (peak
    height, like crouch cancel); the press timing sweeps off the
-   launcher's known startup.
-4. **Ness Thunder Jacket** — after the (reproduced) yo-yo glitch,
+   launcher's known startup. Fox must be AIRBORNE (full hop over the
+   up-smash).
+2. **Ness Thunder Jacket** — after the (reproduced) yo-yo glitch,
    PKT2 into the ground attaches the stale hitbox to ness's body.
    One step past `yoyo_round/1` in tech_research_test: add PKT2
-   (down-B, steer the bolt into himself), then falco walks into
+   (up-B, steer the bolt into himself), then falco walks into
    ness with no attack out -> takes damage = jacket.
-5. **Walljump + walltech** — FD's side walls; the defense launcher
-   can send fox into the wall below the lip. Walltech = L near wall
-   contact (extend `:tech`); walljump = away-tap on the wall.
-6. **ICs wobbling** — from the proven `:ics_desync` grab: pummel
-   while Nana dtilts on a timer; assert as ONE GameEvents conversion
+3. **ICs wobbling** — from the proven `:ics_desync` grab: down+A on
+   a metronome while Popo holds; assert as ONE GameEvents conversion
    with many moves (an infinite the tracker should capture).
+4. **Walljump + walltech, windowed** — see the geometry-round
+   findings above; blocked on locating the actual wall collision.
 
 Feasible, unpicked (do after or on request): ledge-cancelled
 specials (Fox/Falco Illusion off platform edges); Illusion/Phantasm
