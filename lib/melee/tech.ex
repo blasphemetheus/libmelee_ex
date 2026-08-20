@@ -2014,7 +2014,10 @@ defmodule Melee.Tech do
       # Full hop: hold the jump through jumpsquat.
       {:cont, tech, [{:press, :y}]}
     else
-      {:cont, %{tech | phase: :airborne, counter: 0}, [{:release, :y}]}
+      # `drift:`/`drift_tilt:` carry the hop sideways (e.g. into a
+      # launcher's range) — identical in the control and cancel arms.
+      dx = Keyword.get(tech.opts, :drift_tilt, drift_x(tech))
+      {:cont, %{tech | phase: :airborne, counter: 0}, [{:release, :y}, {:tilt, :main, dx, 0.5}]}
     end
   end
 

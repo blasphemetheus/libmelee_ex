@@ -196,11 +196,19 @@ session (watch where the walls actually are).
 Everything surveyed and not yet implemented, grouped by what it
 takes in this harness. NEXT ROUND (picked, in priority order):
 
-1. **V-cancel** — airdodge input 1-2 frames BEFORE being hit reduces
-   knockback ~5%. Reuse the defense-test falco launcher A/B (peak
-   height, like crouch cancel); the press timing sweeps off the
-   launcher's known startup. Fox must be AIRBORNE (full hop over the
-   up-smash).
+1. **V-cancel — PROVEN (2026-08-19, `--only dolphin_defense`).**
+   `:v_cancel` full-hops and presses L at `press_frame:`; falco
+   drift-hops into fox's SHINE (fixed knockback — percent can't
+   confound the A/B) and the press sweep is self-labelling: too
+   early = a real airdodge whose intangibility whiffs the shine
+   (frames 40-44 of the arc), press_frame 45 = hit with travel 20.5
+   vs the control's 21.73 (94.3% — the documented ~5% shave), 47+ =
+   full knockback. Measurement traps found: measuring travel to
+   REST confounds with landing (an L press near the ground TECHS
+   and truncates the slide — a fake "40% reduction"), and a
+   frame-indexed launcher hits the hop's first airborne frame,
+   before any press could land. Also: air-drift has a stick
+   deadzone (~0.29 from center — tilt 0.36 does not drift at all).
 2. **Ness Thunder Jacket** — after the (reproduced) yo-yo glitch,
    PKT2 into the ground attaches the stale hitbox to ness's body.
    One step past `yoyo_round/1` in tech_research_test: add PKT2

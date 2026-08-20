@@ -763,8 +763,10 @@ defmodule Melee.TechTest do
       {:cont, tech, [{:press, :y}]} = Tech.step(tech, player(%{}))
       {:cont, tech, [{:press, :y}]} = Tech.step(tech, player(%{action: 0x18}))
 
-      {:cont, tech, [{:release, :y}]} =
+      {:cont, tech, commands} =
         Tech.step(tech, player(%{on_ground: false, action: 0x19}))
+
+      assert {:release, :y} in commands
 
       airborne = player(%{on_ground: false, action: 0x1D})
       {:cont, tech, []} = Tech.step(tech, airborne)

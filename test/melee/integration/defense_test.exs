@@ -12,7 +12,11 @@ defmodule Melee.Integration.DefenseTest do
       control flies straight up, full-left DI tilts the trajectory;
     * ground tech — at tumble percents the fall back down arms `:tech`
       and a tech state must appear (the live proof the movement tier
-      deferred).
+      deferred);
+    * v-cancel — falco drift-hops into fox's SHINE (fixed knockback,
+      so percent can't confound the A/B) and the `:v_cancel` press
+      sweep is self-labelling: too early = a real airdodge that
+      whiffs the shine, 1-2f before the hit = ~5% less launch travel.
 
       MELEE_DOLPHIN_PATH=~/.local/share/slippi/exi-ai-flush/dolphin-emu-headless \\
       MELEE_ISO_PATH=~/isos/melee.iso \\
@@ -91,15 +95,72 @@ defmodule Melee.Integration.DefenseTest do
     end
   end
 
+  test "v-cancel: an airdodge input 1-2f before fox's shine shaves the knockback", ctx do
+    if ctx[:skip] do
+      IO.puts("\n[dolphin] skipped: #{ctx.skip}")
+    else
+      probe = boot_at(ctx, 52_075)
+
+      try do
+        probe = Probe.idle!(probe, 90)
+
+        # Fox's shine has FIXED knockback, so falco's percent climbing
+        # across attempts cannot confound the A/B — travel differences
+        # are the v-cancel alone. Falco hops from a distance and
+        # DRIFTS into shine range so the hit lands deep into the hop,
+        # leaving room for the press sweep (press_frame 99 = the
+        # L-less control with the identical arc).
+        {probe, control} = shine_attempt(probe, 99)
+        IO.puts("[dolphin] control: #{inspect(control)}")
+        assert control.hit?, "the drifting hop never met the shine"
+        assert control.hit_air >= 8, "the hit lands too early for a press sweep"
+
+        # Sweep the L press frame up to the hit.
+        {probe, results} =
+          Enum.reduce(max(control.hit_air - 8, 0)..(control.hit_air + 1), {probe, []}, fn pf,
+                                                                                          {probe,
+                                                                                           acc} ->
+            {probe, res} = shine_attempt(probe, pf)
+            IO.puts("[dolphin] press_frame #{pf}: #{inspect(res)}")
+            {probe, [{pf, res} | acc]}
+          end)
+
+        hits = for {pf, res} <- results, res.hit?, do: {pf, res}
+        {best_pf, best} = Enum.min_by(hits, fn {_pf, res} -> res.travel end)
+
+        # Too-early presses become real airdodges whose intangibility
+        # whiffs the shine — self-labelling attempts.
+        dodges = for {pf, res} <- results, res.dodged?, do: pf
+
+        IO.puts(
+          "[dolphin] v-cancel: best press_frame=#{best_pf} travel=#{r(best.travel)} " <>
+            "vs control=#{r(control.travel)} (#{r(best.travel / control.travel * 100)}%) " <>
+            "dodged_whiffs=#{inspect(Enum.sort(dodges))}"
+        )
+
+        assert best.travel < control.travel * 0.97
+        assert best.travel < control.travel - 1.0
+        _ = probe
+      after
+        Probe.stop(probe)
+      end
+    end
+  end
+
   ## drivers -----------------------------------------------------------
 
-  defp boot(ctx) do
+  defp boot(ctx), do: boot_at(ctx, 52_071)
+
+  defp boot_at(ctx, port) do
+    home = "#{@home}_#{port}"
+    File.rm_rf!(home)
+
     probe =
       Probe.start!(
         path: ctx.path,
         iso_path: ctx.iso,
-        home: @home,
-        slippi_port: 52_071,
+        home: home,
+        slippi_port: port,
         headless: true,
         gfx_backend: "Null",
         blocking_input: true,
@@ -267,6 +328,98 @@ defmodule Melee.Integration.DefenseTest do
 
       {probe, %{hit?: true, hitlag_slide: slide, hitlag_frames: length(hitlag_path), post_dx: dx}}
     end
+  end
+
+  # One v-cancel attempt: falco full-hops 18 units out and drifts
+  # into fox, whose shine fires on proximity (falco falling within 9
+  # units). The measurement is falco's travel over the FIRST 10
+  # post-hitlag airborne frames — the pure launch speed. (Measuring
+  # to rest confounds with landing behavior: an L press near the
+  # ground TECHS and truncates the slide, faking a 40% "reduction";
+  # and a frame-indexed shine hits the first airborne frame, before
+  # any press could land.)
+  defp shine_attempt(probe, press_frame) do
+    probe = pair_at(probe, 14.0)
+    fox_x = player(probe, 1).position.x
+    drift_tilt = if player(probe, 2).position.x > fox_x, do: 0.3, else: 0.7
+    tech = Tech.new(:v_cancel, :falco, press_frame: press_frame, drift_tilt: drift_tilt)
+    res0 = %{hit?: false, dodged?: false, x0: nil, air: 0, hit_air: nil, post: 0, travel: 0.0}
+
+    {probe, _tech, _shone, res} =
+      Enum.reduce_while(1..200, {probe, tech, false, res0}, fn _i, {probe, tech, shone, res} ->
+        falco = player(probe, 2)
+        {_status, tech} = Tech.step(tech, falco, probe.controllers[2])
+
+        shone =
+          if not shone and not falco.on_ground and falco.speed_y_self < 0 and
+               falco.position.y < 12.0 and abs(falco.position.x - fox_x) < 9.0 do
+            Melee.Controller.tilt_analog(probe.controllers[1], :main, 0.5, 0.0)
+            Melee.Controller.press_button(probe.controllers[1], :b)
+            true
+          else
+            Melee.Controller.release_button(probe.controllers[1], :b)
+            shone
+          end
+
+        probe = Probe.step!(probe)
+        falco = player(probe, 2)
+        res = if falco.on_ground, do: res, else: %{res | air: res.air + 1}
+
+        res =
+          cond do
+            not res.hit? and falco.hitlag_left > 0 and not falco.on_ground ->
+              %{res | hit?: true, hit_air: res.air, x0: falco.position.x}
+
+            res.hit? and falco.hitlag_left == 0 and not falco.on_ground ->
+              %{
+                res
+                | post: res.post + 1,
+                  travel: max(res.travel, abs(falco.position.x - res.x0))
+              }
+
+            true ->
+              res
+          end
+
+        res = if falco.action == 0xEC, do: %{res | dodged?: true}, else: res
+
+        done? =
+          res.post >= 10 or (res.hit? and falco.on_ground and falco.hitlag_left == 0) or
+            (res.air > 10 and falco.on_ground and not res.hit?)
+
+        if done?, do: {:halt, {probe, tech, shone, res}}, else: {:cont, {probe, tech, shone, res}}
+      end)
+
+    Melee.Controller.release_all(probe.controllers[1])
+    Melee.Controller.release_all(probe.controllers[2])
+
+    {probe,
+     %{
+       hit?: res.hit?,
+       dodged?: res.dodged?,
+       hit_air: res.hit_air,
+       travel: Float.round(res.travel * 1.0, 2)
+     }}
+  end
+
+  # Fox near center; falco parked `gap` units to his right.
+  defp pair_at(probe, gap) do
+    probe = settle_both(probe)
+    fox = player(probe, 1)
+
+    probe =
+      cond do
+        fox.position.x > 25.0 -> walk_port(probe, 1, 0.28, &(&1.position.x < 15.0))
+        fox.position.x < -25.0 -> walk_port(probe, 1, 0.72, &(&1.position.x > -15.0))
+        true -> probe
+      end
+
+    probe = settle_both(probe)
+    target = player(probe, 1).position.x + gap
+    falco = player(probe, 2)
+    tilt = if falco.position.x > target, do: 0.28, else: 0.72
+    probe = walk_port(probe, 2, tilt, fn p -> abs(p.position.x - target) < 1.5 end)
+    settle_both(probe)
   end
 
   defp build_percent(probe, target) do
