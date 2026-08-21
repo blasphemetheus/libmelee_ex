@@ -35,9 +35,13 @@ carries the per-round detail and the remaining catalog.
 **Next follow-ups, in the order the user signalled:**
 
 1. WINDOWED session candidates (user likes guiding these live):
-   - Watch the jacket live (the electric graphic) — confirm the
-     parked-at-ledge reading visually; also try touching the zone
-     as ness re-approaches it himself.
+   - ~~Watch the jacket live~~ DONE 2026-08-21
+     (tmp/jacket_windowed.exs): control clean, armed zaps 2/2
+     live, USER CONFIRMED it is the thunder jacket. The jacket has
+     NO visual (idle jacketed ness looks normal), and the
+     technique has several valid executions — ours is one.
+     Remaining loose end (low priority): the first-armed-round-
+     of-a-session-never-zaps precondition is still unexplained.
    - Marth up-B ledgestall snap conditions (mapped, never grabbed).
    - Wall-band visual sanity check (nice-to-have; walljump/walltech
      are already proven on YS).

@@ -321,14 +321,19 @@ takes in this harness. NEXT ROUND (picked, in priority order):
      (windup f12 + hold-entry ~f17) before the clean release, and
      a prior PKT2 cast existing. The stubborn residual: the FIRST
      ARMED round of a session never zaps; the same recipe as a
-     later round does. The user's anecdotal recipe (dsmash charge
-     hit -> "refresh ledge" -> up-B down into it so only ONE PKT2
-     hitbox comes out before the grab -> run into someone with no
-     further move) matches everything proven except the dsmash
-     part and the minimal-flight part — the tight
-     one-hitbox-then-grab PKT2 variant is UNTESTED and is the next
-     lever, ideally windowed (the jacket has a visible electric
-     graphic; live eyes beat blind probes here).
+     later round does. CONFIRMED LIVE (windowed session,
+     2026-08-21, `tmp/jacket_windowed.exs`, user watching):
+     control clean, armed zaps 2/2 at body contact (+20% each, at
+     the same coordinates as headless), and the user confirmed the
+     zap IS the thunder jacket. Two facts from their eyes: the
+     jacket has NO visual — an idle jacketed ness looks completely
+     normal, so there is nothing to screenshot for; and the
+     technique legitimately has SEVERAL valid executions — the
+     user's anecdotal route (dsmash charge hit -> refreshed ledge
+     -> tight up-B so only one PKT2 hitbox comes out before the
+     grab) is another way to perform it, not a stricter
+     requirement; our usmash + dive-loop grab is a confirmed
+     execution.
    - **Negative**: a PLATFORM-LANDING interrupt does NOT arm it —
      `tmp/jacket_bf_probe.exs` proves a clean mid-flight landing on
      BF (cast on the left side platform, mirrored loop, flight
