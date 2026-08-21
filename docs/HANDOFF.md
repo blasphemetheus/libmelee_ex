@@ -4,13 +4,42 @@ Written 2026-08-05, at the end of the session that built the port. Read
 this first; it is the live resume point. Everything below is verified
 unless it says otherwise.
 
-## RESUME HERE (2026-08-19, round complete): tech round shipped
+## RESUME HERE (2026-08-20): three tech rounds shipped, all green
 
-The picked round LANDED (this session, headless throughout).
-`Melee.Tech` now has 47 routines across 7 dolphin suites (the new
-`--only dolphin_geometry` joins movement/defense/mewtwo/universal/
-characters/research — all green). Round outcomes, full detail in
-**docs/melee-tech.md**:
+State at handoff: `Melee.Tech` has 53 routines across NINE dolphin
+tech suites, all green — `dolphin_movement`, `_defense` (now incl.
+v-cancel), `_mewtwo`, `_universal`, `_characters` (incl. wobbling),
+`_research` (incl. PKT2), `_geometry` (edge cancels, NIL, walljump,
+walltech), and the new `_pool` (7 tests). Full unit suite: 472
+tests green; credo baseline 2/1/1; dialyzer 2. Everything is
+committed through `3af6c7b`; melee-tech.md carries the per-round
+detail and the remaining catalog.
+
+**The picked follow-ups, in the order the user signalled:**
+
+1. WINDOWED session candidates (user likes guiding these live):
+   - Thunder jacket: the user CONFIRMED players do it by GRABBING
+     THE LEDGE with PKT2 (the mid-flight interrupt). Everything
+     else is verified per-component (see round notes below): aim
+     the proven `:pkt2` loop to launch ness TOWARD a ledge so the
+     PKT2 flight ends in a ledge grab, then run the falco walk-in
+     probe. May be doable headless first.
+   - Marth up-B ledgestall snap conditions (mapped, never grabbed).
+   - Wall-band visual sanity check (nice-to-have; walljump/walltech
+     are already proven on YS).
+2. The still-unpicked pool remainder (melee-tech.md): fox shine /
+   samus bomb stalls, ICs handoffs, chaingrab policies atop
+   GameEvents, Zelda teleport edge-cancel, Luigi misfire (pairs
+   with `custom_rtc` determinism), agility cancels, etc.
+3. Main queue: Hex publish (still deliberately deferred), richer
+   GameEvents follow-ons, real-hardware support.
+
+`Melee.Stages.wall_segments/2` now carries the REAL per-stage wall
+collision (from exphil's stage-.dat extraction, the same data behind
+rewind_viewer.html). FoD's platforms start deterministically, so its
+NIL proof is stable.
+
+### Round summaries (2026-08-19/20), detail in melee-tech.md
 
 1. Edge cancel — PROVEN as the wavedash slide-off (instant DJ out of
    the slip). CORRECTED 2026-08-20: aerial-landing slides clamp at
@@ -60,20 +89,19 @@ measure armor by height, the DJ rise poisons it). Marth up-B
 ledgestall descoped with a map (the slash's rise never
 ledge-grabbed, both facings); `:ledgestall` ships unit-tested.
 
-Suggested next: the windowed follow-ups (marth up-B snap
-conditions, thunder-jacket via PKT2 ledge-grab — the user confirmed
-that IS how players do it — and the wall-band visual check); the
-still-unpicked pool remainder in melee-tech.md (shine/bomb stalls,
-ICs handoffs, chaingrab policies, Luigi misfire with rng seeds); or
-back to the main queue (hex publish still deferred; real hardware).
+Methodology notes (still true, hard-won): lag = ACTIONABILITY,
+never idle animation length; sweep frame offsets (the game is
+deterministic); MAP failures frame-by-frame before re-sweeping
+(action/position traces in the fold); settle to STANDING 0x0E;
+recenter between attempts; launcher tests need
+`boot_rules: [stock: 99, time_limit: 99]`; positioning order
+matters (park the FAR actor first, compute targets from FRESH
+positions — stale-position walks bulldoze); a bystander within ~44
+of a PKT cast eats the bolt; Slippi's item stream can silently stop
+reporting live items — trust hitlag/actions over item visibility.
 
-Old methodology notes (still true): lag = ACTIONABILITY; sweep frame
-offsets (deterministic); MAP failures frame-by-frame before
-re-sweeping; settle to STANDING 0x0E; recenter between attempts;
-launcher tests need `boot_rules: [stock: 99, time_limit: 99]`.
-
-Checks before each commit: `mix format`, full `mix test`
-(445 green), the touched dolphin suites, `mix credo` (baseline: 2
+Checks before each commit: `mix format`, full `mix test` (472
+green), the touched dolphin suites, `mix credo` (baseline: 2
 refactoring / 1 readability / 1 design), `mix dialyzer` (Total
 errors: 2).
 
