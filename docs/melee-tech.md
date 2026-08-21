@@ -312,8 +312,23 @@ takes in this harness. NEXT ROUND (picked, in priority order):
      manifestation is round-history-sensitive: an armed-grab round
      run FIRST in a session reads zero on the identical probe,
      while the same round after an unarmed control round zaps —
-     the precondition is NOT yet pinned (falco percent, a prior
-     PKT2, and arm-attempt history are the suspects).
+     the precondition is NOT yet pinned. Suspects ELIMINATED by
+     direct A/B (tmp/jacket_dsmash_probe.exs, 2026-08-21 second
+     session): dsmash-charge arming (mapped: 0x159 windup f11-12
+     hits BEHIND ness at gap ~10 — the dsmash charge never touches
+     the front; 0x15A hold, 0x15B long release swing — a fleeing
+     victim behind him still gets caught), taking BOTH charge hits
+     (windup f12 + hold-entry ~f17) before the clean release, and
+     a prior PKT2 cast existing. The stubborn residual: the FIRST
+     ARMED round of a session never zaps; the same recipe as a
+     later round does. The user's anecdotal recipe (dsmash charge
+     hit -> "refresh ledge" -> up-B down into it so only ONE PKT2
+     hitbox comes out before the grab -> run into someone with no
+     further move) matches everything proven except the dsmash
+     part and the minimal-flight part — the tight
+     one-hitbox-then-grab PKT2 variant is UNTESTED and is the next
+     lever, ideally windowed (the jacket has a visible electric
+     graphic; live eyes beat blind probes here).
    - **Negative**: a PLATFORM-LANDING interrupt does NOT arm it —
      `tmp/jacket_bf_probe.exs` proves a clean mid-flight landing on
      BF (cast on the left side platform, mirrored loop, flight
