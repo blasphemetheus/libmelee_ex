@@ -891,7 +891,10 @@ defmodule Melee.Integration.TechResearchTest do
 
         if result == nil,
           do:
-            IO.puts("[dolphin] jacket did NOT reproduce (windowed follow-up; see melee-tech.md)")
+            IO.puts(
+              "[dolphin] grounded-recipe jacket absent as expected — the LEDGE-GRAB " <>
+                "interrupt is the real method (see the thunder jacket test below)"
+            )
 
         _ = probe
       after
@@ -1101,5 +1104,354 @@ defmodule Melee.Integration.TechResearchTest do
     Melee.Controller.release_all(probe.controllers[1])
     Melee.Controller.release_all(probe.controllers[2])
     {probe, Enum.reverse(hits)}
+  end
+
+  ## thunder jacket: the ledge-grab interrupt ---------------------------
+
+  # PROVEN 2026-08-21 (mapped in tmp/jacket_ledgegrab_probe.exs). The
+  # full recipe, all headless:
+  #
+  #   1. ARM: ness charges usmash facing falco ~15 out; falco walks in
+  #      and takes the WINDUP hit (charge frame 11-12, reach ~10 — the
+  #      yo-yo dangles in FRONT; point-blank whiffs); falco DASHES
+  #      clear (the release swing reaches ~14 for 36 frames — a walk
+  #      cannot escape it); ness releases 11-16 frames AFTER the hit
+  #      (<=10 and >=18 do NOT arm — a ~6-frame window, the charge
+  #      pulse period) with the swing hitting nothing.
+  #   2. INTERRUPT: PKT2 that ends in a LEDGE GRAB. From a right-ledge
+  #      hang (facing the stage), release at CliffWait — the catch
+  #      anim is input-immune — fall 12 frames, cast, hold down 12
+  #      frames, then steer right/down/dive-24/curl-up-left: the bolt
+  #      comes up under ness, the launch grazes FD's underside (0x16E)
+  #      and CliffCatches. Post-PKT2 fall is FallSpecial — no DJ
+  #      exists, which is why every non-grabbing variant died.
+  #   3. THE ZAP: the stored usmash hitbox ends up PARKED AT THE
+  #      LEDGE — the point where the PKT2 was interrupted (~(96, -4)
+  #      on FD's right ledge) — not riding ness: contact with idle
+  #      ness mid-stage reads ZERO, while falco reaching the lip zone
+  #      gets zapped for the stored hit's damage (up to ~20%; distant
+  #      grazes read 1%), once — consumed on first touch, and gone.
+  #      A platform-landing interrupt (BF, tmp/jacket_bf_probe.exs)
+  #      does NOT arm it — the ledge grab is the real method, as the
+  #      user said.
+
+  test "thunder jacket: armed yo-yo + PKT2 ledge-grab interrupt zaps (1%)", ctx do
+    if ctx[:skip] do
+      IO.puts("\n[dolphin] skipped: #{ctx.skip}")
+    else
+      probe = boot(ctx, 52_115, :ness)
+
+      try do
+        probe = Probe.idle!(probe, 90)
+        probe = settle_ports(probe, [1, 2])
+        probe = tj_park(probe, 2, -40.0)
+
+        # Control: UNARMED PKT2 ledge grab, then the same contact
+        # probes — must read zero.
+        {probe, ctl_grab?, ctl} = tj_round(probe, false)
+        IO.puts("\n[dolphin] jacket control: grab=#{ctl_grab?} #{inspect(ctl)}")
+
+        # Armed: the full recipe.
+        {probe, grab?, res} = tj_round(probe, true)
+        IO.puts("[dolphin] jacket armed: grab=#{grab?} #{inspect(res)}")
+
+        assert ctl_grab?
+        assert ctl.hop_dmg == 0.0 and ctl.lip_dmg == 0.0
+        assert grab?
+        assert res.hop_dmg >= 1.0
+        _ = probe
+      after
+        Probe.stop(probe)
+      end
+    end
+  end
+
+  # One jacket round: optionally arm, PKT2 into the right-ledge grab,
+  # then the contact probes (lip walk-in + hop-on from above).
+  defp tj_round(probe, armed?) do
+    probe = if armed?, do: tj_arm(probe), else: probe
+    {probe, grab?} = tj_pkt2_ledge_grab(probe)
+
+    if grab? do
+      {probe, res} = tj_ledge_probe(probe)
+      {probe, true, res}
+    else
+      {settle_ports(probe, [1, 2]), false, %{lip_dmg: 0.0, hop_dmg: 0.0}}
+    end
+  end
+
+  # The arming: windup hit -> dash clear -> release at hit+12. The
+  # windup hit is position-marginal (falco's park tolerance), so retry
+  # until it lands CLEAN: hit at the windup (frame <= 14), swing whiff.
+  defp tj_arm(probe), do: tj_arm(probe, 4)
+
+  defp tj_arm(probe, tries) do
+    probe = tj_park(probe, 1, -5.0)
+    probe = tj_park(probe, 2, 26.0)
+    probe = walk_port(probe, 1, 0.72, fn p -> p.position.x > 10.2 end)
+    probe = settle_ports(probe, [1])
+
+    Melee.Controller.tilt_analog(probe.controllers[1], :main, 0.5, 1.0)
+    Melee.Controller.press_button(probe.controllers[1], :a)
+
+    {probe, hit_at} =
+      Enum.reduce_while(1..60, {probe, nil}, fn i, {probe, _} ->
+        Melee.Controller.tilt_analog(probe.controllers[2], :main, 0.28, 0.5)
+        probe = Probe.step!(probe)
+        falco = Probe.gamestate(probe).players[2]
+        if falco.hitlag_left > 0, do: {:halt, {probe, i}}, else: {:cont, {probe, nil}}
+      end)
+
+    probe =
+      Enum.reduce(1..12, probe, fn _i, probe ->
+        Melee.Controller.tilt_analog(probe.controllers[2], :main, 1.0, 0.5)
+        Probe.step!(probe)
+      end)
+
+    Melee.Controller.release_button(probe.controllers[1], :a)
+    Melee.Controller.tilt_analog(probe.controllers[1], :main, 0.5, 0.5)
+
+    {probe, swing_hit?} =
+      Enum.reduce(1..45, {probe, false}, fn _i, {probe, sh?} ->
+        Melee.Controller.tilt_analog(probe.controllers[2], :main, 1.0, 0.5)
+        probe = Probe.step!(probe)
+        falco = Probe.gamestate(probe).players[2]
+        {probe, sh? or falco.hitlag_left > 0}
+      end)
+
+    IO.puts("[dolphin]   arm: charge_hit_at=#{inspect(hit_at)} swing_hit=#{swing_hit?}")
+    Melee.Controller.release_all(probe.controllers[1])
+    Melee.Controller.release_all(probe.controllers[2])
+    probe = settle_ports(probe, [1, 2])
+    clean? = hit_at != nil and hit_at <= 14 and not swing_hit?
+
+    if clean? or tries <= 1, do: probe, else: tj_arm(probe, tries - 1)
+  end
+
+  # Hang the right ledge (hop out facing LEFT, hug in), release at
+  # CliffWait, cast falling, dive-and-curl the bolt into the up-launch
+  # whose flight CliffCatches. Constants from the probe map: 12 fall
+  # frames, 12 down-hold, dive 24.
+  defp tj_pkt2_ledge_grab(probe) do
+    {probe, hung?} = tj_hang_right(probe)
+
+    if hung?,
+      do: tj_release_cast_steer(probe),
+      else: {settle_ports(probe, [1, 2]), false}
+  end
+
+  # Release the hang (CliffWait only — the catch anim is input-
+  # immune), fall 12 frames, cast, hold down 12, then steer.
+  defp tj_release_cast_steer(probe) do
+    probe =
+      Probe.until!(
+        probe,
+        fn p -> Probe.gamestate(p).players[1].action == 0xFD end,
+        fn p ->
+          Melee.Controller.release_all(p.controllers[1])
+          p
+        end,
+        timeout_frames: 90
+      )
+
+    {probe, _released?} =
+      Enum.reduce_while(1..8, {probe, false}, fn _i, {probe, _} ->
+        Melee.Controller.tilt_analog(probe.controllers[1], :main, 0.5, 0.0)
+        probe = Probe.step!(probe)
+
+        if player(probe).action in [0xFC, 0xFD],
+          do: {:cont, {probe, false}},
+          else: {:halt, {probe, true}}
+      end)
+
+    Melee.Controller.tilt_analog(probe.controllers[1], :main, 0.5, 0.5)
+    probe = Enum.reduce(1..12, probe, fn _i, probe -> Probe.step!(probe) end)
+
+    Melee.Controller.tilt_analog(probe.controllers[1], :main, 0.5, 1.0)
+    Melee.Controller.press_button(probe.controllers[1], :b)
+    probe = Probe.step!(probe)
+    Melee.Controller.release_button(probe.controllers[1], :b)
+
+    probe =
+      Enum.reduce(1..12, probe, fn _i, probe ->
+        Melee.Controller.tilt_analog(probe.controllers[1], :main, 0.5, 0.0)
+        Probe.step!(probe)
+      end)
+
+    plan = [{1.0, 0.5, 15}, {0.5, 0.0, 15}, {0.5, 0.0, 24}, {0.15, 0.85, 60}]
+    {probe, grab?} = tj_steer(probe, plan)
+    Melee.Controller.release_all(probe.controllers[1])
+    {probe, grab?}
+  end
+
+  # Walk the steer plan; on the flight's wall graze or special fall,
+  # switch to a stage-ward hug. Returns whether the flight grabbed.
+  defp tj_steer(probe, plan) do
+    Enum.reduce_while(1..320, {probe, {plan, 0, false, false}}, fn _i, {probe, st} ->
+      {plan, c, pkt2?, hugging?} = st
+      {plan, c} = tj_steer_input(probe, plan, c, hugging?)
+
+      probe = Probe.step!(probe)
+      pl = player(probe)
+      pkt2? = pkt2? or pl.action == 0x16D
+      hugging? = hugging? or pl.action == 0x16E or (pkt2? and pl.action == 0x23)
+
+      cond do
+        pkt2? and pl.action in [0xFC, 0xFD] -> {:halt, {probe, true}}
+        pl.action in [0x0C, 0x00] or (pkt2? and pl.on_ground) -> {:halt, {probe, false}}
+        true -> {:cont, {probe, {plan, c, pkt2?, hugging?}}}
+      end
+    end)
+    |> case do
+      {probe, grab?} when is_boolean(grab?) -> {probe, grab?}
+      {probe, _st} -> {probe, false}
+    end
+  end
+
+  defp tj_steer_input(probe, plan, c, hugging?) do
+    cond do
+      hugging? ->
+        Melee.Controller.tilt_analog(probe.controllers[1], :main, 0.25, 0.5)
+        {plan, c}
+
+      plan != [] ->
+        [{x, y, frames} | rest] = plan
+        Melee.Controller.tilt_analog(probe.controllers[1], :main, x, y)
+        if c + 1 >= frames, do: {rest, 0}, else: {plan, c + 1}
+
+      true ->
+        {plan, c}
+    end
+  end
+
+  defp tj_hang_right(probe) do
+    probe = tj_park(probe, 1, 78.0)
+
+    # Face LEFT (into the stage) so the falls beside the ledge grab it.
+    probe =
+      Enum.reduce_while(1..20, probe, fn _i, probe ->
+        if player(probe).facing do
+          Melee.Controller.tilt_analog(probe.controllers[1], :main, 0.3, 0.5)
+          {:cont, Probe.step!(probe)}
+        else
+          {:halt, probe}
+        end
+      end)
+
+    probe = settle_ports(probe, [1])
+
+    # Full hop, breaking out the moment he lifts off (running the
+    # routine to :done would land him again before the drift).
+    {probe, _tech} =
+      Enum.reduce_while(1..30, {probe, Tech.new(:full_hop, :ness)}, fn _i, {probe, tech} ->
+        {_s, tech} = Tech.step(tech, player(probe), probe.controllers[1])
+        probe = Probe.step!(probe)
+        if player(probe).on_ground, do: {:cont, {probe, tech}}, else: {:halt, {probe, tech}}
+      end)
+
+    probe =
+      Probe.until!(
+        probe,
+        fn p ->
+          pl = Probe.gamestate(p).players[1]
+          pl.position.x > 87.0 or pl.on_ground
+        end,
+        fn p ->
+          Melee.Controller.tilt_analog(p.controllers[1], :main, 0.85, 0.5)
+          p
+        end,
+        timeout_frames: 120
+      )
+
+    {probe, hung?} =
+      Enum.reduce_while(1..150, {probe, false}, fn _i, {probe, _} ->
+        Melee.Controller.tilt_analog(probe.controllers[1], :main, 0.3, 0.5)
+        probe = Probe.step!(probe)
+        pl = player(probe)
+
+        cond do
+          pl.action == 0xFC -> {:halt, {probe, true}}
+          pl.on_ground -> {:halt, {probe, false}}
+          true -> {:cont, {probe, false}}
+        end
+      end)
+
+    Melee.Controller.release_all(probe.controllers[1])
+    if hung?, do: {probe, true}, else: {settle_ports(probe, [1]), false}
+  end
+
+  # After the grab: ness climbs (ledge jump, lands ~66), then falco
+  # probes. Contact with ness on the way reads ZERO even armed — the
+  # stored hitbox is NOT on ness: it is PARKED AT THE LEDGE, where the
+  # PKT2 was interrupted. Walking into the lip zone (teeter) and/or
+  # hopping out past the ledge point (~(96, -4)) collects the zap when
+  # armed — up to ~20%, once; unarmed, nothing anywhere.
+  defp tj_ledge_probe(probe) do
+    probe = tj_park(probe, 2, 55.0)
+
+    probe =
+      Probe.until!(
+        probe,
+        fn p ->
+          pl = Probe.gamestate(p).players[1]
+          pl.on_ground and pl.action not in [0xFC, 0xFD]
+        end,
+        fn p ->
+          if Probe.gamestate(p).players[1].action == 0xFD,
+            do: Melee.Controller.press_button(p.controllers[1], :y)
+
+          p
+        end,
+        timeout_frames: 240
+      )
+
+    Melee.Controller.release_all(probe.controllers[1])
+    pct0 = Probe.gamestate(probe).players[2].percent
+
+    # Ground contact with ness first (the negative: ness carries no
+    # hitbox) — falco walks right THROUGH ness's landing spot to the
+    # lip, stopping at the teeter.
+    {probe, lip_dmg} =
+      Enum.reduce_while(1..90, {probe, 0.0}, fn _i, {probe, hit} ->
+        Melee.Controller.tilt_analog(probe.controllers[2], :main, 0.72, 0.5)
+        probe = Probe.step!(probe)
+        f = Probe.gamestate(probe).players[2]
+        hit = max(hit, f.percent - pct0)
+
+        if f.action in [0xF5, 0xF6],
+          do: {:halt, {probe, hit}},
+          else: {:cont, {probe, hit}}
+      end)
+
+    # The ledge-point probe: hop off the lip with slight outward
+    # drift; the arc falls just past the ledge — through the parked
+    # hitbox when armed. Watch the whole fall.
+    {probe, hop_dmg} =
+      Enum.reduce(1..80, {probe, 0.0}, fn i, {probe, hit} ->
+        if i <= 5, do: Melee.Controller.press_button(probe.controllers[2], :y)
+        if i == 6, do: Melee.Controller.release_button(probe.controllers[2], :y)
+        Melee.Controller.tilt_analog(probe.controllers[2], :main, 0.66, 0.5)
+        probe = Probe.step!(probe)
+        {probe, max(hit, Probe.gamestate(probe).players[2].percent - pct0)}
+      end)
+
+    Melee.Controller.release_all(probe.controllers[2])
+    probe = settle_ports(probe, [1, 2])
+
+    {probe, %{lip_dmg: Float.round(lip_dmg, 1), hop_dmg: Float.round(hop_dmg, 1)}}
+  end
+
+  defp tj_park(probe, port, x) do
+    probe = settle_ports(probe, [port])
+    px = Probe.gamestate(probe).players[port].position.x
+
+    probe =
+      cond do
+        px > x + 3.0 -> walk_port(probe, port, 0.28, fn p -> p.position.x < x + 2.0 end)
+        px < x - 3.0 -> walk_port(probe, port, 0.72, fn p -> p.position.x > x - 2.0 end)
+        true -> probe
+      end
+
+    settle_ports(probe, [port])
   end
 end

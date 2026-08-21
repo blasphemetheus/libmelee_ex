@@ -238,13 +238,10 @@ takes in this harness. NEXT ROUND (picked, in priority order):
    11-12 hitting window), falco retreats, the charge releases with
    the swing hitting nothing (verified clean), then the connecting
    PKT2 — and the walk-in probe still reads zero contact damage.
-   Two loose ends for the follow-up: the arming hit itself is
-   position-marginal (the charge only reaches ~8.6 in a narrow
-   window, so the hit doesn't land every round), and the recipe's
-   "blast PKT2 against a floor or grabbable ledge" may require a
-   MID-FLIGHT interrupt (a platform underfoot or a ledge grab)
-   rather than our grounded horizontal slide — a Battlefield
-   platform variant is the natural next experiment.
+   RESOLVED 2026-08-21 (item 5): the grounded slide is the wrong
+   interrupt AND the walk-in is the wrong probe — the jacket needs
+   the LEDGE-GRAB interrupt, its release timing has a narrow
+   window, and the zap parks at the LEDGE, not on ness.
 3. **ICs wobbling — PROVEN (2026-08-19, `--only
    dolphin_characters`).** `:wobble`: desync grab, then down+A on a
    metronome — interval 36 held falco for ~190 grabbed frames while
@@ -268,10 +265,49 @@ takes in this harness. NEXT ROUND (picked, in priority order):
    walljumps play action 0xCB, the WallTechJump id); walltech =
    dair-spike the hanger at tumble percent with both sticks parked
    into the wall (the ASDI shift makes the impact).
-5. **Thunder jacket, remaining** — see item 2: recipe verified
-   per-component, jacket unmanifested; next levers are a robust
-   (non-grazing) self-hit aim and the mid-flight PKT2 interrupt
-   (platform floor / ledge grab).
+5. **Thunder jacket — PROVEN, headless (2026-08-21, the ledge-grab
+   round; test: "thunder jacket" in `tech_research_test.exs`,
+   `--only dolphin_research`).** The user-confirmed method (PKT2
+   grabbing the ledge) is the real one, and the full recipe now
+   reproduces without a window:
+
+   - **Arming, cracked** (mapped in `tmp/arm_map_probe.exs`): the
+     usmash CHARGE hitbox is the yo-yo dangling ~10 units in FRONT
+     of ness — point-blank WHIFFS (why the old gap-6 standing arms
+     failed); it hits at windup frames 11-12 as falco walks in from
+     ~15 out. The RELEASE swing (0x158) reaches ~14 for 36 frames —
+     a walking falco cannot escape it, he must DASH. The release
+     must come **11-16 frames after the charge hit** (<=10 and >=18
+     do NOT arm; the width matches the ~6-frame charge pulse
+     period) and the swing must hit nothing. Charge action map:
+     0x156 windup (f1-12), 0x157 hold, 0x158 swing (f14-49).
+   - **The interrupt** (mapped in `tmp/jacket_ledgegrab_probe.exs`):
+     PKT2 must end in a LEDGE GRAB. From a right-ledge hang (hang
+     FACES the stage, solving the facing problem): wait out
+     CliffCatch (0xFC is input-immune — a down-tap during it does
+     nothing and a later up input ledge-JUMPS), release at
+     CliffWait 0xFD with a full down-tap, fall 12 frames, cast
+     (aerial PKT actions: 0x16A cast / 0x16B hold / 0x16C bolt
+     died), hold down 12 frames, then steer right-15 / down-15 /
+     down-24 / up-left-hold: the bolt dives the offstage side and
+     curls up under ness; the launch grazes FD's underside (0x16E,
+     the PKT2 wall bounce) and the flight CliffCatches at
+     ~(95.6, -4.2). Post-PKT2 fall is FallSpecial (0x23) — there
+     is NO double jump, which is why every non-grabbing variant
+     died; the only save is the grab itself (helpless can grab).
+   - **The zap**: the stored hitbox is PARKED AT THE LEDGE — the
+     interrupt point — NOT riding ness. Contact with idle ness
+     mid-stage reads zero; falco entering the lip/ledge zone takes
+     the stored hit's damage (up to ~20% measured; distant grazes
+     read 1%), ONCE — consumed on first touch. Unarmed control:
+     zero everywhere.
+   - **Negative**: a PLATFORM-LANDING interrupt does NOT arm it —
+     `tmp/jacket_bf_probe.exs` proves a clean mid-flight landing on
+     BF (cast on the left side platform, mirrored loop, flight
+     lands on the right platform) with zero zap. Also learned on
+     BF: ness spawns ON the left side platform, falco (port 2) ON
+     the right one, and platform walks TEETER at the inner lip —
+     drop through (tap down) before any ground walk.
 
 ## The pool round (`--only dolphin_pool`, 2026-08-20)
 

@@ -4,26 +4,35 @@ Written 2026-08-05, at the end of the session that built the port. Read
 this first; it is the live resume point. Everything below is verified
 unless it says otherwise.
 
-## RESUME HERE (2026-08-20): three tech rounds shipped, all green
+## RESUME HERE (2026-08-21): THUNDER JACKET PROVEN, headless
 
-State at handoff: `Melee.Tech` has 53 routines across NINE dolphin
-tech suites, all green — `dolphin_movement`, `_defense` (now incl.
-v-cancel), `_mewtwo`, `_universal`, `_characters` (incl. wobbling),
-`_research` (incl. PKT2), `_geometry` (edge cancels, NIL, walljump,
-walltech), and the new `_pool` (7 tests). Full unit suite: 472
-tests green; credo baseline 2/1/1; dialyzer 2. Everything is
-committed through `3af6c7b`; melee-tech.md carries the per-round
-detail and the remaining catalog.
+The big one landed: the thunder jacket manifested and is pinned by
+a green test ("thunder jacket" in tech_research_test.exs, `--only
+dolphin_research`, 8/8 green). The user's tip was right — the
+LEDGE-GRAB PKT2 interrupt is the method — plus two discoveries
+nobody had written down: the release must come 11-16 frames after
+the charge hit (a ~6-frame window; <=10 / >=18 never arm), and the
+stored hitbox parks AT THE LEDGE (the interrupt point), NOT on
+ness — every walk-into-ness probe was reading the wrong spot. Zap:
+up to ~20% (the stored charge hit), consumed on first touch.
+Full recipe + mechanics in melee-tech.md items 2/5; probes in
+tmp/jacket_ledgegrab_probe.exs (the proof), tmp/arm_map_probe.exs
+(arming mapped frame-by-frame), tmp/jacket_bf_probe.exs (platform
+landing = NEGATIVE, does not arm). New lore: aerial PKT actions
+0x16A/B/C, PKT2 wall-bounce 0x16E, post-PKT2 fall is FallSpecial
+(no DJ), CliffCatch 0xFC is input-immune (release at CliffWait
+0xFD), BF spawns ness/falco ON the side platforms.
 
-**The picked follow-ups, in the order the user signalled:**
+State: `Melee.Tech` 53 routines, NINE dolphin suites green; unit
+suite 473 green; credo baseline 2/1/1; dialyzer 2. melee-tech.md
+carries the per-round detail and the remaining catalog.
+
+**Next follow-ups, in the order the user signalled:**
 
 1. WINDOWED session candidates (user likes guiding these live):
-   - Thunder jacket: the user CONFIRMED players do it by GRABBING
-     THE LEDGE with PKT2 (the mid-flight interrupt). Everything
-     else is verified per-component (see round notes below): aim
-     the proven `:pkt2` loop to launch ness TOWARD a ledge so the
-     PKT2 flight ends in a ledge grab, then run the falco walk-in
-     probe. May be doable headless first.
+   - Watch the jacket live (the electric graphic) — confirm the
+     parked-at-ledge reading visually; also try touching the zone
+     as ness re-approaches it himself.
    - Marth up-B ledgestall snap conditions (mapped, never grabbed).
    - Wall-band visual sanity check (nice-to-have; walljump/walltech
      are already proven on YS).
