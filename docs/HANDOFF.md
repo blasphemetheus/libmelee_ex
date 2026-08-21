@@ -12,9 +12,14 @@ dolphin_research`, 8/8 green). The user's tip was right — the
 LEDGE-GRAB PKT2 interrupt is the method — plus two discoveries
 nobody had written down: the release must come 11-16 frames after
 the charge hit (a ~6-frame window; <=10 / >=18 never arm), and the
-stored hitbox parks AT THE LEDGE (the interrupt point), NOT on
-ness — every walk-into-ness probe was reading the wrong spot. Zap:
-up to ~20% (the stored charge hit), consumed on first touch.
+jacket rides NESS (CORRECTED by the user next session, then
+position-logged: contact zap at gap ~7.5 from ness, ~20%, once).
+Two open threads: a fresh yo-yo charge held while jacketed reads
+ZERO (charging again clears/replaces the store — so "hold the
+charge to keep the hitbox out" did NOT reproduce here; the user
+implies there IS a keep-it-out method — ASK THEM / test their
+answer), and manifestation is round-history-sensitive (armed-first
+rounds read zero; control-round-first zaps; precondition unpinned).
 Full recipe + mechanics in melee-tech.md items 2/5; probes in
 tmp/jacket_ledgegrab_probe.exs (the proof), tmp/arm_map_probe.exs
 (arming mapped frame-by-frame), tmp/jacket_bf_probe.exs (platform

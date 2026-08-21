@@ -1125,15 +1125,18 @@ defmodule Melee.Integration.TechResearchTest do
   #      comes up under ness, the launch grazes FD's underside (0x16E)
   #      and CliffCatches. Post-PKT2 fall is FallSpecial — no DJ
   #      exists, which is why every non-grabbing variant died.
-  #   3. THE ZAP: the stored usmash hitbox ends up PARKED AT THE
-  #      LEDGE — the point where the PKT2 was interrupted (~(96, -4)
-  #      on FD's right ledge) — not riding ness: contact with idle
-  #      ness mid-stage reads ZERO, while falco reaching the lip zone
-  #      gets zapped for the stored hit's damage (up to ~20%; distant
-  #      grazes read 1%), once — consumed on first touch, and gone.
-  #      A platform-landing interrupt (BF, tmp/jacket_bf_probe.exs)
-  #      does NOT arm it — the ledge grab is the real method, as the
-  #      user said.
+  #   3. THE ZAP rides NESS (user-corrected, then position-logged in
+  #      tmp/jacket_charge_probe.exs): falco walking into idle ness
+  #      is hit at gap ~7.5 from his center — 25+ units from the
+  #      ledge — for the stored charge hit's ~20%, once. In this
+  #      test the zap fires during the lip walk as falco passes
+  #      through ness's climb spot. Known caveats: a fresh yo-yo
+  #      charge held while jacketed reads ZERO (charging again
+  #      clears/replaces the store), and the manifestation is
+  #      round-history-sensitive — this test's control-then-armed
+  #      shape is the reliably-zapping one. A platform-landing
+  #      interrupt (BF, tmp/jacket_bf_probe.exs) does NOT arm it —
+  #      the ledge grab is the real method, as the user said.
 
   test "thunder jacket: armed yo-yo + PKT2 ledge-grab interrupt zaps (1%)", ctx do
     if ctx[:skip] do
@@ -1380,12 +1383,11 @@ defmodule Melee.Integration.TechResearchTest do
     if hung?, do: {probe, true}, else: {settle_ports(probe, [1]), false}
   end
 
-  # After the grab: ness climbs (ledge jump, lands ~66), then falco
-  # probes. Contact with ness on the way reads ZERO even armed — the
-  # stored hitbox is NOT on ness: it is PARKED AT THE LEDGE, where the
-  # PKT2 was interrupted. Walking into the lip zone (teeter) and/or
-  # hopping out past the ledge point (~(96, -4)) collects the zap when
-  # armed — up to ~20%, once; unarmed, nothing anywhere.
+  # After the grab: ness climbs (ledge jump, lands ~66-69), then falco
+  # walks right from 55 THROUGH ness's spot to the lip — the jacket
+  # zap fires on body contact with ness (gap ~7.5, ~20%, once) during
+  # that walk when armed; unarmed, nothing anywhere. The hop past the
+  # ledge point is kept as a second contact chance.
   defp tj_ledge_probe(probe) do
     probe = tj_park(probe, 2, 55.0)
 

@@ -239,9 +239,11 @@ takes in this harness. NEXT ROUND (picked, in priority order):
    the swing hitting nothing (verified clean), then the connecting
    PKT2 — and the walk-in probe still reads zero contact damage.
    RESOLVED 2026-08-21 (item 5): the grounded slide is the wrong
-   interrupt AND the walk-in is the wrong probe — the jacket needs
-   the LEDGE-GRAB interrupt, its release timing has a narrow
-   window, and the zap parks at the LEDGE, not on ness.
+   interrupt — the jacket needs the LEDGE-GRAB interrupt and the
+   release timing has a narrow window. The jacket rides NESS (walk
+   contact at gap ~7.5 zaps ~20%), but only under a round-history
+   precondition that is not yet pinned — which is why the original
+   walk-in probes read zero.
 3. **ICs wobbling — PROVEN (2026-08-19, `--only
    dolphin_characters`).** `:wobble`: desync grab, then down+A on a
    metronome — interval 36 held falco for ~190 grabbed frames while
@@ -295,12 +297,23 @@ takes in this harness. NEXT ROUND (picked, in priority order):
      ~(95.6, -4.2). Post-PKT2 fall is FallSpecial (0x23) — there
      is NO double jump, which is why every non-grabbing variant
      died; the only save is the grab itself (helpless can grab).
-   - **The zap**: the stored hitbox is PARKED AT THE LEDGE — the
-     interrupt point — NOT riding ness. Contact with idle ness
-     mid-stage reads zero; falco entering the lip/ledge zone takes
-     the stored hit's damage (up to ~20% measured; distant grazes
-     read 1%), ONCE — consumed on first touch. Unarmed control:
-     zero everywhere.
+   - **The zap — ON NESS (corrected 2026-08-21, second session;
+     user-corrected, then logged directly)**: with per-hit position
+     logging (`tmp/jacket_charge_probe.exs`), the zap fires as
+     falco WALKS INTO idle ness — hit at gap ~7.5 from ness's
+     center, 25+ units from the ledge — for the stored charge
+     hit's damage (~20%), ONCE. The earlier "parked at the ledge"
+     reading was an artifact of cumulative damage counters over a
+     walk that passed through ness on its way to the lip.
+     CAVEATS, both real: (a) starting a NEW yo-yo charge while
+     jacketed reads ZERO on the same contact probe (A/B'd in the
+     same round shape) — charging again apparently clears/replaces
+     the store rather than keeping the jacket hitbox out; (b) the
+     manifestation is round-history-sensitive: an armed-grab round
+     run FIRST in a session reads zero on the identical probe,
+     while the same round after an unarmed control round zaps —
+     the precondition is NOT yet pinned (falco percent, a prior
+     PKT2, and arm-attempt history are the suspects).
    - **Negative**: a PLATFORM-LANDING interrupt does NOT arm it —
      `tmp/jacket_bf_probe.exs` proves a clean mid-flight landing on
      BF (cast on the left side platform, mirrored loop, flight
