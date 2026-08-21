@@ -928,6 +928,114 @@ defmodule Melee.TechTest do
     end
   end
 
+  describe "pool round" do
+    test "illusion presses side-B and shortens with a second B" do
+      tech = Tech.new(:illusion, :fox, direction: :right, shorten_frame: 2)
+
+      {:cont, tech, commands} = Tech.step(tech, player(%{}))
+      assert {:press, :b} in commands
+      assert {:tilt, :main, 1.0, 0.5} in commands
+
+      dashing = player(%{action: 0x15F})
+      # Recognizes the dash; frame counter starts.
+      {:cont, tech, [{:release, :b}]} = Tech.step(tech, dashing)
+      {:cont, tech, [{:release, :b}]} = Tech.step(tech, dashing)
+      # shorten_frame: the second B press.
+      {:cont, tech, [{:press, :b}]} = Tech.step(tech, dashing)
+      {:cont, tech, [{:release, :b}]} = Tech.step(tech, player(%{action: 0x160}))
+      {:cont, tech, [{:release, :b}]} = Tech.step(tech, player(%{action: 0x160}))
+      # Move over, grounded again.
+      {:done, _tech, [:release_all]} = Tech.step(tech, player(%{action: 0x0E}))
+    end
+
+    test "haxdash releases, jumps after dj_delay, done on the regrab" do
+      tech = Tech.new(:haxdash, :fox, dj_delay: 1)
+
+      hanging = player(%{on_ground: false, action: 0xFD})
+      {:cont, tech, [{:tilt, :main, 0.5, 0.35}]} = Tech.step(tech, hanging)
+
+      falling = player(%{on_ground: false, action: 0x1D})
+      {:cont, tech, [{:tilt, :main, 0.5, 0.5}]} = Tech.step(tech, falling)
+      {:cont, tech, []} = Tech.step(tech, falling)
+      {:cont, tech, [{:press, :x}]} = Tech.step(tech, falling)
+
+      {:done, _tech, [:release_all]} =
+        Tech.step(tech, player(%{on_ground: false, action: 0xFC}))
+    end
+
+    test "ledgestall releases, double jumps, then up-Bs to the regrab" do
+      tech = Tech.new(:ledgestall, :marth, delay: 1, up_b_delay: 1)
+
+      {:cont, tech, [{:tilt, :main, 0.95, 0.5}]} =
+        Tech.step(tech, player(%{on_ground: false, action: 0xFD}))
+
+      falling = player(%{on_ground: false, action: 0x1D})
+      {:cont, tech, [{:tilt, :main, 0.5, 0.5}]} = Tech.step(tech, falling)
+      # Falls for the delay, then the double jump.
+      {:cont, tech, []} = Tech.step(tech, falling)
+      {:cont, tech, [{:press, :x}]} = Tech.step(tech, falling)
+
+      rising = player(%{on_ground: false, action: 0x1C})
+      {:cont, tech, [{:release, :x}]} = Tech.step(tech, rising)
+
+      {:cont, tech, commands} = Tech.step(tech, rising)
+      assert {:press, :b} in commands
+      assert {:tilt, :main, 0.5, 1.0} in commands
+
+      {:done, _tech, [:release_all]} =
+        Tech.step(tech, player(%{on_ground: false, action: 0xFC}))
+    end
+
+    test "ledgehop laser releases, jumps in, and pulses B until landing" do
+      tech = Tech.new(:ledgehop_laser, :falco, direction: :right, fire_delay: 3)
+
+      {:cont, tech, [{:tilt, :main, 0.5, 0.35}]} =
+        Tech.step(tech, player(%{on_ground: false, action: 0xFD}))
+
+      falling = player(%{on_ground: false, action: 0x1D})
+      {:cont, tech, [{:tilt, :main, 0.5, 0.5}]} = Tech.step(tech, falling)
+      {:cont, tech, commands} = Tech.step(tech, falling)
+      assert {:press, :x} in commands
+      assert {:tilt, :main, 0.25, 0.5} in commands
+
+      {:cont, tech, [{:release, :x}]} = Tech.step(tech, falling)
+      {:cont, tech, [{:release, :x}]} = Tech.step(tech, falling)
+      # fire_delay reached (transition frame), then the B pulses.
+      {:cont, tech, [{:release, :x}]} = Tech.step(tech, falling)
+      {:cont, tech, [{:press, :b}]} = Tech.step(tech, falling)
+      {:cont, tech, [{:release, :b}]} = Tech.step(tech, falling)
+
+      {:done, _tech, [:release_all]} = Tech.step(tech, player(%{action: 0x2A}))
+    end
+
+    test "pivot grab flicks opposite and presses Z on the turn" do
+      tech = Tech.new(:pivot_grab, :marth, direction: :right, dash_frames: 2)
+
+      {:cont, tech, [{:tilt, :main, 1.0, 0.5}]} = Tech.step(tech, player(%{action: 0x14}))
+      {:cont, tech, []} = Tech.step(tech, player(%{action: 0x14}))
+      {:cont, tech, [{:tilt, :main, 0.0, 0.5}]} = Tech.step(tech, player(%{action: 0x14}))
+
+      {:cont, tech, commands} = Tech.step(tech, player(%{action: 0x12}))
+      assert {:press, :z} in commands
+
+      {:done, _tech, [:release_all]} = Tech.step(tech, player(%{action: 0xD4}))
+    end
+
+    test "boost grab cancels the dash attack with Z" do
+      tech = Tech.new(:boost_grab, :fox, direction: :right, dash_frames: 2)
+
+      {:cont, tech, [{:tilt, :main, 1.0, 0.5}]} = Tech.step(tech, player(%{}))
+      {:cont, tech, []} = Tech.step(tech, player(%{action: 0x14}))
+      {:cont, tech, [{:press, :a}]} = Tech.step(tech, player(%{action: 0x14}))
+
+      # Dash attack out: the Z cancel.
+      {:cont, tech, commands} = Tech.step(tech, player(%{action: 0x32}))
+      assert {:press, :z} in commands
+
+      {:done, _tech, [:release_all]} = Tech.step(tech, player(%{action: 0xD6}))
+    end
+  end
+
   describe "wobble" do
     test "grabs, then down+A on the interval until reps run out" do
       tech = Tech.new(:wobble, :popo, interval: 4, reps: 2)

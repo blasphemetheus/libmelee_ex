@@ -76,6 +76,12 @@ defmodule Melee.Tech do
   | `:walljump` | `direction:`, `edge_x:`, `out_frames:`, `pin_frames:` | get beside the wall (hop-out or ledge drop), hug in to contact, tap AWAY (UNVERIFIED live: no probed entry ever registered wall contact — see melee-tech.md) |
   | `:walltech` | `wall_x:`, `margin:` | ONE L press + both sticks INTO the wall from a damage state near the wall plane (UNVERIFIED live, same caveat) |
   | `:wobble` | `interval:` (sweep ~28-36), `reps:` | ICs: desync grab, then down+A on a metronome — Popo pummels while Nana (6f late) dtilts; the down is PARKED in CatchPull (a fresh edge in CatchWait is a throw) |
+  | `:illusion` | `direction:`, `shorten_frame:` | Fox/Falco side-B; the second B press shortens it (its own action id, 0x160) |
+  | `:haxdash` | `dj_delay:` | ledge release -> instant double jump back to the regrab, facing never turns, intangibility refreshed |
+  | `:ledgestall` | `delay:` | ledge release -> up-B back into the regrab (Marth dolphin-slash stall) |
+  | `:ledgehop_laser` | `direction:`, `fire_delay:` | Falco: ledge release -> DJ over the lip -> B pulses: two lasers before landing |
+  | `:pivot_grab` | `direction:`, `dash_frames:` | the empty pivot with Z on the flick: a standing grab facing the new way |
+  | `:boost_grab` | `direction:`, `dash_frames:`, `z_delay:` | dash attack cancelled by Z: the grab keeps the dash attack's slide |
 
   `:shffl` also takes `drift: :left \\| :right` — the main stick held
   through the hop and fall, for landings that slide (edge cancels).
@@ -138,6 +144,12 @@ defmodule Melee.Tech do
           | :walljump
           | :walltech
           | :wobble
+          | :illusion
+          | :haxdash
+          | :ledgestall
+          | :ledgehop_laser
+          | :pivot_grab
+          | :boost_grab
   @type command ::
           {:press, Controller.button()}
           | {:release, Controller.button()}
@@ -298,7 +310,13 @@ defmodule Melee.Tech do
     :pkt2,
     :walljump,
     :walltech,
-    :wobble
+    :wobble,
+    :illusion,
+    :haxdash,
+    :ledgestall,
+    :ledgehop_laser,
+    :pivot_grab,
+    :boost_grab
   ]
 
   @spec new(routine(), atom() | integer(), keyword()) :: t()
@@ -377,6 +395,12 @@ defmodule Melee.Tech do
   defp dispatch(:walljump, tech, player), do: walljump(tech, player)
   defp dispatch(:walltech, tech, player), do: walltech(tech, player)
   defp dispatch(:wobble, tech, player), do: wobble(tech, player)
+  defp dispatch(:illusion, tech, player), do: illusion(tech, player)
+  defp dispatch(:haxdash, tech, player), do: haxdash(tech, player)
+  defp dispatch(:ledgestall, tech, player), do: ledgestall(tech, player)
+  defp dispatch(:ledgehop_laser, tech, player), do: ledgehop_laser(tech, player)
+  defp dispatch(:pivot_grab, tech, player), do: pivot_grab(tech, player)
+  defp dispatch(:boost_grab, tech, player), do: boost_grab(tech, player)
 
   @doc "Step and apply the commands to a `Melee.Controller`."
   @spec step(t(), PlayerState.t(), GenServer.server()) :: {status(), t()}
@@ -2337,6 +2361,308 @@ defmodule Melee.Tech do
 
       true ->
         {:cont, %{tech | counter: c + 1}, []}
+    end
+  end
+
+  ## ------------------------------------------------------------------
+  ## Round 7: the feasible-unpicked pool
+  ## ------------------------------------------------------------------
+
+  # Fox/Falco Illusion/Phantasm (side-B). Fox rides actions 0x15E-0x160,
+  # falco 0x15B-0x15D (mapped live). `shorten_frame:` presses B again that
+  # many frames into the dash — Melee's shorten, which has its own
+  # action id (fox_illusion_shortened 0x160).
+  defp illusion(%{phase: :init} = tech, %{on_ground: true} = player) do
+    if int(player.action) == @standing do
+      x = if dir_right?(tech), do: 1.0, else: 0.0
+      {:cont, %{tech | phase: :starting, counter: 0}, [{:tilt, :main, x, 0.5}, {:press, :b}]}
+    else
+      {:cont, tech, [{:tilt, :main, 0.5, 0.5}]}
+    end
+  end
+
+  defp illusion(%{phase: :init} = tech, _player), do: {:cont, tech, []}
+
+  defp illusion(%{phase: :starting, counter: c} = tech, player) do
+    cond do
+      int(player.action) in [0x15B, 0x15C, 0x15E, 0x15F] ->
+        illusion(%{tech | phase: :dashing, counter: 0}, player)
+
+      c >= 20 ->
+        {:done, tech, [:release_all]}
+
+      true ->
+        {:cont, %{tech | counter: c + 1}, [{:release, :b}]}
+    end
+  end
+
+  defp illusion(%{phase: :dashing, counter: c} = tech, player) do
+    shorten = Keyword.get(tech.opts, :shorten_frame)
+    a = int(player.action)
+
+    cond do
+      a not in [0x15B, 0x15C, 0x15D, 0x15E, 0x15F, 0x160] and c > 3 ->
+        {:done, tech, [:release_all]}
+
+      # :pulse hits every possible shorten window (diagnostic mode).
+      shorten == :pulse ->
+        cmd = if rem(c, 2) == 0, do: [{:press, :b}], else: [{:release, :b}]
+        {:cont, %{tech | counter: c + 1}, cmd}
+
+      is_integer(shorten) and c == shorten ->
+        {:cont, %{tech | counter: c + 1}, [{:press, :b}]}
+
+      is_integer(shorten) and c == shorten + 2 ->
+        {:cont, %{tech | counter: c + 1}, [{:release, :b}]}
+
+      c >= 90 ->
+        {:done, tech, [:release_all]}
+
+      true ->
+        {:cont, %{tech | counter: c + 1}, [{:release, :b}]}
+    end
+  end
+
+  # Haxdash: fastfall-free ledge release, instant double jump back in
+  # — regrabs the ledge with the facing never turning around, and the
+  # regrab refreshes the intangibility. `dj_delay:` frames between the
+  # release and the jump (sweep 1-4).
+  defp haxdash(%{phase: :init} = tech, player) do
+    if int(player.action) == @edge_hanging do
+      {:cont, %{tech | phase: :releasing, counter: 0}, [{:tilt, :main, 0.5, 0.35}]}
+    else
+      {:cont, tech, []}
+    end
+  end
+
+  defp haxdash(%{phase: :releasing, counter: c} = tech, player) do
+    cond do
+      int(player.action) != @edge_hanging ->
+        {:cont, %{tech | phase: :dropping, counter: 0}, [{:tilt, :main, 0.5, 0.5}]}
+
+      c >= 20 ->
+        {:done, tech, [:release_all]}
+
+      true ->
+        {:cont, %{tech | counter: c + 1}, [{:tilt, :main, 0.5, 0.35}]}
+    end
+  end
+
+  defp haxdash(%{phase: :dropping, counter: c} = tech, _player) do
+    if c >= Keyword.get(tech.opts, :dj_delay, 2) do
+      {:cont, %{tech | phase: :jumping, counter: 0}, [{:press, :x}]}
+    else
+      {:cont, %{tech | counter: c + 1}, []}
+    end
+  end
+
+  defp haxdash(%{phase: :jumping, counter: c} = tech, player) do
+    cond do
+      int(player.action) in [@edge_catch, @edge_hanging] ->
+        {:done, tech, [:release_all]}
+
+      c >= 60 ->
+        {:done, tech, [:release_all]}
+
+      true ->
+        {:cont, %{tech | counter: c + 1}, [{:release, :x}]}
+    end
+  end
+
+  # Ledgestall: release the hang, then UP-B back into the ledge — the
+  # regrab refreshes intangibility. Marth's sweetspot is a SNAP in the
+  # up-B's first frames and needs a shallow start, so the release is
+  # an AWAY tap (a down-release pre-drops ~24 units before the fall
+  # even registers — measured). `delay:` frames of fall before the
+  # up-B.
+  defp ledgestall(%{phase: :init} = tech, player) do
+    away = if ledge_right?(tech), do: 0.95, else: 0.05
+
+    if int(player.action) == @edge_hanging do
+      {:cont, %{tech | phase: :releasing, counter: 0}, [{:tilt, :main, away, 0.5}]}
+    else
+      {:cont, tech, []}
+    end
+  end
+
+  defp ledgestall(%{phase: :releasing, counter: c} = tech, player) do
+    away = if ledge_right?(tech), do: 0.95, else: 0.05
+
+    cond do
+      int(player.action) != @edge_hanging ->
+        {:cont, %{tech | phase: :falling, counter: 0}, [{:tilt, :main, 0.5, 0.5}]}
+
+      c >= 20 ->
+        {:done, tech, [:release_all]}
+
+      true ->
+        {:cont, %{tech | counter: c + 1}, [{:tilt, :main, away, 0.5}]}
+    end
+  end
+
+  defp ledgestall(%{phase: :falling, counter: c} = tech, _player) do
+    # The hang releases ~24 units deep (marth) — too low for the up-B
+    # snap — so DOUBLE JUMP first, then up-B near ledge height.
+    if c >= Keyword.get(tech.opts, :delay, 2) do
+      {:cont, %{tech | phase: :djing, counter: 0}, [{:press, :x}]}
+    else
+      {:cont, %{tech | counter: c + 1}, []}
+    end
+  end
+
+  defp ledgestall(%{phase: :djing, counter: c} = tech, _player) do
+    if c >= Keyword.get(tech.opts, :up_b_delay, 6) do
+      {:cont, %{tech | phase: :recovering, counter: 0},
+       [{:release, :x}, {:tilt, :main, 0.5, 1.0}, {:press, :b}]}
+    else
+      {:cont, %{tech | counter: c + 1}, [{:release, :x}]}
+    end
+  end
+
+  defp ledgestall(%{phase: :recovering, counter: c} = tech, player) do
+    # B-REVERSE the slash on its first frames (stick away from the
+    # stage): marth's up-B sweetspot wants the ledge BEHIND him — a
+    # forward-facing rise sails past the ledge without grabbing
+    # (measured at x 88.6, y -7..-19: no snap, ever).
+    away = if ledge_right?(tech), do: 0.95, else: 0.05
+
+    cond do
+      int(player.action) in [@edge_catch, @edge_hanging] ->
+        {:done, tech, [:release_all]}
+
+      c >= 90 ->
+        {:done, tech, [:release_all]}
+
+      c < 2 ->
+        {:cont, %{tech | counter: c + 1}, [{:release, :b}, {:tilt, :main, away, 0.5}]}
+
+      true ->
+        {:cont, %{tech | counter: c + 1}, [{:release, :b}, {:tilt, :main, 0.5, 0.5}]}
+    end
+  end
+
+  # Falco ledgehop double laser: release the hang, double jump up and
+  # in over the lip, pulse B on the way — two lasers before landing.
+  defp ledgehop_laser(%{phase: :init} = tech, player) do
+    if int(player.action) == @edge_hanging do
+      {:cont, %{tech | phase: :releasing, counter: 0}, [{:tilt, :main, 0.5, 0.35}]}
+    else
+      {:cont, tech, []}
+    end
+  end
+
+  defp ledgehop_laser(%{phase: :releasing, counter: c} = tech, player) do
+    cond do
+      int(player.action) != @edge_hanging ->
+        {:cont, %{tech | phase: :hopping, counter: 0}, [{:tilt, :main, 0.5, 0.5}]}
+
+      c >= 20 ->
+        {:done, tech, [:release_all]}
+
+      true ->
+        {:cont, %{tech | counter: c + 1}, [{:tilt, :main, 0.5, 0.35}]}
+    end
+  end
+
+  defp ledgehop_laser(%{phase: :hopping, counter: c} = tech, _player) do
+    into = if ledge_right?(tech), do: 0.25, else: 0.75
+
+    cond do
+      c == 0 ->
+        {:cont, %{tech | counter: c + 1}, [{:press, :x}, {:tilt, :main, into, 0.5}]}
+
+      c >= Keyword.get(tech.opts, :fire_delay, 10) ->
+        {:cont, %{tech | phase: :firing, counter: 0}, [{:release, :x}]}
+
+      true ->
+        {:cont, %{tech | counter: c + 1}, [{:release, :x}]}
+    end
+  end
+
+  defp ledgehop_laser(%{phase: :firing, counter: c} = tech, player) do
+    cond do
+      player.on_ground ->
+        {:done, tech, [:release_all]}
+
+      c >= 90 ->
+        {:done, tech, [:release_all]}
+
+      rem(c, 2) == 0 ->
+        {:cont, %{tech | counter: c + 1}, [{:press, :b}]}
+
+      true ->
+        {:cont, %{tech | counter: c + 1}, [{:release, :b}]}
+    end
+  end
+
+  # Pivot grab: the empty pivot's one-frame opposite flick, with Z on
+  # the flick — a standing grab facing the NEW way, no slide.
+  defp pivot_grab(%{phase: :init} = tech, %{on_ground: true}) do
+    x = if dir_right?(tech), do: 1.0, else: 0.0
+    dash = Keyword.get(tech.opts, :dash_frames, 5)
+    {:cont, %{tech | phase: :dashing, counter: dash}, [{:tilt, :main, x, 0.5}]}
+  end
+
+  defp pivot_grab(%{phase: :init} = tech, _player), do: {:cont, tech, []}
+
+  defp pivot_grab(%{phase: :dashing, counter: c} = tech, _player) when c > 1,
+    do: {:cont, %{tech | counter: c - 1}, []}
+
+  defp pivot_grab(%{phase: :dashing} = tech, _player) do
+    x = if dir_right?(tech), do: 0.0, else: 1.0
+    {:cont, %{tech | phase: :flick}, [{:tilt, :main, x, 0.5}]}
+  end
+
+  defp pivot_grab(%{phase: :flick} = tech, _player),
+    do: {:cont, %{tech | phase: :grabbing, counter: 0}, [{:tilt, :main, 0.5, 0.5}, {:press, :z}]}
+
+  defp pivot_grab(%{phase: :grabbing, counter: c} = tech, player) do
+    cond do
+      int(player.action) in @grab_actions -> {:done, tech, [:release_all]}
+      c >= 20 -> {:done, tech, [:release_all]}
+      true -> {:cont, %{tech | counter: c + 1}, [{:release, :z}]}
+    end
+  end
+
+  # Boost grab: dash attack cancelled into a grab (Z right after the
+  # A) — the grab keeps the dash attack's slide, reaching farther than
+  # any other grab.
+  defp boost_grab(%{phase: :init} = tech, %{on_ground: true} = player) do
+    if int(player.action) == @standing do
+      x = if dir_right?(tech), do: 1.0, else: 0.0
+      dash = Keyword.get(tech.opts, :dash_frames, 5)
+      {:cont, %{tech | phase: :dashing, counter: dash}, [{:tilt, :main, x, 0.5}]}
+    else
+      {:cont, tech, [{:tilt, :main, 0.5, 0.5}]}
+    end
+  end
+
+  defp boost_grab(%{phase: :init} = tech, _player), do: {:cont, tech, []}
+
+  defp boost_grab(%{phase: :dashing, counter: c} = tech, _player) when c > 1,
+    do: {:cont, %{tech | counter: c - 1}, []}
+
+  defp boost_grab(%{phase: :dashing} = tech, _player),
+    do: {:cont, %{tech | phase: :attacking, counter: 0}, [{:press, :a}]}
+
+  defp boost_grab(%{phase: :attacking, counter: c} = tech, player) do
+    cond do
+      int(player.action) == 0x32 or c >= Keyword.get(tech.opts, :z_delay, 2) ->
+        {:cont, %{tech | phase: :grabbing, counter: 0}, [{:release, :a}, {:press, :z}]}
+
+      c >= 15 ->
+        {:done, tech, [:release_all]}
+
+      true ->
+        {:cont, %{tech | counter: c + 1}, [{:release, :a}]}
+    end
+  end
+
+  defp boost_grab(%{phase: :grabbing, counter: c} = tech, player) do
+    cond do
+      int(player.action) in @grab_actions -> {:done, tech, [:release_all]}
+      c >= 25 -> {:done, tech, [:release_all]}
+      true -> {:cont, %{tech | counter: c + 1}, [{:release, :z}]}
     end
   end
 

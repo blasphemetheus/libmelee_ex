@@ -49,10 +49,23 @@ lip (escape by dashing); teeter/knockdown/ledge-hang idle FOREVER on
 a released stick (settle helpers nudge); walking one character
 through another bulldozes the victim (park the far actor first).
 
-Suggested next: the windowed session (walljump/walltech wall-finding
-+ jacket arming — the user likes guiding these); then the
-feasible-unpicked pool in melee-tech.md, or back to the main queue
-(hex publish still deferred; real hardware).
+POOL ROUND SHIPPED (2026-08-20, `--only dolphin_pool`, 7 tests):
+phantasm + shortening (falco's side-B rides 0x15B-0x15D, NOT the
+enum's fox slots; shorten frame 14 = 60.5 -> 11.0 travel; B-mashing
+EXTENDS it to 81), ledge-cancelled phantasm off the BF platform,
+haxdash (42f regrab, intangibility refresh asserted), falco
+ledgehop double laser (3 lasers), pivot grab, boost grab (25.1 vs
+2.1 slide), yoshi DJ armor (damage taken, no damage ACTION — never
+measure armor by height, the DJ rise poisons it). Marth up-B
+ledgestall descoped with a map (the slash's rise never
+ledge-grabbed, both facings); `:ledgestall` ships unit-tested.
+
+Suggested next: the windowed follow-ups (marth up-B snap
+conditions, thunder-jacket via PKT2 ledge-grab — the user confirmed
+that IS how players do it — and the wall-band visual check); the
+still-unpicked pool remainder in melee-tech.md (shine/bomb stalls,
+ICs handoffs, chaingrab policies, Luigi misfire with rng seeds); or
+back to the main queue (hex publish still deferred; real hardware).
 
 Old methodology notes (still true): lag = ACTIONABILITY; sweep frame
 offsets (deterministic); MAP failures frame-by-frame before

@@ -273,24 +273,51 @@ takes in this harness. NEXT ROUND (picked, in priority order):
    (non-grazing) self-hit aim and the mid-flight PKT2 interrupt
    (platform floor / ledge grab).
 
-Feasible, unpicked (do after or on request): ledge-cancelled
-specials (Fox/Falco Illusion off platform edges); Illusion/Phantasm
-SHORTENING (second B press mid-side-B; measure travel like the SWD
-sweep); haxdash (fastfall ledge release -> instant DJ regrab, no
-turnaround; all ledge machinery exists); ledgestalls with
-invincibility-refresh assertions (Fox shine stall, Samus bomb
-stall, Marth up-B stall); pivot grab; boost grab (dash-attack
--cancelled grab, extra slide measurable); ICs handoffs (Nana regrab
-chains); chaingrab loops (Marth uthrow on spacies, Sheik dthrow
-tech-chase — policies atop `:uthrow_uair`'s skeleton + GameEvents);
-Falco ledgehop double laser (ledge release + `:double_laser`);
-Zelda teleport edge-cancel (confirm the Mewtwo mechanic
-generalizes) and Sheik/Zelda transform storage; Yoshi DJC armor
-(launcher A/B during his double jump); Pikachu/Pichu agility
-cancels; Doc/Mario cape stall; Link/Y.Link bomb-jump recovery; G&W
-bucket braking; DK cargo-throw carry; Luigi misfire (RNG-gated —
-pairs with the rng_seed launch opt); Samus bomb jump and extended
-grapple; Yoshi parry intangibility pin (egg-shell mapped above).
+## The pool round (`--only dolphin_pool`, 2026-08-20)
+
+Seven pool items proven in `tech_pool_test.exs`:
+
+- **Phantasm shortening** (`:illusion`, `shorten_frame:`): the
+  second B press at dash frame 14 cuts falco's travel from 60.5 to
+  11.0. Two discoveries en route: FALCO'S phantasm rides actions
+  0x15B (startup) / 0x15C (dash) / 0x15D (end) — NOT the enum's
+  fox_illusion slots 0x15E-0x160, which are fox-only — and MASHING
+  B through the dash EXTENDS it (81 units vs 60.5).
+- **Ledge-cancelled phantasm**: a shortened phantasm whose end
+  overlaps the BF platform's inner edge slides off into an instant
+  double jump (the specials edge-cancel generalizes beyond Mewtwo's
+  teleport).
+- **Haxdash** (`:haxdash`): ledge release -> instant DJ -> regrab in
+  42 frames, facing never turns, and the regrab REFRESHES the
+  expired intangibility (asserted invulnerable false -> true).
+- **Falco ledgehop double laser** (`:ledgehop_laser`): release, DJ
+  over the lip, B pulses — 3 lasers spawned before landing onstage.
+- **Pivot grab** (`:pivot_grab`): the empty pivot's flick with Z —
+  standing Catch (0xD4) with the facing flipped.
+- **Boost grab** (`:boost_grab`): the dash attack cancelled by Z
+  slides 25.1 units into the Catch vs the JC grab's 2.1 from the
+  same dash-in.
+- **Yoshi double-jump armor**: up-smashed during the DJ, yoshi takes
+  the damage (11.6%) but NEVER enters a damage action; the falling
+  control eats the full launch. (Measure by ACTION, not height —
+  the DJ's own rise poisons a displacement metric.)
+
+Attempted, descoped: **Marth's up-B ledgestall** — after an away
+release (a down release pre-drops ~24 units; marth's hang itself
+sits 24 deep) and an interposed DJ, the dolphin slash rising past
+the ledge at x 88.6, y -7..-19 never grabbed, normal or B-reversed;
+the refresh mechanic itself is proven by haxdash. `:ledgestall`
+ships unit-tested; marth's snap conditions are a windowed follow-up.
+
+Still unpicked (do on request): fox shine stall / samus bomb stall;
+ICs handoffs (Nana regrab chains); chaingrab loops (Marth uthrow on
+spacies, Sheik dthrow tech-chase — policies atop `:uthrow_uair`'s
+skeleton + GameEvents); Zelda teleport edge-cancel and Sheik/Zelda
+transform storage; Pikachu/Pichu agility cancels; Doc/Mario cape
+stall; Link/Y.Link bomb-jump recovery; G&W bucket braking; DK
+cargo-throw carry; Luigi misfire (RNG-gated — pairs with the
+rng_seed launch opt); Samus bomb jump and extended grapple; Yoshi
+parry intangibility pin (egg-shell mapped above).
 
 TAS-tier curiosities (the deterministic rig qualifies): invisible
 ceiling glitch, ICs freeze glitch, Peach parasol stall, the
