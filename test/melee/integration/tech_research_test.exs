@@ -10,8 +10,9 @@ defmodule Melee.Integration.TechResearchTest do
   Ness yo-yo glitch (the stale hitbox re-activating at 28.8 units
   mid-charge-hold), and the Ness PKT2 self-hit (a climb-then-loop
   steer plan lands the bolt on his own head; the thunder-jacket
-  arming did NOT reproduce under jab/grab interruptions — windowed
-  follow-up). Findings in docs/melee-tech.md.
+  arming follows the cracked recipe — charge hit, clean release,
+  PKT2 — but the jacket still did NOT manifest; see melee-tech.md
+  for the per-component status and remaining hypotheses).
 
       MELEE_DOLPHIN_PATH=~/.local/share/slippi/exi-ai-flush/dolphin-emu-headless \\
       MELEE_ISO_PATH=~/isos/melee.iso \\
@@ -872,7 +873,7 @@ defmodule Melee.Integration.TechResearchTest do
         # Armed arms: falco interrupts ness's yo-yo charge at frame k
         # (a GRAB is the canonical hitbox-storing interruption), then
         # PKT2, then the walk-in probe.
-        arms = [{:grab, 10}, {:jab, 10}]
+        arms = [8, 30, 45]
 
         {probe, result} =
           Enum.reduce_while(arms, {probe, nil}, fn arm, {probe, _} ->
@@ -904,38 +905,50 @@ defmodule Melee.Integration.TechResearchTest do
   # One jacket attempt: optionally break ness's yo-yo charge with a
   # falco jab at charge frame `k`, PKT2 into himself, then the probe —
   # falco walks INTO the idle ness and only a jacket deals damage.
-  # Falco point-blank, ness charges the yo-yo, falco interrupts it at
-  # charge frame `k` — the canonical arming is a GRAB (jab kept as a
-  # sweep alternative).
-  defp arm_yoyo(probe, {method, k}) do
-    ness_x = player(probe).position.x
-    fx = Probe.gamestate(probe).players[2].position.x
-    tilt = if fx > ness_x + 7.0, do: 0.28, else: 0.72
-    probe = walk_port(probe, 2, tilt, fn p -> abs(p.position.x - ness_x) < 7.0 end)
+  # The yo-yo glitch arming, per the cracked recipe (SmashWiki /
+  # smashboards): ness charges the up smash with falco in range, falco
+  # takes ONLY the charge's hitbox and retreats, and ness releases the
+  # charge `hold` frames after the hit with the release swing hitting
+  # NOTHING — the up smash's last hitbox is left stranded. Approach is
+  # the proven yoyo_round configuration (ness walks to within 16,
+  # facing falco; the charge's hits register from there).
+  defp arm_yoyo(probe, hold) do
+    falco_x = Probe.gamestate(probe).players[2].position.x
+    me_x = player(probe).position.x
+    tilt = if falco_x > me_x, do: 0.72, else: 0.28
+    probe = walk_until(probe, tilt, fn p -> abs(p.position.x - falco_x) < 16.0 end)
     probe = settle_ports(probe, [1, 2])
+
+    walk_in = if falco_x > player(probe).position.x, do: 0.28, else: 0.72
+    walk_out = 1.0 - walk_in
 
     Melee.Controller.tilt_analog(probe.controllers[1], :main, 0.5, 1.0)
     Melee.Controller.press_button(probe.controllers[1], :a)
-    btn = if method == :grab, do: :z, else: :a
 
-    probe =
-      Enum.reduce(1..(k + 60), probe, fn i, probe ->
-        if i == k, do: Melee.Controller.press_button(probe.controllers[2], btn)
-        if i == k + 2, do: Melee.Controller.release_button(probe.controllers[2], btn)
-        if i == k + 3, do: Melee.Controller.release_all(probe.controllers[1])
+    {probe, hit_at} =
+      Enum.reduce_while(1..120, {probe, nil}, fn i, {probe, _} ->
+        Melee.Controller.tilt_analog(probe.controllers[2], :main, walk_in, 0.5)
+        probe = Probe.step!(probe)
+        falco = Probe.gamestate(probe).players[2]
 
-        # A connected grab needs a throw to end: tilt falco back.
-        if method == :grab and i == k + 14 do
-          Melee.Controller.tilt_analog(probe.controllers[2], :main, 0.28, 0.5)
-        end
-
-        if method == :grab and i == k + 20 do
-          Melee.Controller.release_all(probe.controllers[2])
-        end
-
-        Probe.step!(probe)
+        if falco.hitlag_left > 0,
+          do: {:halt, {probe, i}},
+          else: {:cont, {probe, nil}}
       end)
 
+    # Falco flees; ness holds the charge `hold` more frames, then
+    # releases with nobody in range.
+    {probe, swing_hit?} =
+      Enum.reduce(1..(hold + 50), {probe, false}, fn i, {probe, swing_hit?} ->
+        Melee.Controller.tilt_analog(probe.controllers[2], :main, walk_out, 0.5)
+        if i == hold, do: Melee.Controller.release_button(probe.controllers[1], :a)
+        if i == hold + 1, do: Melee.Controller.tilt_analog(probe.controllers[1], :main, 0.5, 0.5)
+        probe = Probe.step!(probe)
+        falco = Probe.gamestate(probe).players[2]
+        {probe, swing_hit? or (i > hold and falco.hitlag_left > 0)}
+      end)
+
+    IO.puts("[dolphin]   arm: charge_hit_at=#{inspect(hit_at)} swing_hit=#{swing_hit?}")
     Melee.Controller.release_all(probe.controllers[1])
     Melee.Controller.release_all(probe.controllers[2])
     settle_ports(probe, [1, 2])

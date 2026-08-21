@@ -2,25 +2,32 @@ defmodule Melee.Integration.TechGeometryTest do
   use ExUnit.Case
 
   @moduledoc """
-  The geometry round: techniques that live on edges and lips. Two
-  live proofs plus two measured engine facts:
+  The geometry round: techniques that live on edges, lips, and walls.
+  Four live proofs:
 
     * edge cancel — a WAVEDASH's special landing slides off the BF
       platform edge into instant actionability (double jump out of
-      the slip), while an AERIAL landing's slide CLAMPS at the lip
-      even with dash momentum (rest_x exactly -20.0 — so "edge
-      cancelled aerials" via landing slides don't exist on this
-      engine; cancels belong to special landings and end animations);
+      the slip). An AERIAL landing's slide CLAMPS at the lip under a
+      NEUTRAL stick (rest_x exactly -20.0 even at dash momentum) but
+      carries OFF with the direction HELD through the landing lag —
+      the pro-play drop-off input;
     * no-impact land — on FoD, whose side platforms sweep their
       height continuously, a repeated short hop eventually crosses a
       lip inside the no-impact window: NO Landing action at all and
       0-frame actionability (a fixed platform is unreachable — the DJ
-      press grid is ~1.3 units coarse, measured on BF).
+      press grid is ~1.3 units coarse, measured on BF);
+    * walljump — Yoshi's Story's right flank is real wall at
+      x 52.67..53.73 all the way down (`Melee.Stages.wall_segments`,
+      extracted from the stage .dat): dash off the lip, hug full-in,
+      detect contact as "x stopped while falling", flick away —
+      Melee's plain walljump plays action 0xCB (the WallTechJump id);
+    * walltech — falco dair-spikes the YS ledge-hanger at tumble
+      percent; :walltech parks both sticks INTO the wall (the ASDI
+      shift manufactures the impact) — 0xCA right off the hang.
 
-  Walljump/walltech live proofs are NOT here: every entry mapped
-  (ledge drops on FD/PS/YS, hop-outs, wavedash slide-offs) fell PAST
-  the lips without ever registering wall contact — see melee-tech.md
-  for the maps; cracking that needs a windowed session.
+  FD and PS have almost no reachable wall (FD's is 10.5 units tall
+  below the lip, PS's 4 — a hanging body sits BELOW both), which is
+  why every earlier attempt there whiffed.
 
       MELEE_DOLPHIN_PATH=~/.local/share/slippi/exi-ai-flush/dolphin-emu-headless \\
       MELEE_ISO_PATH=~/isos/melee.iso \\
@@ -37,6 +44,10 @@ defmodule Melee.Integration.TechGeometryTest do
 
   @landing 0x2A
   @aerial_jumps [0x1B, 0x1C]
+  @wall_techs [0xCA, 0xCB]
+  @ys_lip 56.0
+  # YS's right flank is wall at x 52.67..53.73 (Melee.Stages).
+  @ys_wall_x 53.7
   # BF side platform: y 27.2, left one spans x -57.6..-20.
   @bf_plat_y 27.2
   @bf_left_inner_edge -20.0
@@ -115,6 +126,36 @@ defmodule Melee.Integration.TechGeometryTest do
 
         probe = recover(probe)
 
+        # The pro-play variant: HOLD the direction through the landing
+        # lag — does the held stick carry the landing off the lip
+        # where the neutral-stick slide clamped?
+        probe = mount_left_platform(probe)
+        probe = platform_position(probe, @bf_left_inner_edge - 34.0)
+
+        probe =
+          Enum.reduce(1..4, probe, fn _i, probe ->
+            Melee.Controller.tilt_analog(probe.controllers[1], :main, 1.0, 0.5)
+            Probe.step!(probe)
+          end)
+
+        {probe, _} =
+          run_tech(
+            probe,
+            Tech.new(:shffl, :fox, aerial: :uair, l_cancel: false, drift: :right),
+            120,
+            fn a, _ -> a end,
+            nil
+          )
+
+        {probe, held_slipped?, held_dj?} = watch_slip_holding(probe)
+
+        IO.puts(
+          "[dolphin] held-direction landing: rest_x=#{r(player(probe).position.x)} " <>
+            "slipped=#{held_slipped?} dj_out=#{held_dj?}"
+        )
+
+        probe = recover(probe)
+
         # The cancel that DOES slide: a SPECIAL landing (wavedash)
         # carries off the edge. Sweep the start offset; prove the
         # cancel with an INSTANT double jump out of the slip (the
@@ -153,9 +194,13 @@ defmodule Melee.Integration.TechGeometryTest do
 
         IO.puts("[dolphin] edge cancel (wavedash slide-off): #{inspect(result)}")
         assert control_lag != nil and control_lag >= 3
-        # The clamp: the aerial landing stopped AT the lip, never off.
+        # The clamp is NEUTRAL-STICK only: released, the landing stops
+        # AT the lip; the same landing with the direction HELD carries
+        # off into an instant double jump — the pro-play drop-off.
         assert not clamp_slipped?
         assert_in_delta clamp_rest, @bf_left_inner_edge, 0.1
+        assert held_slipped?
+        assert held_dj?
         assert result != nil
         _ = probe
       after
@@ -217,6 +262,136 @@ defmodule Melee.Integration.TechGeometryTest do
         assert control_action == @landing
         assert control_lag != nil and control_lag >= 2
         assert nil_result != nil
+        _ = probe
+      after
+        Probe.stop(probe)
+      end
+    end
+  end
+
+  test "walljump: slide off YS's lip, hug in to the real wall, flick away", ctx do
+    if ctx[:skip] do
+      IO.puts("\n[dolphin] skipped: #{ctx.skip}")
+    else
+      probe = boot(ctx, 52_125, :fox, :yoshis_story)
+
+      try do
+        probe = Probe.idle!(probe, 90)
+        probe = settle(probe)
+
+        walls = Melee.Stages.wall_segments(:yoshis_story, :right)
+        IO.puts("\n[dolphin] YS right wall: #{inspect(walls, limit: 4)} ...")
+
+        # The wavedash slide-off drops fox at the lip facing RIGHT (no
+        # ledge regrab — grabs need the facing), and YS's right flank
+        # is real wall from -10.5 all the way down (x 52.67..53.73 —
+        # Melee.Stages.wall_segments). Hug full-in, detect contact as
+        # "x stopped while falling", flick away.
+        {probe, result} =
+          Enum.reduce_while([1, 2, 3], {probe, nil}, fn attempt, {probe, _} ->
+            probe = recover(probe)
+            probe = center_at(probe, @ys_lip - 15.0)
+
+            # Dash off the lip facing RIGHT (a walk teeters; a
+            # leftward-facing exit regrabs the ledge on the way down).
+            {probe, off?} =
+              Enum.reduce_while(1..90, {probe, false}, fn _i, {probe, _} ->
+                Melee.Controller.tilt_analog(probe.controllers[1], :main, 1.0, 0.5)
+                probe = Probe.step!(probe)
+                p = player(probe)
+
+                if p.on_ground,
+                  do: {:cont, {probe, false}},
+                  else: {:halt, {probe, true}}
+              end)
+
+            Melee.Controller.release_all(probe.controllers[1])
+
+            {probe, trace} =
+              if off? do
+                run_tech(
+                  probe,
+                  Tech.new(:walljump, :fox, direction: :right, edge_x: @ys_lip, dive_y: -70.0),
+                  300,
+                  fn tr, p ->
+                    e =
+                      {p.action, Float.round(p.position.x, 1), Float.round(p.position.y, 1),
+                       Float.round(p.speed_y_self, 2), p.jumps_left}
+
+                    if tr == [] or elem(hd(tr), 0) != p.action, do: [e | tr], else: tr
+                  end,
+                  []
+                )
+              else
+                {probe, []}
+              end
+
+            trace = Enum.reverse(trace)
+            slipped? = off?
+            off = attempt
+
+            # Melee's plain walljump plays action 0xCB — the same id
+            # as WallTechJump (discovered here: the flick out of the
+            # wall-ride entered 0xCB with no damage state anywhere).
+            jumped = Enum.find(trace, fn {a, _x, _y, _vy, _j} -> a == 0xCB end)
+
+            IO.puts(
+              "\n[dolphin] off=#{off}: slipped=#{slipped?} walljump=#{inspect(jumped, base: :hex)} " <>
+                "trace=#{inspect(trace, base: :hex, limit: 14)}"
+            )
+
+            probe = recover(probe)
+
+            if jumped != nil,
+              do: {:halt, {probe, {off, jumped}}},
+              else: {:cont, {probe, nil}}
+          end)
+
+        assert result != nil
+        {_off, {_action, _x, _y, _vy, jumps_left}} = result
+        # The rise spent no aerial jump: the slide-off leaves exactly
+        # the double jump, and it must still be in pocket.
+        assert jumps_left >= 1
+        _ = probe
+      after
+        Probe.stop(probe)
+      end
+    end
+  end
+
+  test "walltech: falco dair-spikes the YS hanger onto the real wall", ctx do
+    if ctx[:skip] do
+      IO.puts("\n[dolphin] skipped: #{ctx.skip}")
+    else
+      probe = boot(ctx, 52_127, :fox, :yoshis_story)
+
+      try do
+        probe = Probe.idle!(probe, 90)
+        probe = settle_ports(probe, [1, 2])
+
+        {probe, teched?, _} =
+          Enum.reduce_while(
+            [54.0, 55.0, 53.0, 52.0, 51.0],
+            {probe, false, nil},
+            fn falco_x, {probe, _, _} ->
+              {probe, seen, trace} = walltech_round(probe, falco_x)
+              teched? = Enum.any?(@wall_techs, &MapSet.member?(seen, &1))
+
+              IO.puts(
+                "\n[dolphin] walltech (falco at #{falco_x}): teched=#{teched?} " <>
+                  "actions=#{inspect(Enum.sort(MapSet.to_list(seen)), base: :hex)} " <>
+                  "trace=#{inspect(trace, base: :hex, limit: 20)}"
+              )
+
+              probe = recover(probe)
+
+              if teched?,
+                do: {:halt, {probe, true, trace}},
+                else: {:cont, {probe, false, trace}}
+            end
+          )
+
+        assert teched?
         _ = probe
       after
         Probe.stop(probe)
@@ -456,6 +631,41 @@ defmodule Melee.Integration.TechGeometryTest do
     settle(probe)
   end
 
+  # watch_slip, but with the toward-the-edge direction HELD through
+  # the landing lag (the pro-play input for dropping off).
+  defp watch_slip_holding(probe) do
+    Enum.reduce_while(1..25, {probe, false, false, false}, fn _i, {probe, slipped, pressed, _} ->
+      p = player(probe)
+
+      cond do
+        not p.on_ground and p.position.y < @bf_plat_y - 1.0 and not pressed ->
+          Melee.Controller.press_button(probe.controllers[1], :y)
+          probe = Probe.step!(probe)
+          {:cont, {probe, true, true, false}}
+
+        pressed ->
+          Melee.Controller.release_button(probe.controllers[1], :y)
+          probe = Probe.step!(probe)
+          p2 = player(probe)
+
+          cond do
+            p2.action in @aerial_jumps -> {:halt, {probe, slipped, true, true}}
+            p2.on_ground -> {:halt, {probe, slipped, true, false}}
+            true -> {:cont, {probe, slipped, true, false}}
+          end
+
+        true ->
+          Melee.Controller.tilt_analog(probe.controllers[1], :main, 1.0, 0.5)
+          probe = Probe.step!(probe)
+          {:cont, {probe, slipped, pressed, false}}
+      end
+    end)
+    |> then(fn {probe, slipped, _pressed, dj} ->
+      Melee.Controller.release_all(probe.controllers[1])
+      {probe, slipped, dj}
+    end)
+  end
+
   # After the aerial's touchdown: did the landing slide off the edge,
   # and is fox INSTANTLY actionable (a double jump out of the slip)?
   defp watch_slip(probe) do
@@ -523,5 +733,144 @@ defmodule Melee.Integration.TechGeometryTest do
       end
 
     center_at(probe, -35.0)
+  end
+
+  ## walljump / walltech (Yoshi's Story) --------------------------------
+
+  # Step a routine that should stop being stepped once done.
+  defp step_until_done(nil, _player, _controller), do: nil
+
+  defp step_until_done(tech, player, controller) do
+    case Tech.step(tech, player, controller) do
+      {:done, _} -> nil
+      {:cont, t} -> t
+    end
+  end
+
+  # Falco up-smashes fox point-blank mid-stage until he carries
+  # `target` percent (vertical launches; fox lands back).
+  defp build_percent(probe, target) do
+    fox = player(probe)
+
+    if fox.percent >= target do
+      {probe, fox.percent}
+    else
+      probe = settle_ports(probe, [1, 2])
+      probe = center_at(probe, 0.0)
+      target_x = player(probe).position.x - 6.0
+      falco = Probe.gamestate(probe).players[2]
+      tilt = if falco.position.x > target_x, do: 0.28, else: 0.72
+      probe = walk_port(probe, 2, tilt, fn p -> abs(p.position.x - target_x) < 2.0 end)
+      probe = settle_ports(probe, [1, 2])
+
+      Melee.Controller.tilt_analog(probe.controllers[2], :c, 0.5, 1.0)
+      probe = Probe.step!(probe)
+      Melee.Controller.tilt_analog(probe.controllers[2], :c, 0.5, 0.5)
+      probe = Enum.reduce(1..90, probe, fn _i, probe -> Probe.step!(probe) end)
+      probe = recover(probe)
+      build_percent(probe, target)
+    end
+  end
+
+  # Walk to the right edge facing LEFT (via pivot), then backward
+  # wavedash off — the freefall grabs the ledge.
+  defp grab_right_ledge(probe, lip) do
+    probe = walk_until(probe, 0.28, fn p -> p.position.x < lip - 25.0 end)
+    probe = settle(probe)
+    probe = walk_until(probe, 0.72, fn p -> p.position.x > lip - 17.0 end)
+    probe = settle(probe)
+
+    {probe, _} =
+      run_tech(
+        probe,
+        Tech.new(:pivot, :fox, direction: :right, dash_frames: 4),
+        60,
+        fn a, _ -> a end,
+        nil
+      )
+
+    probe = settle(probe)
+
+    {probe, hung?} =
+      run_tech(
+        probe,
+        Tech.new(:wavedash, :fox, direction: :right),
+        120,
+        fn a, p ->
+          a or p.action == 0xFD
+        end,
+        false
+      )
+
+    if hung? do
+      {probe, true}
+    else
+      Enum.reduce_while(1..120, {probe, false}, fn _i, {probe, _} ->
+        Melee.Controller.release_all(probe.controllers[1])
+        probe = Probe.step!(probe)
+        p = Probe.gamestate(probe).players[1]
+
+        if p != nil and p.action == 0xFD,
+          do: {:halt, {probe, true}},
+          else: {:cont, {probe, false}}
+      end)
+    end
+  end
+
+  # One round: fox hangs on YS's right ledge, falco short-hop DAIRS
+  # the hanger; the armed :walltech parks both sticks INTO the wall
+  # (the ASDI shift plus tumble drift press the fall onto the real
+  # x 52.67..53.73 wall) and techs on contact.
+  defp walltech_round(probe, falco_x) do
+    probe = settle_ports(probe, [1, 2])
+
+    # A 0% spike gives hitstun -> plain Fall (no tumble, nothing to
+    # tech — measured: fox rode the wall pinned at x 55.8 all the way
+    # to the blast zone); build tumble percent first, and rebuild
+    # after deaths.
+    {probe, _} = build_percent(probe, 45.0)
+
+    # Falco parks near the edge first so his walk can't bump fox off.
+    probe = walk_port(probe, 2, 0.72, fn p -> p.position.x > @ys_lip - 14.0 end)
+    probe = settle_ports(probe, [1, 2])
+
+    {probe, hung?} = grab_right_ledge(probe, @ys_lip)
+
+    if hung? do
+      # Wait out the ledge intangibility, then walk falco to range.
+      probe = Probe.idle!(probe, 80)
+      falco = Probe.gamestate(probe).players[2]
+      tilt = if falco.position.x > falco_x, do: 0.28, else: 0.72
+      probe = walk_port(probe, 2, tilt, fn p -> abs(p.position.x - falco_x) < 1.2 end)
+      Melee.Controller.release_all(probe.controllers[2])
+      probe = Probe.step!(probe)
+
+      dair = Tech.new(:shffl, :falco, aerial: :dair, l_cancel: false, drift: :right)
+      wt = Tech.new(:walltech, :fox, wall_x: @ys_wall_x, margin: 7.0)
+
+      {probe, _machines, seen, trace} =
+        Enum.reduce(1..200, {probe, {dair, wt}, MapSet.new(), []}, fn _i,
+                                                                      {probe, {dair, wt}, seen,
+                                                                       tr} ->
+          gs = Probe.gamestate(probe)
+          fox = gs.players[1]
+          dair = step_until_done(dair, gs.players[2], probe.controllers[2])
+          {_status, wt} = Tech.step(wt, fox, probe.controllers[1])
+
+          probe = Probe.step!(probe)
+          p = player(probe)
+          seen = MapSet.put(seen, p.action)
+
+          e = {p.action, Float.round(p.position.x, 1), Float.round(p.position.y, 1)}
+          tr = if tr == [] or elem(hd(tr), 0) != p.action, do: [e | tr], else: tr
+          {probe, {dair, wt}, seen, tr}
+        end)
+
+      Melee.Controller.release_all(probe.controllers[1])
+      Melee.Controller.release_all(probe.controllers[2])
+      {probe, seen, Enum.reverse(trace)}
+    else
+      {probe, MapSet.new(), [:no_hang]}
+    end
   end
 end

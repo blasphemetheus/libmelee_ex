@@ -2134,7 +2134,7 @@ defmodule Melee.Tech do
       abs(player.position.x) > Keyword.get(tech.opts, :edge_x, 85.57) and
           player.position.y < 2.0 ->
         into = if ledge_right?(tech), do: 0.05, else: 0.95
-        {:cont, %{tech | phase: :hugging, counter: 0, aux: nil}, [{:tilt, :main, into, 0.22}]}
+        {:cont, %{tech | phase: :hugging, counter: 0, aux: nil}, [{:tilt, :main, into, 0.5}]}
 
       true ->
         {:cont, tech, []}

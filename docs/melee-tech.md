@@ -148,48 +148,54 @@ Ness usmash state map: 0x156 charge (hitting part ~frames 11-12),
 0x157 charge hold (multi-hits a CLOSE target on a ~6-frame cycle),
 0x158 the released swing (auto-releases at max charge, reach ~12).
 
-## The geometry round (`--only dolphin_geometry`, 2026-08-19)
+## The geometry round (`--only dolphin_geometry`, 2026-08-19/20)
 
-Two live proofs and two measured engine facts, in
+Four live proofs and the engine facts behind them, in
 `tech_geometry_test.exs`:
 
-- **Aerial landings CLAMP at platform edges.** A dash-jumped uair
-  landed at -21.9 slid to EXACTLY -20.0 (BF left platform's inner
-  edge) and stopped; walk-drift landings clamp too. "Edge-cancelled
-  aerials" via landing slides do not exist on this engine — sliding
-  edge cancels belong to SPECIAL landings and end animations.
-- **Edge cancel, the real one: the wavedash slide-off.** A wavedash
-  started 12 units from the lip slides off mid-lag into instant
-  actionability — proven with the teleport-edge-cancel
-  discriminator (a double jump the same frame as the slip). Note
-  the slide-vs-clamp boundary is sharp: one unit shorter and the
-  slide dies AT the lip in a permanent teeter (0xF5/0xF6 idles
-  forever on a released stick — settle helpers must escape it).
+- **Aerial landings clamp at platform edges UNDER A NEUTRAL STICK —
+  and carry off with the direction HELD.** A dash-jumped uair landed
+  at -21.9 with the stick released slid to EXACTLY -20.0 (BF left
+  platform's inner edge) and stopped; the SAME landing with the
+  direction held through the landing lag carried off the lip into an
+  instant double jump (rest -15.2). That held-direction drop-off is
+  the pro-play edge-cancel input: land something near a lip, hold
+  toward, act out of the fall lag-free.
+- **Edge cancel via the wavedash slide-off.** A wavedash started 12
+  units from the lip slides off mid-lag into instant actionability —
+  proven with the teleport-edge-cancel discriminator (a double jump
+  the same frame as the slip). The slide-vs-clamp boundary is sharp:
+  one unit shorter and the slide dies AT the lip in a permanent
+  teeter (0xF5/0xF6 idles forever on a released stick — settle
+  helpers must escape it).
 - **No-impact land is real, and unreachable on fixed platforms.**
   The DJ-press height is frame-quantized along a hop, so the
   achievable apex-vs-lip grid is ~1.2-1.3 units coarse (measured on
   BF across full/short hops and rise/fall triggers: best 1.3 above
   the lip, all normal landings). On FOUNTAIN OF DREAMS the side
-  platforms sweep their height continuously, so a repeated fixed
-  short hop samples every offset: rep 1 landed with NO Landing
-  action at all (fall -> Wait 0x0E directly) and 0-frame
-  actionability, vs the control's 0x2A + lag.
-
-**Walljump / walltech: attempted, mapped, NOT reproduced.** Every
-entry was tried against FD, Pokemon Stadium, and Yoshi's Story:
-ledge drops (soft-down and away releases), hop-outs with swept
-drift, and wavedash slide-off handovers, always holding hard into
-the stage — and NO attempt ever registered wall contact (positions
-never pinned; falls sailed through the nominal wall planes).
-Mapped facts for the next attempt: FD hang sits at x=87.5 and a
-full-in-hold fall passes x=85.5 at y=-42 with no collision; PS hang
-at 89.6, same pass-through; the reachable "wall band" — if there is
-one — is only the ~15 units under the lip, and every descent
-crosses it 1-3 units outside the plane. ASDI-into-the-wall from a
-dair'd ledge hang (the sideways Amsah tech) also produced no
-0xCA/0xCB. The `:walljump` and `:walltech` routines are shipped and
-unit-tested but UNVERIFIED live; cracking this wants a WINDOWED
-session (watch where the walls actually are).
+  platforms sweep their height continuously (from a deterministic
+  boot position), so a repeated fixed short hop samples every
+  offset: rep 1 landed with NO Landing action at all (fall -> Wait
+  0x0E directly) and 0-frame actionability, vs the control's 0x2A +
+  lag.
+- **Walljump — PROVEN on Yoshi's Story, and the wall data is in
+  `Melee.Stages.wall_segments/2`** (extracted from the stage .dat
+  files via exphil's collision pipeline, edge-validated). The
+  earlier failures were geometry, not mechanics: FD's wall is only
+  10.5 units tall below the lip and PS's 4 — a ledge hang's body
+  (bottom ~-14 to -18) sits BELOW both — while YS's right flank is
+  real wall at x 52.67..53.73 continuously from -3.5 down to -136.
+  The proof: dash off the YS lip, hug full-in, detect contact as "x
+  stopped while falling" (fox pins at x~55.8 and rides the wall
+  down), flick away — and Melee's plain WALLJUMP plays action 0xCB,
+  the same id as WallTechJump (discovered here; there is no separate
+  walljump action).
+- **Walltech — PROVEN on Yoshi's Story.** Falco short-hop dairs the
+  ledge-hanger at ~45% (a 0% spike gives hitstun -> plain Fall — no
+  tumble, nothing to tech; fox rode the wall pinned to the blast
+  zone); `:walltech` parks BOTH sticks into the wall so the c-stick
+  ASDI shift manufactures the impact at hitlag end: 0xCA right off
+  the hang (56.1, -17.9).
 
 ## The full remaining catalog
 
@@ -223,10 +229,22 @@ takes in this harness. NEXT ROUND (picked, in priority order):
    (a latched up-tilt spawned the bolt inside ness where it died
    instantly), and Slippi's item stream can silently STOP reporting
    a live bolt (the game-side PKT keeps running — trust hitlag, not
-   item visibility). The thunder jacket itself did NOT reproduce:
-   jab and grab interruptions of the yo-yo charge, followed by the
-   connecting PKT2 and a falco walk-in probe, produced zero contact
-   damage every time. Windowed follow-up for the arming folklore.
+   item visibility); and the bolt loop's rightmost arc reaches
+   ness + 44 — a bystander parked inside it eats the bolt (park at
+   55+). The thunder jacket itself has NOT manifested even under
+   the cracked recipe (2026-08-20): the arming now follows
+   SmashWiki/smashboards exactly — the CHARGE's hitbox connects on
+   falco (verified: hit at charge frame 12, matching the mapped
+   11-12 hitting window), falco retreats, the charge releases with
+   the swing hitting nothing (verified clean), then the connecting
+   PKT2 — and the walk-in probe still reads zero contact damage.
+   Two loose ends for the follow-up: the arming hit itself is
+   position-marginal (the charge only reaches ~8.6 in a narrow
+   window, so the hit doesn't land every round), and the recipe's
+   "blast PKT2 against a floor or grabbable ledge" may require a
+   MID-FLIGHT interrupt (a platform underfoot or a ledge grab)
+   rather than our grounded horizontal slide — a Battlefield
+   platform variant is the natural next experiment.
 3. **ICs wobbling — PROVEN (2026-08-19, `--only
    dolphin_characters`).** `:wobble`: desync grab, then down+A on a
    metronome — interval 36 held falco for ~190 grabbed frames while
@@ -239,11 +257,21 @@ takes in this harness. NEXT ROUND (picked, in priority order):
    `Melee.GameEvents` now infers the attacker as the port holding a
    grab (without it the wobble was invisible to the conversion
    tracker).
-4. **Walljump + walltech, windowed** — see the geometry-round
-   findings above; blocked on locating the actual wall collision.
-5. **Thunder jacket arming, windowed** — see item 2; the PKT2 half
-   is productized, the yo-yo interruption that stores the hitbox is
-   the open question.
+4. **Walljump + walltech — PROVEN (2026-08-20, `--only
+   dolphin_geometry`).** The blocker was geometry, not mechanics:
+   the real wall data (extracted from the stage .dat files, now in
+   `Melee.Stages.wall_segments/2`) shows FD's wall is 10.5 units
+   tall below the lip and PS's 4 — a ledge hang's body hangs BELOW
+   both — while Yoshi's Story's flanks are wall continuously to the
+   depths. See the geometry-round section: walljump = dash off the
+   YS lip + full-in hug + contact detection + away flick (plain
+   walljumps play action 0xCB, the WallTechJump id); walltech =
+   dair-spike the hanger at tumble percent with both sticks parked
+   into the wall (the ASDI shift makes the impact).
+5. **Thunder jacket, remaining** — see item 2: recipe verified
+   per-component, jacket unmanifested; next levers are a robust
+   (non-grazing) self-hit aim and the mid-flight PKT2 interrupt
+   (platform floor / ledge grab).
 
 Feasible, unpicked (do after or on request): ledge-cancelled
 specials (Fox/Falco Illusion off platform edges); Illusion/Phantasm

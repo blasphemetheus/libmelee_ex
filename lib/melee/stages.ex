@@ -118,12 +118,200 @@ defmodule Melee.Stages do
     1022 => {-14.954894065856934, -103.46499633789062}
   }
 
+  # Wall collision segments per stage, `{x1, y1, x2, y2}` in the class
+  # the game assigns them (:right = a surface characters press against
+  # from the RIGHT side, i.e. facing left — the stage's right flank;
+  # :left is the mirror). Extracted from the stage .dat files
+  # (exphil `scripts/extract_stage_collision.exs`, edge-validated
+  # against `edge_ground_position/1`), rounded to 2 decimals.
+  #
+  # Reading the shapes: FD's right wall is vertical only from
+  # (85.57, 0) down to -10.5 before slanting hard inward — a ledge
+  # hang's body (bottom ~-14.4) sits BELOW it, which is why hang-drop
+  # walljumps whiff there. Yoshi's Story has the DEEP practice wall:
+  # x = 53.73 from y -47 all the way to -136. Pokemon Stadium's lists
+  # include interior/transformation surfaces, not just the flanks.
+  @walls %{
+    final_destination: %{
+      right: [
+        {85.57, 0.0, 85.57, -10.5},
+        {85.57, -10.5, 65.8, -20.45},
+        {65.8, -20.45, 65.84, -31.34},
+        {65.84, -31.34, 61.42, -47.37},
+        {61.42, -47.37, 53.77, -54.26}
+      ],
+      left: [
+        {-85.57, -10.5, -85.57, 0.0},
+        {-65.8, -20.45, -85.57, -10.5},
+        {-65.84, -31.34, -65.8, -20.45},
+        {-61.42, -47.37, -65.84, -31.34},
+        {-53.77, -54.26, -61.42, -47.37}
+      ]
+    },
+    battlefield: %{
+      right: [
+        {68.4, 0.0, 64.98, -6.0},
+        {38.0, -21.2, 32.8, -24.8},
+        {35.6, -18.0, 38.0, -21.2},
+        {32.8, -24.8, 30.4, -28.8},
+        {30.4, -28.8, 29.2, -34.8},
+        {-10.31, -31.26, -10.4, -40.0}
+      ],
+      left: [
+        {-64.98, -6.0, -68.4, 0.0},
+        {-32.8, -24.8, -38.0, -21.2},
+        {-38.0, -21.2, -35.6, -18.0},
+        {-30.4, -28.8, -32.8, -24.8},
+        {-29.2, -34.8, -30.4, -28.8},
+        {10.4, -40.0, 10.31, -31.26}
+      ]
+    },
+    yoshis_story: %{
+      right: [
+        {56.0, -3.5, 56.0, -6.65},
+        {56.0, -6.65, 54.95, -7.7},
+        {54.95, -7.7, 53.73, -10.5},
+        {53.73, -10.5, 52.67, -12.25},
+        {52.67, -12.25, 52.67, -26.95},
+        {52.67, -26.95, 53.73, -28.0},
+        {53.73, -28.0, 53.73, -29.75},
+        {53.73, -29.75, 52.67, -30.8},
+        {52.67, -30.8, 52.67, -46.2},
+        {52.67, -46.2, 53.73, -47.25},
+        {53.73, -47.25, 53.73, -136.5}
+      ],
+      left: [
+        {-56.0, -6.65, -56.0, -3.5},
+        {-54.95, -7.7, -56.0, -6.65},
+        {-53.73, -10.5, -54.95, -7.7},
+        {-52.67, -12.25, -53.73, -10.5},
+        {-52.67, -26.95, -52.67, -12.25},
+        {-53.73, -28.0, -52.67, -26.95},
+        {-53.73, -29.75, -53.73, -28.0},
+        {-52.67, -30.8, -53.73, -29.75},
+        {-52.67, -45.33, -52.67, -30.8},
+        {-54.6, -47.25, -52.67, -45.33},
+        {-54.6, -136.5, -54.6, -47.25}
+      ]
+    },
+    dreamland: %{
+      right: [
+        {77.27, 0.01, 76.34, -11.04},
+        {76.34, -11.04, 65.76, -35.76}
+      ],
+      left: [
+        {-76.34, -11.04, -77.27, 0.01},
+        {-65.76, -35.76, -76.34, -11.04}
+      ]
+    },
+    fountain_of_dreams: %{
+      right: [
+        {63.35, 0.62, 63.26, -4.4},
+        {63.26, -4.4, 59.48, -14.66},
+        {59.48, -14.66, 56.87, -19.55},
+        {56.87, -19.55, 54.93, -26.12},
+        {54.93, -26.12, 51.91, -32.21},
+        {51.91, -32.21, 47.6, -37.48},
+        {47.6, -37.48, 41.18, -41.91},
+        {18.91, -48.67, 12.96, -54.28},
+        {12.96, -54.28, 10.17, -61.97},
+        {10.17, -61.97, 8.68, -71.83},
+        {8.68, -71.83, 8.44, -247.43}
+      ],
+      left: [
+        {-63.26, -4.4, -63.35, 0.62},
+        {-59.48, -14.66, -63.26, -4.4},
+        {-56.87, -19.55, -59.48, -14.66},
+        {-54.93, -26.12, -56.87, -19.55},
+        {-51.91, -32.21, -54.93, -26.12},
+        {-47.6, -37.48, -51.91, -32.21},
+        {-41.18, -41.91, -47.6, -37.48},
+        {-12.96, -54.28, -18.91, -48.67},
+        {-10.17, -61.97, -12.96, -54.28},
+        {-8.68, -71.83, -10.17, -61.97},
+        {-8.44, -247.43, -8.68, -71.83}
+      ]
+    },
+    pokemon_stadium: %{
+      right: [
+        {87.75, 0.0, 87.75, -4.0},
+        {87.75, -4.0, 73.75, -15.0},
+        {73.75, -15.0, 73.75, -17.5},
+        {60.0, -17.5, 60.0, -38.0},
+        {15.0, -60.0, 15.0, -135.0},
+        {-1.25, 27.75, -1.25, 21.5},
+        {-21.0, 2.5, -24.0, 5.5},
+        {-24.0, 5.5, -24.0, 50.0},
+        {-28.0, 1.5, -28.0, 16.5},
+        {-28.0, 16.5, -32.75, 28.5},
+        {-32.75, 28.5, -32.75, 48.0},
+        {-32.75, 48.0, -42.0, 69.0},
+        {-49.5, 26.5, -52.5, 29.5},
+        {-52.5, 29.5, -54.25, 37.75},
+        {-70.0, 0.0, -70.0, -5.0}
+      ],
+      left: [
+        {-87.75, -4.0, -87.75, 0.0},
+        {-73.75, -15.0, -87.75, -4.0},
+        {-73.75, -17.5, -73.75, -15.0},
+        {-60.0, -38.0, -60.0, -17.5},
+        {-15.0, -135.0, -15.0, -60.0},
+        {-3.75, 12.75, -3.75, 27.75},
+        {-5.0, 0.0, -3.75, 12.75},
+        {-33.0, 26.5, -33.0, 50.0},
+        {-36.0, 20.5, -33.0, 26.5},
+        {-45.0, 5.5, -45.0, 8.5},
+        {-45.0, 8.5, -46.5, 11.5},
+        {-46.5, 11.5, -49.5, 14.5},
+        {-48.0, 2.5, -45.0, 5.5},
+        {-49.5, 14.5, -57.0, 19.0},
+        {-57.0, 19.0, -60.0, 23.5},
+        {-60.0, 23.5, -62.25, 37.75},
+        {-67.75, 69.0, -67.75, 75.0},
+        {-74.5, -2.0, -77.25, 18.0},
+        {-74.75, 24.0, -74.75, 69.0},
+        {-77.25, 18.0, -74.75, 24.0},
+        {70.0, -5.0, 70.0, 0.0}
+      ]
+    }
+  }
+
   @randall_interval 1200
   @randall_width 11.9
 
   @doc "Returns the Randall movement cycle length in frames (1200)."
   @spec randall_interval() :: pos_integer()
   def randall_interval, do: @randall_interval
+
+  @doc """
+  Wall collision segments for a stage, as `{x1, y1, x2, y2}` tuples.
+  `side` is the collision class: `:right` surfaces are pressed against
+  from the stage's right flank (facing left), `:left` the mirror.
+  Extracted from the stage .dat files and edge-validated; Pokemon
+  Stadium's lists include interior/transformation surfaces.
+
+  The tall practice wall: Yoshi's Story's right flank runs vertically
+  at x = 53.73 from y -47.25 down to -136.5.
+
+  ## Examples
+
+      iex> Melee.Stages.wall_segments(:final_destination, :right) |> hd()
+      {85.57, 0.0, 85.57, -10.5}
+
+      iex> Melee.Stages.wall_segments(:yoshis_story, :right) |> List.last()
+      {53.73, -47.25, 53.73, -136.5}
+
+      iex> Melee.Stages.wall_segments(0x99, :right)
+      []
+  """
+  @spec wall_segments(stage(), :left | :right) ::
+          [{number(), number(), number(), number()}]
+  def wall_segments(stage, side) when side in [:left, :right] do
+    case Map.get(@walls, key(stage)) do
+      nil -> []
+      sides -> Map.fetch!(sides, side)
+    end
+  end
 
   @doc """
   Returns the blast zone boundaries `{left_x, right_x, top_y, bottom_y}`

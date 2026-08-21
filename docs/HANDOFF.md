@@ -13,9 +13,11 @@ characters/research — all green). Round outcomes, full detail in
 **docs/melee-tech.md**:
 
 1. Edge cancel — PROVEN as the wavedash slide-off (instant DJ out of
-   the slip). FINDING: aerial-landing slides CLAMP at platform edges
-   (rest exactly -20.0 even at dash speed) — "edge-cancelled
-   aerials" via landing slides don't exist on this engine.
+   the slip). CORRECTED 2026-08-20: aerial-landing slides clamp at
+   platform edges only under a NEUTRAL stick; with the direction
+   HELD through the landing lag the landing carries off the lip into
+   an instant double jump — the pro-play drop-off input (user
+   correction, live-verified).
 2. No-impact land — PROVEN on Fountain of Dreams (its platforms
    sweep height continuously; a fixed platform is unreachable — the
    DJ apex grid is ~1.3 units coarse, measured). NIL = NO Landing
@@ -26,11 +28,17 @@ characters/research — all green). Round outcomes, full detail in
 4. Ness PKT2 self-hit — PROVEN (`:pkt2` steer plans; bolt turns
    6 deg/f, r~19, dies on floors, and Slippi's item stream can
    silently stop reporting a LIVE bolt — trust hitlag). The thunder
-   JACKET arming did NOT reproduce (jab/grab interruptions) —
-   windowed follow-up.
-5. Walljump + walltech — NOT reproduced: every probed entry on
-   FD/PS/YS falls past the lips without wall contact (maps in
-   melee-tech.md); routines shipped unit-tested; windowed follow-up.
+   JACKET: the cracked recipe (charge hit -> clean release -> PKT2)
+   is now verified per-component and STILL doesn't manifest —
+   remaining levers: a non-grazing self-hit aim and the mid-flight
+   PKT2 interrupt (BF platform / ledge grab). See melee-tech.md.
+5. Walljump + walltech — PROVEN 2026-08-20 on Yoshi's Story after
+   importing the REAL wall geometry (exphil's stage-.dat collision
+   extraction) as `Melee.Stages.wall_segments/2`: FD/PS have almost
+   no wall below their lips (10.5 / 4 units — hangs sit BELOW), YS's
+   flanks are wall to the depths. Plain walljumps play action 0xCB
+   (the WallTechJump id); walltech via dair-spiked hang at tumble
+   percent + double-stick ASDI into the wall.
 6. ICs wobbling — PROVEN: 9-move 21% single conversion. Two
    mechanics pinned: stick throws fire on EDGES (park the down in
    CatchPull), and grab damage carries last_hit_by=0 on the wire —
