@@ -160,6 +160,28 @@ defmodule Melee.MemoryMapTest do
       assert MemoryMap.scene_name(0xFFFF_FFFF) == {:unknown, 0xFFFF}
     end
 
+    # SceneView classes: settled-known / settled-unknown / leaving.
+    # Each class below is one clause a consumer's cond must handle.
+    test "scene_view: settled at a known scene" do
+      assert MemoryMap.scene_view(0x02020200) == {:settled, :character_select}
+      assert MemoryMap.scene_view(0x08080800) == {:settled, :slippi_online_css}
+      assert MemoryMap.scene_view(0x02020202) == {:settled, :in_game}
+    end
+
+    test "scene_view: settled at an unmapped scene stays identifiable" do
+      assert MemoryMap.scene_view(0x42424200) == {:settled, {:unknown, 0x42}}
+    end
+
+    test "scene_view: leaving — pending family labeled at entry" do
+      # Online CSS -> VS-family transition committed, not yet landed.
+      assert MemoryMap.scene_view(0x08020800) ==
+               {:leaving, :slippi_online_css, :character_select}
+
+      # Pending an unmapped family: still a :leaving, target unknown.
+      assert MemoryMap.scene_view(0x08420800) ==
+               {:leaving, :slippi_online_css, {:unknown, 0x42}}
+    end
+
     test "decode_scene rejects out-of-range input loudly" do
       assert_raise FunctionClauseError, fn -> MemoryMap.decode_scene(-1) end
       assert_raise FunctionClauseError, fn -> MemoryMap.decode_scene(0x1_0000_0000) end

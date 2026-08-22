@@ -152,6 +152,47 @@ defmodule Melee.MemoryMap do
     u32 |> decode_scene() |> Map.fetch!(:stream_scene) |> Melee.Events.Menu.scene_name()
   end
 
+  @doc """
+  Classify a packed `:menu_state` word into a scene VIEW — the shape
+  consumers reason about.
+
+  Data definition:
+
+      SceneView = {:settled, SceneName}
+                | {:leaving, SceneName, SceneName}
+
+    * `{:settled, name}` — `pending_major == major`: the scene is
+      stable; `name` labels it (`Melee.Events.Menu.scene_name/1`
+      taxonomy, so `{:unknown, scene}` marks unmapped scenes rather
+      than crashing).
+    * `{:leaving, from, to}` — `pending_major != major`: a scene
+      change is committed in the engine but not yet landed. RAM-only
+      signal; the Slippi stream never carries it. `to` is labeled at
+      the pending family's ENTRY minor (0) — scene families enter at
+      their first stage, but the true landing minor is the engine's
+      call, so treat `to` as the FAMILY, not the exact screen.
+
+  ## Examples
+
+      iex> Melee.MemoryMap.scene_view(0x02020200)
+      {:settled, :character_select}
+
+      iex> Melee.MemoryMap.scene_view(0x01020100)
+      {:leaving, :main_menu, :character_select}
+  """
+  @spec scene_view(non_neg_integer()) ::
+          {:settled, term()} | {:leaving, term(), term()}
+  def scene_view(u32) do
+    decoded = decode_scene(u32)
+
+    if decoded.pending_major == decoded.major do
+      {:settled, Melee.Events.Menu.scene_name(decoded.stream_scene)}
+    else
+      {:leaving, Melee.Events.Menu.scene_name(decoded.stream_scene),
+       Melee.Events.Menu.scene_name(decoded.pending_major)}
+    end
+  end
+
   @doc "menu/0 ++ canary/0 — the standing set for menu-era sessions."
   def menu_with_canary, do: canary() ++ menu()
 end
