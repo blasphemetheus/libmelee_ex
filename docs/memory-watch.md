@@ -111,7 +111,11 @@ transition trace confirming the order is still owed.
 ## Hunting a new address (the playbook)
 
 When a classic address is stale (or you need something never mapped),
-the watcher itself is the probe:
+the watcher itself is the probe. `Melee.MemoryHunt` is the pure kit —
+`candidates/3` (region → watch batch), `changed/2` (snapshot diff),
+`correlated/2` (driven-minus-idle differential), `f32_class/1`
+(stale-read triage), `tracks?/2` (commanded-coordinate confirmation) —
+and `examples/memory_hunt_css.exs` is the live driver. The method:
 
 1. **Batch candidates.** Locations.txt takes many lines — watch 50–100
    candidates per run, drive the game state you care about, keep the
