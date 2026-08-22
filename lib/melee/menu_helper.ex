@@ -1123,7 +1123,18 @@ defmodule Melee.MenuHelper do
       # (No longer gated on swag — with direct selection swag is false
       # on the slippi CSS until the reroll fallback engages, and this
       # post-lock flow must run either way.)
-      correct_character and slippi_css? ->
+      #
+      # 2026-08-22: additionally require a SELECTION signal (coin down
+      # or the ready banner). The mainline-beta online CSS reports the
+      # HOVERED portrait in the character byte, so bare
+      # `correct_character` went true the moment the cursor reached
+      # the target and this branch mashed START forever without ever
+      # pressing A (live wedge, EXPH#288 session; state dump:
+      # character correct, coin_down false, cursor parked). Without
+      # the signal we fall through to select_character, whose
+      # hover-gated A press does the actual pick.
+      correct_character and slippi_css? and
+          (ai_state.coin_down or gamestate.ready_to_start) ->
         if Integer.mod(gamestate.frame, 2) == 0 do
           Controller.release_all(controller)
         else

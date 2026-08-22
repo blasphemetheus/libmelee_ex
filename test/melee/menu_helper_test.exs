@@ -1223,13 +1223,32 @@ defmodule Melee.MenuHelperTest do
       {pid, path} = file_controller(ctx)
       state = %{MenuHelper.new() | slippi_css_frames: 123}
 
-      # Locked (hovered character == fox), odd frame, costume matches:
-      # the post-lock flow presses START — without swag.
-      gamestate = slippi_css_gs(character: @fox, frame: 3)
+      # Locked (character == fox AND the coin is down), odd frame,
+      # costume matches: the post-lock flow presses START — without
+      # swag. Since 2026-08-22 (GOTCHA #101) the character byte alone
+      # is NOT a lock signal — the online-CSS snapshot reports the
+      # HOVERED/last-selected character — so this branch additionally
+      # requires coin_down or the ready banner.
+      gamestate = slippi_css_gs(character: @fox, coin_down: true, frame: 3)
       {state, wrote} = step_frame(state, gamestate, pid, path, base_opts())
 
       assert state.slippi_css_frames == 0
       assert wrote =~ "PRESS START"
+    end
+
+    test "hovered-but-unselected character falls through to the A press (GOTCHA #101)", ctx do
+      {pid, path} = file_controller(ctx)
+      state = %{MenuHelper.new() | slippi_css_frames: 123}
+
+      # character byte reads fox (hover/snapshot) but NO selection
+      # signal: must NOT press START; with the cursor on the portrait
+      # the select flow presses A instead (the live 08-22 wedge:
+      # START-mashing forever, fox never picked).
+      gamestate = slippi_css_gs(character: @fox, cursor: cursor(-22.0, 11.5), frame: 3)
+      {_state, wrote} = step_frame(state, gamestate, pid, path, base_opts())
+
+      refute wrote =~ "PRESS START"
+      assert wrote =~ "PRESS A"
     end
   end
 

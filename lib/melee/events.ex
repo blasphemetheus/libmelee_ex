@@ -217,6 +217,19 @@ defmodule Melee.Events do
   """
   @spec handle_menu_event(Parser.t(), binary()) :: {:frame_complete, GameState.t(), Parser.t()}
   def handle_menu_event(%Parser{} = parser, bin) when is_binary(bin) do
+    # EXPHIL_MENU_RAW=1 (2026-08-22, frozen-online-CSS diagnosis): dump
+    # the raw payload hex once a second. IO.puts, not Logger — the play
+    # scripts' default verbosity suppresses :info. Remove when the CSS
+    # feed question is settled.
+    if System.get_env("EXPHIL_MENU_RAW") == "1" do
+      n = Process.get(:menu_raw_n, 0)
+      Process.put(:menu_raw_n, n + 1)
+
+      if rem(n, 60) == 0 do
+        IO.puts("[menu_raw] n=#{n} size=#{byte_size(bin)} #{Base.encode16(bin)}")
+      end
+    end
+
     gamestate = Menu.parse(bin, parser.gamestate)
     {:frame_complete, gamestate, %{parser | gamestate: %GameState{}}}
   end
