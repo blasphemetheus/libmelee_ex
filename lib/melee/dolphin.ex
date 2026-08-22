@@ -89,6 +89,7 @@ defmodule Melee.Dolphin do
     :slippi_port,
     :flavor,
     :temp_home?,
+    :memory_watcher,
     user_json?: false
   ]
 
@@ -104,6 +105,9 @@ defmodule Melee.Dolphin do
     * `:temp_home?` — whether we created `:home` and delete it on `stop/1`
     * `:user_json?` — whether `<home>/Slippi/user.json` ended up in place
       (netplay/connect-code play needs it; see `setup_user_json/2`)
+    * `:memory_watcher` — `Melee.MemoryWatcher` pid when `:memory_watch`
+      was given (started against `:home` BEFORE the process spawned —
+      Dolphin reads Locations.txt exactly once at core start), else nil
   """
   @type t :: %__MODULE__{
           port: port() | nil,
@@ -113,6 +117,7 @@ defmodule Melee.Dolphin do
           slippi_port: pos_integer(),
           flavor: :ishiiruka | :mainline,
           temp_home?: boolean(),
+          memory_watcher: pid() | nil,
           user_json?: boolean()
         }
 
@@ -144,6 +149,7 @@ defmodule Melee.Dolphin do
           | {:gecko_definitions, [String.t()]}
           | {:boot_rules, keyword()}
           | {:exi_inputs, boolean()}
+          | {:memory_watch, keyword() | [String.t()]}
           | {:ffw, boolean()}
           | {:direct_channel, boolean()}
           | {:direct_inputs, boolean()}
@@ -242,8 +248,21 @@ defmodule Melee.Dolphin do
   """
   @spec launch([launch_opt()]) :: {:ok, t()} | {:error, term()}
   def launch(opts) do
-    with {:ok, prep} <- prepare_home(opts) do
-      start_process(prep)
+    with {:ok, prep} <- prepare_home(opts),
+         {:ok, watcher} <- maybe_start_memory_watcher(prep.home, opts),
+         {:ok, dolphin} <- start_process(prep) do
+      {:ok, %{dolphin | memory_watcher: watcher}}
+    end
+  end
+
+  # :memory_watch must be wired between prepare_home and the process
+  # spawn: the watcher writes Locations.txt and binds the socket, and
+  # Dolphin reads the file exactly once at core start.
+  defp maybe_start_memory_watcher(home, opts) do
+    case Keyword.get(opts, :memory_watch) do
+      nil -> {:ok, nil}
+      [] -> {:ok, nil}
+      watches -> Melee.MemoryWatcher.start_link(home: home, watches: watches)
     end
   end
 
@@ -483,6 +502,9 @@ defmodule Melee.Dolphin do
   """
   @spec stop(t()) :: :ok
   def stop(%__MODULE__{} = dolphin) do
+    if dolphin.memory_watcher && Process.alive?(dolphin.memory_watcher),
+      do: Melee.MemoryWatcher.stop(dolphin.memory_watcher)
+
     if dolphin.port && Port.info(dolphin.port), do: Port.close(dolphin.port)
 
     if dolphin.os_pid do
