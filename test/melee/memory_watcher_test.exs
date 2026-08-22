@@ -256,6 +256,51 @@ defmodule Melee.MemoryWatcherTest do
     end
   end
 
+  describe "traffic/1 — the liveness ratchet" do
+    # Data definition: a MONOTONE count of datagrams received,
+    # parse-independent. Frame classes that must count: parseable
+    # change frames, bare-NUL empty steps (sent EVERY step — the
+    # signal that makes liveness work with zero value changes), junk.
+    setup do
+      home = Path.join(System.tmp_dir!(), "mw_traffic_#{System.unique_integer([:positive])}")
+      on_exit(fn -> File.rm_rf!(home) end)
+      {:ok, home: home}
+    end
+
+    defp push_raw(home, data) do
+      {:ok, s} = :socket.open(:local, :dgram, :default)
+
+      :ok =
+        :socket.sendto(s, data, %{
+          family: :local,
+          path: Path.join(home, "MemoryWatcher/MemoryWatcher")
+        })
+
+      :socket.close(s)
+    end
+
+    test "starts at zero; every frame class counts; count is monotone", %{home: home} do
+      {:ok, w} = MemoryWatcher.start_link(home: home, watches: [a: "AA"])
+      assert MemoryWatcher.traffic(w) == 0
+
+      # change frame + empty step + junk = 3
+      push_raw(home, "AA\n1\n\0")
+      push_raw(home, "\0")
+      push_raw(home, <<255, 254, 0>>)
+      Process.sleep(100)
+      assert MemoryWatcher.traffic(w) == 3
+
+      # A quiet interval holds the count (delta == 0 = "not advancing").
+      Process.sleep(50)
+      assert MemoryWatcher.traffic(w) == 3
+
+      push_raw(home, "\0")
+      Process.sleep(100)
+      assert MemoryWatcher.traffic(w) == 4
+      MemoryWatcher.stop(w)
+    end
+  end
+
   describe "lifecycle edges" do
     setup do
       home = Path.join(System.tmp_dir!(), "mw_life_#{System.unique_integer([:positive])}")

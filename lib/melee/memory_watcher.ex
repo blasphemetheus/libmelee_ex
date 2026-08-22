@@ -97,6 +97,17 @@ defmodule Melee.MemoryWatcher do
   def snapshot(watcher), do: GenServer.call(watcher, :snapshot)
 
   @doc """
+  Monotone count of datagrams received since start — PARSE-INDEPENDENT
+  (junk and bare-NUL empty-step frames count). Dolphin sends a datagram
+  EVERY step while game frames advance, so a positive delta between two
+  reads is ground truth for "the core is running and paced", even when
+  no watched value changes. The liveness ratchet
+  (MEMORY_WATCH_PROGRAM app #12).
+  """
+  @spec traffic(GenServer.server()) :: non_neg_integer()
+  def traffic(watcher), do: GenServer.call(watcher, :traffic)
+
+  @doc """
   Subscribe the calling process: it receives
   `{:memory_watch, name, u32}` on every change of that watch (`:all`
   subscribes to every watch). Subscriptions die with the subscriber.
@@ -214,7 +225,8 @@ defmodule Melee.MemoryWatcher do
        # datagram key (the verbatim line) -> watch name
        names: Map.new(watches, fn {name, line} -> {line, name} end),
        values: %{},
-       subs: %{}
+       subs: %{},
+       traffic: 0
      }}
   end
 
@@ -239,7 +251,10 @@ defmodule Melee.MemoryWatcher do
 
   @impl true
   def handle_info({:mw_datagram, data}, state) do
-    state = Map.update(state, :raw_ring, [data], fn r -> Enum.take([data | r], 5) end)
+    state =
+      state
+      |> Map.update!(:traffic, &(&1 + 1))
+      |> Map.update(:raw_ring, [data], fn r -> Enum.take([data | r], 5) end)
 
     case parse_datagram(data) do
       {:ok, updates} ->
@@ -288,6 +303,8 @@ defmodule Melee.MemoryWatcher do
   end
 
   def handle_call(:snapshot, _from, state), do: {:reply, state.values, state}
+
+  def handle_call(:traffic, _from, state), do: {:reply, state.traffic, state}
 
   def handle_call(:debug_info, _from, state) do
     {:reply, %{socket: :socket.info(state.sock), raw_ring: Map.get(state, :raw_ring, [])}, state}
