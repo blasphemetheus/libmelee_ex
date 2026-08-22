@@ -91,6 +91,36 @@ defmodule Melee.MemoryWatcherTest do
                {:ok, [{"KNOWN", 1}, {"UNKNOWN", 2}]}
     end
 
+    test "totality property: parse_datagram never raises on arbitrary bytes" do
+      # The receive path feeds parse_datagram RAW socket data; a crash
+      # there kills the watcher mid-session. Junk must return :error,
+      # never raise — including non-UTF8 bytes and embedded NULs.
+      for _ <- 1..200 do
+        len = :rand.uniform(64)
+        data = :crypto.strong_rand_bytes(len)
+
+        case MemoryWatcher.parse_datagram(data) do
+          {:ok, updates} when is_list(updates) -> :ok
+          :error -> :ok
+        end
+      end
+
+      # Adversarial shapes seen or imaginable on the wire.
+      for data <- [
+            <<0, 0, 0>>,
+            "\n\n\n\0",
+            "804D5F90\n\n\0",
+            "\n804D5F90\n1\n\0",
+            <<255, 254, 10, 49, 10, 0>>,
+            String.duplicate("a\n1\n", 500) <> <<0>>
+          ] do
+        case MemoryWatcher.parse_datagram(data) do
+          {:ok, updates} when is_list(updates) -> :ok
+          :error -> :ok
+        end
+      end
+    end
+
     test "roundtrip property: any rendered watch set's keys parse back verbatim" do
       # 30 random watch sets; the compose side is simulated from the
       # rendered Locations lines (dolphin echoes lines verbatim).

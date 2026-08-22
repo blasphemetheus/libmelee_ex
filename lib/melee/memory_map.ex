@@ -89,6 +89,69 @@ defmodule Melee.MemoryMap do
   """
   def canary, do: [rng_seed: "804D5F90"]
 
+  @doc """
+  Decode the packed `:menu_state` u32 (address 0x80479D30) — the
+  game's scene controller struct, four bytes big-endian:
+
+      <<major, pending_major, previous_major, minor>>
+
+  `major` is the scene family (0x02 = VS mode, 0x08 = Slippi online,
+  0x01 = main menu, 0x28 = boot, special-melee majors per
+  `Melee.Events.Menu`), `minor` the stage within it (0 = CSS, 1 = SSS,
+  2 = in game, VS convention). `pending_major`/`previous_major` are
+  the controller's transition registers — RAM-only signal the Slippi
+  stream never carries: `pending != major` means a scene change is
+  already committed but not yet landed.
+
+  `stream_scene` is the same `(minor <<< 8) ||| major` u16 the Slippi
+  menu event (0x3E) sends, so the decode plugs straight into
+  `Melee.Events.Menu.scene_name/1` and every scene the stream parser
+  already knows is a free cross-check.
+
+  Layout evidence (2026-08-22): live read 0x02020200 at the offline VS
+  CSS = {vs, vs, vs, css} — exactly the community scene-controller
+  struct (Salvato RAM sheet / decomp). Byte-1/2 naming
+  (pending/previous) follows that sheet; a live transition trace
+  confirming which is which is still owed (MEMORY_WATCH_PROGRAM).
+  """
+  @spec decode_scene(non_neg_integer()) :: %{
+          major: byte(),
+          pending_major: byte(),
+          previous_major: byte(),
+          minor: byte(),
+          stream_scene: non_neg_integer()
+        }
+  def decode_scene(u32) when is_integer(u32) and u32 >= 0 and u32 <= 0xFFFFFFFF do
+    <<major, pending, previous, minor>> = <<u32::32>>
+
+    %{
+      major: major,
+      pending_major: pending,
+      previous_major: previous,
+      minor: minor,
+      stream_scene: Bitwise.bor(Bitwise.bsl(minor, 8), major)
+    }
+  end
+
+  @doc """
+  Human scene label for a packed `:menu_state` word — `decode_scene/1`
+  piped through `Melee.Events.Menu.scene_name/1`.
+
+  ## Examples
+
+      iex> Melee.MemoryMap.scene_name(0x02020200)
+      :character_select
+
+      iex> Melee.MemoryMap.scene_name(0x02020202)
+      :in_game
+
+      iex> Melee.MemoryMap.scene_name(0x08080800)
+      :slippi_online_css
+  """
+  def scene_name(u32) do
+    u32 |> decode_scene() |> Map.fetch!(:stream_scene) |> Melee.Events.Menu.scene_name()
+  end
+
   @doc "menu/0 ++ canary/0 — the standing set for menu-era sessions."
   def menu_with_canary, do: canary() ++ menu()
 end
