@@ -397,6 +397,72 @@ defmodule Melee.Enums.Character do
   def from_internal(character) when is_atom(character) do
     Map.get(@character_to_external, character, 0xFF)
   end
+
+  # The GAME's external character id scheme (the one Slippi replays and
+  # the engine's own tables use: fox = 2, falco = 20) — a THIRD id
+  # space, distinct from both the internal ids above and the CSS-grid
+  # ids `from_css/1` reads (that scheme has fox = 0x0A). The CSS
+  # selected-character RAM words (`Melee.MemoryMap.css_selected/1`)
+  # hold THIS scheme; its `0x21` = 33 "none" sentinel is one past the
+  # 33-entry roster. Master Hand (0x1A) and Crazy Hand (0x1E) have no
+  # internal atom here and decode to `nil`.
+  @game_external_to_character %{
+    0x00 => :cptfalcon,
+    0x01 => :dk,
+    0x02 => :fox,
+    0x03 => :gameandwatch,
+    0x04 => :kirby,
+    0x05 => :bowser,
+    0x06 => :link,
+    0x07 => :luigi,
+    0x08 => :mario,
+    0x09 => :marth,
+    0x0A => :mewtwo,
+    0x0B => :ness,
+    0x0C => :peach,
+    0x0D => :pikachu,
+    0x0E => :popo,
+    0x0F => :jigglypuff,
+    0x10 => :samus,
+    0x11 => :yoshi,
+    0x12 => :zelda,
+    0x13 => :sheik,
+    0x14 => :falco,
+    0x15 => :ylink,
+    0x16 => :doc,
+    0x17 => :roy,
+    0x18 => :pichu,
+    0x19 => :ganondorf,
+    0x1B => :wireframe_male,
+    0x1C => :wireframe_female,
+    0x1D => :giga_bowser,
+    0x1F => :sandbag,
+    0x20 => :popo
+  }
+
+  @doc """
+  Converts a GAME-external character id (the Slippi/engine scheme,
+  fox = 2, falco = 20) to the raw internal integer id, or `nil` for
+  ids with no internal representation (hands, out-of-range).
+
+  ## Examples
+
+      iex> Melee.Enums.Character.from_game_external(0x02)
+      0x01
+
+      iex> Melee.Enums.Character.from_game_external(0x14)
+      0x16
+
+      iex> Melee.Enums.Character.from_game_external(0x1A)
+      nil
+  """
+  @spec from_game_external(integer()) :: integer() | nil
+  def from_game_external(ext_id) when is_integer(ext_id) do
+    case Map.get(@game_external_to_character, ext_id) do
+      nil -> nil
+      atom -> to_id(atom)
+    end
+  end
 end
 
 defmodule Melee.Enums.Button do

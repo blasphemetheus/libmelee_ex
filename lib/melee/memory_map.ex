@@ -181,13 +181,102 @@ defmodule Melee.MemoryMap do
 
   @doc """
   Decode a `:css_pN_selected` u32: `:none` while the port's coin is in
-  hand (or the port is empty), `{:character, external_id}` once it is
-  placed. The RAM replacement for the stream's dead `coin_down`
-  (GOTCHA #101): selection is exactly `value != 0x21`.
+  hand (or the port is empty), `{:character, game_external_id}` once
+  it is placed. The id is the GAME-external scheme (Slippi/engine:
+  fox = 2, falco = 20 — NOT the CSS-grid ids `from_css/1` reads);
+  convert with `Melee.Enums.Character.from_game_external/1`. The
+  `0x21` sentinel is 33 = one past the 33-entry external roster. The
+  RAM replacement for the stream's dead `coin_down` (GOTCHA #101):
+  selection is exactly `value != 0x21`.
   """
   @spec css_selected(non_neg_integer()) :: :none | {:character, byte()}
   def css_selected(@css_selected_none), do: :none
   def css_selected(id) when is_integer(id) and id >= 0 and id <= 0xFF, do: {:character, id}
+
+  @doc """
+  Overlay RAM CSS observations from a `MemoryWatcher.snapshot/1` map
+  onto a menu-scene `Melee.GameState` — the merge that makes a CSS the
+  stream lies about (GOTCHA #101 online; dead `coin_down` offline)
+  observable again. Pure and strictly additive: only fields the
+  watcher has actually observed are substituted; an empty snapshot
+  returns the gamestate unchanged. The CALLER decides when to apply it
+  (character-select scenes only — the RAM cursor block means nothing
+  elsewhere).
+
+  Per port: cursor x/y (both must decode to finite f32s),
+  `controller_status` (top byte), `character` (hover byte via
+  `from_css/1`), and from the selected word: `coin_down` plus
+  `character`/`character_selected` (via `from_game_external/1`) when a
+  coin is placed — RAM distinguishes hover from lock, which the stream
+  wire byte never did. Top-level: `ready_to_start` (byte 0 = banner
+  up, mirroring the stream's semantics).
+  """
+  @spec merge_css(Melee.GameState.t(), %{atom() => non_neg_integer()}) :: Melee.GameState.t()
+  def merge_css(%Melee.GameState{} = gamestate, snapshot) when is_map(snapshot) do
+    players =
+      Map.new(gamestate.players, fn {port, player} ->
+        {port, merge_css_player(player, port, snapshot)}
+      end)
+
+    ready =
+      case top_byte(snapshot[:ready_to_start]) do
+        nil -> gamestate.ready_to_start
+        byte -> byte == 0
+      end
+
+    %{gamestate | players: players, ready_to_start: ready}
+  end
+
+  defp merge_css_player(player, port, snapshot) do
+    hover = top_byte(snapshot[:"css_p#{port}_character"])
+    hover_internal = hover && Melee.Enums.Character.from_css(hover)
+
+    player
+    |> merge_cursor(
+      finite_f32(snapshot[:"css_p#{port}_cursor_x"]),
+      finite_f32(snapshot[:"css_p#{port}_cursor_y"])
+    )
+    |> merge_field(:controller_status, top_byte(snapshot[:"css_p#{port}_status"]))
+    |> merge_field(:character, hover_internal)
+    |> merge_selected(snapshot[:"css_p#{port}_selected"])
+  end
+
+  defp merge_cursor(player, x, y) when is_float(x) and is_float(y),
+    do: %{player | cursor: %Melee.Position{x: x, y: y}}
+
+  defp merge_cursor(player, _x, _y), do: player
+
+  defp merge_field(player, _key, nil), do: player
+  defp merge_field(player, key, value), do: Map.put(player, key, value)
+
+  defp merge_selected(player, raw) when not is_integer(raw) or raw > 0xFF, do: player
+
+  defp merge_selected(player, raw) do
+    case css_selected(raw) do
+      :none ->
+        %{player | coin_down: false}
+
+      {:character, ext} ->
+        player = %{player | coin_down: true}
+
+        case Melee.Enums.Character.from_game_external(ext) do
+          nil -> player
+          internal -> %{player | character: internal, character_selected: internal}
+        end
+    end
+  end
+
+  defp top_byte(nil), do: nil
+  defp top_byte(u32) when is_integer(u32), do: Bitwise.bsr(u32, 24)
+
+  defp finite_f32(nil), do: nil
+
+  defp finite_f32(u32) when is_integer(u32) do
+    case <<u32::32>> do
+      <<f::float-big-32>> -> f
+      _ -> nil
+    end
+  end
 
   @doc """
   Decode the packed `:menu_state` u32 (address 0x80479D30) — the

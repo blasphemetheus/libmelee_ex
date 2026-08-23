@@ -146,6 +146,72 @@ defmodule Melee.MemoryMapTest do
       assert MemoryMap.game()[:p2_action] == "80453FC0 70"
     end
 
+    test "merge_css/2: empty snapshot is the identity" do
+      gs = css_gamestate()
+      assert MemoryMap.merge_css(gs, %{}) == gs
+    end
+
+    test "merge_css/2: cursor substituted only when BOTH axes decode finite" do
+      gs = css_gamestate()
+
+      merged = MemoryMap.merge_css(gs, %{css_p1_cursor_x: f32(-22.0), css_p1_cursor_y: f32(11.5)})
+      assert merged.players[1].cursor == %Melee.Position{x: -22.0, y: 11.5}
+
+      # x alone, or a NaN axis, keeps the stream cursor.
+      assert MemoryMap.merge_css(gs, %{css_p1_cursor_x: f32(-22.0)}) == gs
+      assert MemoryMap.merge_css(gs, %{css_p1_cursor_x: f32(-22.0), css_p1_cursor_y: 0x7FC00000}) == gs
+    end
+
+    test "merge_css/2: hover byte sets character via the CSS-grid scheme" do
+      gs = css_gamestate()
+
+      # fox: CSS-grid 0x0A (top byte of the u32 at 803F0E0A) -> internal 0x01
+      merged = MemoryMap.merge_css(gs, %{css_p1_character: 0x0A000000})
+      assert merged.players[1].character == 0x01
+
+      # unknown hover id: keep the stream value
+      assert MemoryMap.merge_css(gs, %{css_p1_character: 0x63000000}) == gs
+    end
+
+    test "merge_css/2: selected word drives coin_down + locked character (game-external scheme)" do
+      gs = css_gamestate()
+
+      # 0x21 = none: coin in hand
+      merged = MemoryMap.merge_css(gs, %{css_p1_selected: 0x21})
+      assert merged.players[1].coin_down == false
+
+      # fox game-external 0x02 -> coin placed, character locked (internal 0x01),
+      # overriding the hover byte
+      merged = MemoryMap.merge_css(gs, %{css_p1_character: 0x09000000, css_p1_selected: 0x02})
+      assert merged.players[1].coin_down == true
+      assert merged.players[1].character == 0x01
+      assert merged.players[1].character_selected == 0x01
+
+      # implausible word: untouched
+      assert MemoryMap.merge_css(gs, %{css_p1_selected: 0x12345678}) == gs
+    end
+
+    test "merge_css/2: status byte, ready banner, and port independence" do
+      gs = css_gamestate()
+
+      merged =
+        MemoryMap.merge_css(gs, %{
+          css_p2_status: 0x01000000,
+          css_p2_selected: 0x14,
+          ready_to_start: 0x00000000
+        })
+
+      assert merged.players[2].controller_status == 1
+      assert merged.players[2].coin_down == true
+      assert merged.players[2].character_selected == 0x16
+      # p1 untouched by p2 observations
+      assert merged.players[1] == gs.players[1]
+      assert merged.ready_to_start == true
+
+      not_ready = MemoryMap.merge_css(gs, %{ready_to_start: 0x01000000})
+      assert not_ready.ready_to_start == false
+    end
+
     test "percent/1 and stock/1 decode the verified raw encodings" do
       # Live samples from the quartet run: 3% read 0x30000, 4 stocks
       # read 0x04000000.
@@ -283,5 +349,25 @@ defmodule Melee.MemoryMapTest do
       assert_raise FunctionClauseError, fn -> MemoryMap.decode_scene(-1) end
       assert_raise FunctionClauseError, fn -> MemoryMap.decode_scene(0x1_0000_0000) end
     end
+  end
+
+  # ---------------------------------------------------------------
+  # merge_css/2 fixtures
+  # ---------------------------------------------------------------
+
+  defp css_gamestate do
+    %Melee.GameState{
+      menu_state: Melee.Enums.Menu.to_id(:character_select),
+      ready_to_start: false,
+      players: %{
+        1 => %Melee.PlayerState{cursor: %Melee.Position{x: 0.0, y: 0.0}},
+        2 => %Melee.PlayerState{cursor: %Melee.Position{x: 5.0, y: 5.0}}
+      }
+    }
+  end
+
+  defp f32(x) do
+    <<u::32>> = <<x::float-big-32>>
+    u
   end
 end
