@@ -117,12 +117,41 @@ release`), because `tap!`'s step-counted hold can complete in
 sub-frame wall time when the console is merely polling — presses then
 land nondeterministically, which mimics "buttons are dead".
 
+**In-game player statics — `MemoryMap.game()`** (verified 2026-08-22c,
+the quartet run: one solo CPU game on FD, 900 arrival rows,
+tmp/mw_quartet.exs): the classic locations.csv player block survived
+mainline intact — base `0x80453080`, inter-player stride `0xE90`,
+x/y/facing/percent/stock as direct static reads, action/action_frame
+through the entity pointer at base+0xB0. Decodings: `percent` =
+raw `>>> 16`, `stock` = raw `>>> 24` (`MemoryMap.percent/1`,
+`stock/1`); x/y/facing/action_frame are f32. Findings from the run:
+
+- **Parity vs the Slippi stream is bit-exact** wherever the value did
+  not change across the arrival boundary (stock 100%, action 94-96%);
+  continuously-moving fields read **~1 frame fresher from RAM** (the
+  first x mismatch was exactly one frame of walk speed) — the RAM
+  sample is the current mid-frame state, the stream event the
+  just-completed frame.
+- **`ram_frame = slippi_frame + 123`, dead constant** (all 900 rows,
+  zero jitter, local sync session): `0x80479D60` counts from scene
+  start, Slippi stamps from -123. Any drift from +123 at arrival is
+  pipeline lag — this is the per-session delay probe (#10).
+- **The RNG seed ticks EVERY frame in-game** (900 distinct/900 rows) —
+  the "canary does not tick" caveat below is a settled-menu-only fact.
+- **On-change gotcha**: a watch reads `:unknown` until the value first
+  CHANGES (percent stayed `:unknown` until first damage). Consumers
+  must treat `:unknown` as "no observation yet", not zero.
+- `MenuHelper`'s `:character` is the INTERNAL id (fox `0x01`) —
+  passing external ids silently picks someone else (0x02 =
+  cptfalcon).
+
 **Two liveness caveats learned the hard way**: the RNG "canary" does
 NOT tick at a settled CSS (it advances per random call, not per
-frame) — use `traffic/1` deltas for liveness, never a value watch;
-and a batch watch's composite datagrams reach ~20KB after scene entry
-(the 64KB recv buffer exists because 2KB frames were silently
-truncated and dropped whole).
+frame; in-game it ticks per frame — see above) — use `traffic/1`
+deltas for menu liveness, never a value watch; and a batch watch's
+composite datagrams reach ~20KB after scene entry (the 64KB recv
+buffer exists because 2KB frames were silently truncated and dropped
+whole).
 
 ### Park-and-scan (`examples/memory_scan_css.exs`)
 

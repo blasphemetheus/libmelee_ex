@@ -123,6 +123,62 @@ defmodule Melee.MemoryMap do
   """
   def canary, do: [rng_seed: "804D5F90"]
 
+  # IN-GAME player statics (classic locations.csv block, base
+  # 0x80453080, inter-player stride 0xE90) + the entity pointer at
+  # base+0xB0 (0x80453130 for p1) whose chase reaches the action
+  # fields. VERIFIED LIVE on mainline 2026-08-22c (tmp/mw_quartet.exs,
+  # solo fox-vs-cpu game on FD): x/y/action bit-exact against the
+  # Slippi stream row-wise; percent decodes as raw >> 16, stock as
+  # raw >> 24. The whole classic static family survived mainline
+  # (803F0Exx, 8043208C, and this block).
+  @player_base %{1 => 0x80453080, 2 => 0x80453F10, 3 => 0x80454DA0, 4 => 0x80455C30}
+
+  @doc """
+  The in-game watch set: per-port position/percent/stock/facing
+  (direct static reads) and action/action_frame (pointer chase through
+  the entity at base+0xB0), plus the global frame counter and RNG
+  seed.
+
+  Decodings: x/y/facing via `MemoryWatcher.get_f32/2`; `percent` =
+  raw `>>> 16`; `stock` = raw `>>> 24`; `action`/`action_frame` raw
+  (action_frame is an f32 in the entity struct — use get_f32).
+
+  The frame counter (0x80479D60, same word `menu_frame` reads) relates
+  to Slippi frame stamps as `ram_frame = slippi_frame + 123` — the
+  quartet run measured exactly +123 on all 900 arrival rows (the
+  Slippi preamble starts at -123), which doubles as the per-session
+  delay probe: any drift from +123 at arrival is pipeline lag.
+  """
+  def game do
+    per_port =
+      Enum.flat_map(1..4, fn p ->
+        base = @player_base[p]
+        entity = hex(base + 0xB0)
+
+        [
+          {:"p#{p}_x", hex(base + 0x10)},
+          {:"p#{p}_y", hex(base + 0x14)},
+          {:"p#{p}_facing", hex(base + 0x40)},
+          {:"p#{p}_percent", hex(base + 0x60)},
+          {:"p#{p}_stock", hex(base + 0x8E)},
+          {:"p#{p}_action", entity <> " 70"},
+          {:"p#{p}_action_frame", entity <> " 8F4"}
+        ]
+      end)
+
+    [game_frame: "80479D60"] ++ canary() ++ per_port
+  end
+
+  defp hex(addr), do: addr |> Integer.to_string(16) |> String.upcase()
+
+  @doc "Decode a `:pN_percent` u32 read: the damage value."
+  @spec percent(non_neg_integer()) :: non_neg_integer()
+  def percent(raw), do: Bitwise.bsr(raw, 16)
+
+  @doc "Decode a `:pN_stock` u32 read: stocks remaining."
+  @spec stock(non_neg_integer()) :: non_neg_integer()
+  def stock(raw), do: Bitwise.bsr(raw, 24)
+
   @doc """
   Decode a `:css_pN_selected` u32: `:none` while the port's coin is in
   hand (or the port is empty), `{:character, external_id}` once it is

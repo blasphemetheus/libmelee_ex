@@ -108,6 +108,53 @@ defmodule Melee.MemoryMapTest do
       assert Keyword.has_key?(MemoryMap.menu_with_canary(), :rng_seed)
     end
 
+    test "game set: unique names, well-formed lines, MEM1-virtual bases, expected count" do
+      watches = MemoryMap.game()
+      names = Keyword.keys(watches)
+      assert length(names) == length(Enum.uniq(names))
+      # game_frame + rng_seed + 7 fields x 4 ports
+      assert length(watches) == 30
+
+      for {name, line} <- watches do
+        [base | offsets] = String.split(line)
+        assert {addr, ""} = Integer.parse(base, 16), "bad base in #{name}"
+        assert addr >= 0x8000_0000 and addr <= 0x817F_FFFF, "#{name} outside MEM1"
+
+        for off <- offsets do
+          {v, ""} = Integer.parse(off, 16)
+          assert v < 0x10000
+        end
+
+        assert [{^name, ^line}] = MemoryWatcher.normalize_watches([{name, line}])
+      end
+    end
+
+    test "game set: classic player block layout (base 0x80453080, stride 0xE90)" do
+      # Quartet run 2026-08-22c verified p1/p2 live (x/y/action
+      # bit-exact vs the stream); p3/p4 stride-derived from the same
+      # classic CSV. Pin the structure.
+      xs =
+        for p <- 1..4 do
+          MemoryMap.game() |> Keyword.fetch!(:"p#{p}_x") |> String.to_integer(16)
+        end
+
+      assert hd(xs) == 0x80453090
+      assert Enum.zip(xs, tl(xs)) |> Enum.map(fn {a, b} -> b - a end) == [0xE90, 0xE90, 0xE90]
+
+      # Action rides the entity pointer at base+0xB0.
+      assert MemoryMap.game()[:p1_action] == "80453130 70"
+      assert MemoryMap.game()[:p2_action] == "80453FC0 70"
+    end
+
+    test "percent/1 and stock/1 decode the verified raw encodings" do
+      # Live samples from the quartet run: 3% read 0x30000, 4 stocks
+      # read 0x04000000.
+      assert MemoryMap.percent(0x30000) == 3
+      assert MemoryMap.percent(0) == 0
+      assert MemoryMap.stock(0x04000000) == 4
+      assert MemoryMap.stock(0) == 0
+    end
+
     test "full dolphin-echo round trip: rendered set parses back to every name" do
       # Simulate dolphin's side end-to-end: Locations.txt lines echoed
       # verbatim as one composite datagram; every registered name must
