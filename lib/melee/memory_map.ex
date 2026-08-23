@@ -207,6 +207,39 @@ defmodule Melee.MemoryMap do
     ]
   end
 
+  # PS transformation digit (2026-08-24 hunt: tmp/mw_ps_transform_hunt
+  # + offline scorer + tmp/mw_ps_verify2): 0x8043205C is the digit
+  # position of the game's GLOBAL file-loader name buffer; during an
+  # unfrozen Pokemon Stadium game the last-loaded file is always
+  # GrPs<digit>.dat, so the byte names the most recently LOADED
+  # transformation. Flips STEP-EXACT with the stream's transformation
+  # event (verified across two boots, all five values, live-witnessed).
+  # Semantics: announced-at-load — it HOLDS through the following
+  # normal period; only meaningful in-game on unfrozen PS (elsewhere
+  # the buffer carries other filenames, e.g. "LbBf.dat", menu "Mn...").
+  @ps_transform_digit 0x8043205C
+
+  @doc """
+  PS-only watch: the transformation digit byte (`:ps_transform_digit`,
+  decode with `ps_transform/1`). See the module source for semantics —
+  gate on being in-game on unfrozen Pokemon Stadium.
+  """
+  def ps do
+    [ps_transform_digit: hex(@ps_transform_digit)]
+  end
+
+  @doc """
+  Decode a `:ps_transform_digit` read: which GrPs<digit>.dat layout was
+  loaded last. `?.` (0x2E) = only the base file so far (no
+  transformation yet this game).
+  """
+  def ps_transform(?.), do: :normal
+  def ps_transform(?1), do: :fire
+  def ps_transform(?2), do: :grass
+  def ps_transform(?3), do: :water
+  def ps_transform(?4), do: :rock
+  def ps_transform(_), do: :unknown
+
   # Direct-code typed buffer (2026-08-23 hunt, tmp/mw_codebuf4.exs):
   # the online Name Entry keyboard's text lives at 0x804A0740 —
   # STATIC (same address across boots; zeros only when the keyboard

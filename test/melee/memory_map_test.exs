@@ -143,6 +143,19 @@ defmodule Melee.MemoryMapTest do
       end
     end
 
+    test "ps set: transformation digit address + decode" do
+      # 2026-08-24 hunt+verify: file-loader name buffer digit position;
+      # flips step-exact with the stream transformation event (two
+      # boots, all five values, live-witnessed water/rock/fire/water).
+      assert MemoryMap.ps()[:ps_transform_digit] == "8043205C"
+      assert MemoryMap.ps_transform(?.) == :normal
+      assert MemoryMap.ps_transform(?1) == :fire
+      assert MemoryMap.ps_transform(?2) == :grass
+      assert MemoryMap.ps_transform(?3) == :water
+      assert MemoryMap.ps_transform(?4) == :rock
+      assert MemoryMap.ps_transform(?M) == :unknown
+    end
+
     test "game set: classic player block layout (base 0x80453080, stride 0xE90)" do
       # Quartet run 2026-08-22c verified p1/p2 live (x/y/action
       # bit-exact vs the stream); p3/p4 stride-derived from the same
