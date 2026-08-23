@@ -685,18 +685,30 @@ defmodule Melee.MenuHelperTest do
       assert wrote == "PRESS START\n"
     end
 
-    test "verify-before-confirm: autofill shortcut confirms without typing", ctx do
+    test "verify-before-confirm: autofill shortcut skips typing, confirm phase presses", ctx do
       {pid, path} = file_controller(ctx)
       state = %{MenuHelper.new() | inputs_live: true}
       gamestate = name_entry_gs(frame: 1, menu_selection: 20)
+      opts = base_opts(connect_code: "FOX#123", code_buffer: "FOX#123")
 
-      {state, wrote} =
-        step_frame(state, gamestate, pid, path,
-          base_opts(connect_code: "FOX#123", code_buffer: "FOX#123")
-        )
-
-      assert wrote == "PRESS START\n"
+      # Shortcut frame: index jumps to the end, nothing pressed yet.
+      {state, wrote} = step_frame(state, gamestate, pid, path, opts)
       assert state.name_tag_index == 7
+      refute wrote =~ "PRESS"
+
+      # Confirm phase: STARTs with a Z interleaved every 4th press —
+      # the buffer may be GHOST text (AUTO FILL suggestion) that only
+      # Z commits; START on a ghost does nothing (live strand
+      # 2026-08-23).
+      presses =
+        for _ <- 1..4 do
+          {new_state, wrote} = step_frame(Process.get(:vst, state), gamestate, pid, path, opts)
+          Process.put(:vst, new_state)
+          wrote
+        end
+
+      assert Enum.count(presses, &(&1 =~ "PRESS START")) == 3
+      assert Enum.count(presses, &(&1 =~ "PRESS Z")) == 1
     end
 
     test "verify-before-confirm: matching buffer confirms at the end of typing", ctx do

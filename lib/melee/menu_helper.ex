@@ -99,6 +99,7 @@ defmodule Melee.MenuHelper do
           code_clearing: boolean(),
           code_verify_failed: boolean(),
           code_waits: non_neg_integer(),
+          code_confirm_presses: non_neg_integer(),
           sss_prev_cursor: {number(), number()} | nil,
           sss_stall_frames: non_neg_integer(),
           sss_burst_frames: non_neg_integer(),
@@ -127,6 +128,7 @@ defmodule Melee.MenuHelper do
             code_clearing: false,
             code_verify_failed: false,
             code_waits: 0,
+            code_confirm_presses: 0,
             # Stage-select freeze detection (2026-08-23): the fine tilt
             # can sit inside the screen's deadzone just outside
             # tolerance (single-axis residue of the 2026-08-09 class) —
@@ -328,7 +330,8 @@ defmodule Melee.MenuHelper do
                   code_retypes: 0,
                   code_clearing: false,
                   code_verify_failed: false,
-                  code_waits: 0
+                  code_waits: 0,
+                  code_confirm_presses: 0
               }
 
               choose_character(
@@ -999,17 +1002,35 @@ defmodule Melee.MenuHelper do
         end
 
       # AUTOFILL SHORTCUT: nothing typed yet and the field already
-      # reads the wanted code — confirm now.
+      # reads the wanted code — skip the typing walk; the confirm
+      # phase below handles committing it (the field may be GHOST
+      # text: the RAM buffer holds the AUTO FILL suggestion before Z
+      # commits it, indistinguishable from typed text — Bradley's
+      # 2026-08-23 live catch, the START-on-ghost strand).
       state.name_tag_index == 0 and connect_code != "" and code_buffer == connect_code ->
-        Controller.press_button(controller, :start)
         %{state | name_tag_index: String.length(connect_code)}
 
       String.length(connect_code) == state.name_tag_index ->
         cond do
-          # No readback (or verified): the legacy confirm.
-          code_buffer == :unknown or code_buffer == connect_code ->
+          # No readback: the legacy blind confirm (no Z interleave —
+          # without a readback a Z overwrite would be unverifiable).
+          code_buffer == :unknown ->
             Controller.press_button(controller, :start)
             state
+
+          # Verified content: confirm — with a Z interleaved every 4th
+          # press. START on GHOST text does nothing (the strand); Z
+          # commits a ghost, is a harmless re-fill on committed text,
+          # and if it ever overwrites with a WRONG suggestion the
+          # mismatch arm below clears and retypes.
+          code_buffer == connect_code ->
+            presses = state.code_confirm_presses
+
+            if rem(presses, 4) == 3,
+              do: Controller.press_button(controller, :z),
+              else: Controller.press_button(controller, :start)
+
+            %{state | code_confirm_presses: presses + 1}
 
           # Proper prefix: either watcher lag (the last keystroke's
           # bytes haven't landed) or a WHIFFED press. Wait briefly for
