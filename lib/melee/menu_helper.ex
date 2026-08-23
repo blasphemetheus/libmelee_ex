@@ -1880,8 +1880,14 @@ defmodule Melee.MenuHelper do
           @name_entry_submenu ->
             :ok
 
+          # Unknown submenu: WAIT, never B (2026-08-24). The old
+          # back-out press fired on TRANSIENT submenu values while the
+          # Direct scene loaded — a faster frame loop actually samples
+          # that window, and the B backed out of Direct in a loop
+          # (open/back-out/open, observed live). A genuinely lost menu
+          # is the stuck watchdog's job, not a blind B's.
           _ ->
-            Controller.press_button(controller, :b)
+            Controller.release_all(controller)
         end
 
       gamestate.menu_state == @press_start ->

@@ -93,8 +93,8 @@ defmodule Melee.MemoryWatcher do
     end
   end
 
-  @doc "All known values as `%{name => u32}`."
-  def snapshot(watcher), do: GenServer.call(watcher, :snapshot)
+  @doc "All known values as `%{name => u32}`. `timeout` bounds the call."
+  def snapshot(watcher, timeout \\ 5000), do: GenServer.call(watcher, :snapshot, timeout)
 
   @doc """
   Monotone count of datagrams received since start — PARSE-INDEPENDENT
