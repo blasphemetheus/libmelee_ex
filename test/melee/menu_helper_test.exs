@@ -247,6 +247,67 @@ defmodule Melee.MenuHelperTest do
       assert wrote == steer_main(0, 0, 6.7, -9) <> "RELEASE A\n"
     end
 
+    test "pick press is debounced: no second A while the readback settles", ctx do
+      {pid, path} = file_controller(ctx)
+      # Hovering fox (correct_character), coin not yet down: first
+      # frame presses A...
+      players = %{1 => player(cursor: cursor(-22.3, 11.5), character: @fox)}
+      gamestate = gs(menu_state: 0, frame: 1, players: players)
+
+      {state, wrote} = step_frame(MenuHelper.new(), gamestate, pid, path, base_opts())
+      assert wrote =~ "PRESS A\n"
+      assert state.css_press_cooldown > 0
+
+      # ...and with coin_down STILL false (readback settling), the next
+      # press frames do NOT re-press — the metastable
+      # select/deselect loop (2026-08-23 live, both ports).
+      {state, wrote} = step_frame(state, gs(menu_state: 0, frame: 3, players: players), pid, path, base_opts())
+      refute wrote =~ "PRESS A\n"
+
+      # Cooldown expired and coin still not down: allowed to try again.
+      state = %{state | css_press_cooldown: 0}
+      {_state, wrote} = step_frame(state, gs(menu_state: 0, frame: 5, players: players), pid, path, base_opts())
+      assert wrote =~ "PRESS A\n"
+    end
+
+    test "frozen cursor in the fine zone triggers a full-tilt unstick burst", ctx do
+      {pid, path} = file_controller(ctx)
+      # Just outside FD's 1.5 tolerance (dy = -2.2): fine-tilt zone,
+      # the 2026-08-23 live wedge position ("below Battlefield").
+      gamestate = stage_gs(frame: 25, cursor: cursor(6.7, -6.8))
+      opts = base_opts(autostart: true)
+
+      # Wire y value of the SET MAIN line (post fix_analog_stick).
+      wire_y = fn wrote ->
+        [_, y] = Regex.run(~r/SET MAIN [\d.]+ ([\d.]+)/, wrote)
+        String.to_float(y)
+      end
+
+      # Same cursor two frames running: stall counts up, tilt stays
+      # FINE (0.22 raw — wire y well above the full-tilt value).
+      {state, _} = step_frame(MenuHelper.new(), gamestate, pid, path, opts)
+      {state, wrote} = step_frame(state, gamestate, pid, path, opts)
+      assert state.sss_stall_frames == 1
+      fine_y = wire_y.(wrote)
+
+      # Stall budget reached: burst arms...
+      state = %{state | sss_stall_frames: 45}
+      {state, _} = step_frame(state, gamestate, pid, path, opts)
+      assert state.sss_burst_frames == 12
+      assert state.sss_stall_frames == 0
+
+      # ...and the next frame steers at FULL tilt: wire y strictly
+      # below the fine-tilt wire value (more downward deflection).
+      {state, wrote} = step_frame(state, gamestate, pid, path, opts)
+      assert state.sss_burst_frames == 11
+      assert wire_y.(wrote) < fine_y - 0.1
+
+      # Movement resets the stall counter.
+      moved = stage_gs(frame: 25, cursor: cursor(6.7, -7.4))
+      {state, _} = step_frame(state, moved, pid, path, opts)
+      assert state.sss_stall_frames == 0
+    end
+
     test "cursor moves right when left of the stage", ctx do
       {pid, path} = file_controller(ctx)
       # y already inside tolerance -> pure rightward tilt

@@ -99,6 +99,10 @@ defmodule Melee.MenuHelper do
           code_clearing: boolean(),
           code_verify_failed: boolean(),
           code_waits: non_neg_integer(),
+          sss_prev_cursor: {number(), number()} | nil,
+          sss_stall_frames: non_neg_integer(),
+          sss_burst_frames: non_neg_integer(),
+          css_press_cooldown: non_neg_integer(),
           frames_on_stage: non_neg_integer(),
           frozen_stadium_selected: boolean(),
           stage_selected: boolean(),
@@ -123,6 +127,22 @@ defmodule Melee.MenuHelper do
             code_clearing: false,
             code_verify_failed: false,
             code_waits: 0,
+            # Stage-select freeze detection (2026-08-23): the fine tilt
+            # can sit inside the screen's deadzone just outside
+            # tolerance (single-axis residue of the 2026-08-09 class) —
+            # a stalled cursor triggers a full-tilt unstick burst.
+            sss_prev_cursor: nil,
+            sss_stall_frames: 0,
+            sss_burst_frames: 0,
+            # CSS press debounce (2026-08-23): A-pick / B-reclaim /
+            # status-box clicks toggle game state that the readback
+            # (RAM merge or stream) reflects a few frames later.
+            # Un-debounced edges fire every 2 frames — faster than the
+            # readback settles — and the helper toggles its own pick
+            # forever (metastable select/deselect loop, observed live
+            # on both ports). After any toggling press, hold off
+            # further presses until this cools down.
+            css_press_cooldown: 0,
             frames_on_stage: 0,
             frozen_stadium_selected: false,
             stage_selected: false,
@@ -815,6 +835,9 @@ defmodule Melee.MenuHelper do
          opts \\ []
        ) do
     max_tilt = Keyword.get(opts, :max_tilt, 0.5)
+    # Floor on the tilt magnitude — the unstick burst uses this to
+    # punch through a deadzone the fine tilt cannot cross.
+    min_tilt = Keyword.get(opts, :min_tilt, 0.0)
 
     dx = if abs(target_x - cursor_x) <= tolerance, do: 0.0, else: target_x - cursor_x
     dy = if abs(target_y - cursor_y) <= tolerance, do: 0.0, else: target_y - cursor_y
@@ -833,7 +856,7 @@ defmodule Melee.MenuHelper do
       # deadline killed them.
       dist = :math.sqrt(dx * dx + dy * dy)
       scale = max(abs(dx), abs(dy))
-      mag = min(tilt(dist), max_tilt)
+      mag = dist |> tilt() |> min(max_tilt) |> max(min_tilt)
       Controller.tilt_analog(controller, :main, 0.5 + mag * dx / scale, 0.5 + mag * dy / scale)
       :moving
     end
@@ -1153,6 +1176,9 @@ defmodule Melee.MenuHelper do
     %{x: cursor_x, y: cursor_y} = ai_state.cursor
     coin_down = ai_state.coin_down
 
+    # Press-debounce clock: one tick per CSS helper step.
+    state = %{state | css_press_cooldown: max(state.css_press_cooldown - 1, 0)}
+
     use_cpu = cpu_level > 0
     character = Character.from_id(character_id)
 
@@ -1216,8 +1242,7 @@ defmodule Melee.MenuHelper do
           ((correct_character and (coin_down or cursor_y < 0) and
               cpu_level != ai_state.cpu_level) or ai_state.is_holding_cpu_slider) ->
         if slippi_css?, do: raise(ArgumentError, "CPU slider state during netplay CSS")
-        configure_cpu(gamestate, controller, ai_state, port, cpu_level, use_cpu)
-        state
+        configure_cpu(state, gamestate, controller, ai_state, port, cpu_level, use_cpu)
 
       # Locked in on the online CSS: costume via Y, START when matched.
       # (No longer gated on swag — with direct selection swag is false
@@ -1296,6 +1321,12 @@ defmodule Melee.MenuHelper do
   @cpu_slider_near 2
   @cpu_slider_fine_tilt 0.3
 
+  # Frames to hold off after a state-toggling CSS press (A-pick,
+  # B-reclaim, status-box click) while the readback settles. 20 frames
+  # = 333ms — comfortably past coin-place animation + watcher round
+  # trip, and at most +333ms on a legitimate pick.
+  @css_press_cooldown_frames 20
+
   defp slider_tilt(levels_away, _frame) when levels_away > @cpu_slider_near, do: 0.5
 
   defp slider_tilt(_levels_away, frame) do
@@ -1304,12 +1335,15 @@ defmodule Melee.MenuHelper do
 
   # The CPU-configuration state machine: walk to the HMN/CPU box, press A,
   # walk to the slider, grab it, drag it to the wanted level, release.
-  defp configure_cpu(gamestate, controller, ai_state, port, cpu_level, use_cpu) do
+  defp configure_cpu(state, gamestate, controller, ai_state, port, cpu_level, use_cpu) do
     %{y: cursor_y} = ai_state.cursor
     cpu_selected = ai_state.controller_status == @controller_cpu
 
     cond do
-      # Is our controller type correct?
+      # Is our controller type correct? The box click CYCLES the port
+      # (HMN -> CPU -> closed -> ...), so it gets the press debounce:
+      # un-debounced edges cycle faster than the status readback and
+      # can blow straight past CPU.
       cpu_selected != use_cpu ->
         wiggleroom = 1
         target_y = -2.2
@@ -1319,13 +1353,21 @@ defmodule Melee.MenuHelper do
 
         case steer_toward(controller, ai_state.cursor, target_x, target_y, wiggleroom) do
           :moving ->
-            :ok
+            state
 
           :arrived ->
-            if Integer.mod(gamestate.frame, 2) == 0 do
-              Controller.press_button(controller, :a)
-            else
-              Controller.release_all(controller)
+            cond do
+              state.css_press_cooldown > 0 ->
+                Controller.release_all(controller)
+                state
+
+              Integer.mod(gamestate.frame, 2) == 0 ->
+                Controller.press_button(controller, :a)
+                %{state | css_press_cooldown: @css_press_cooldown_frames}
+
+              true ->
+                Controller.release_all(controller)
+                state
             end
         end
 
@@ -1338,6 +1380,7 @@ defmodule Melee.MenuHelper do
       # changes, so let go and re-approach instead.
       ai_state.is_holding_cpu_slider and not gripping_slider?(cursor_y) ->
         Controller.release_all(controller)
+        state
 
       # Select the right CPU level on the slider
       ai_state.is_holding_cpu_slider ->
@@ -1367,6 +1410,8 @@ defmodule Melee.MenuHelper do
             Controller.release_all(controller)
         end
 
+        state
+
       # Move over to and pick up the CPU slider. The gentler 0.3 cap is
       # the original 0.8/0.2 approach speed — grabbing the slider needs
       # finer positioning than the portrait walk.
@@ -1389,8 +1434,10 @@ defmodule Melee.MenuHelper do
             end
         end
 
+        state
+
       true ->
-        :ok
+        state
     end
   end
 
@@ -1498,9 +1545,20 @@ defmodule Melee.MenuHelper do
                 Controller.release_button(controller, :b)
               end
 
+              state
+
+            # B reclaims the coin = a toggle: debounced like the pick,
+            # so a slow readback can't drive a place/reclaim loop.
             not correct_character and coin_down ->
-              Controller.press_button(controller, :b)
-              Controller.release_button(controller, :a)
+              if state.css_press_cooldown > 0 do
+                Controller.release_button(controller, :b)
+                Controller.release_button(controller, :a)
+                state
+              else
+                Controller.press_button(controller, :b)
+                Controller.release_button(controller, :a)
+                %{state | css_press_cooldown: @css_press_cooldown_frames}
+              end
 
             # Press A to select our character — but only once the game's
             # own hover byte reads the target. The portrait hitboxes do
@@ -1509,11 +1567,25 @@ defmodule Melee.MenuHelper do
             # row above (found live by the roster sweep), and Python's
             # blind A press ping-pongs placing and reclaiming the coin
             # there forever.
+            #
+            # DEBOUNCED (2026-08-23): the un-debounced edge re-fires
+            # every 2 frames — faster than coin_down's readback settles
+            # — and A over the just-placed coin picks it back UP: a
+            # metastable select/deselect loop, observed live on both
+            # ports. One press, then wait out the readback.
             correct_character ->
-              if prev.button.a == false do
-                Controller.press_button(controller, :a)
-              else
-                Controller.release_button(controller, :a)
+              cond do
+                state.css_press_cooldown > 0 ->
+                  Controller.release_button(controller, :a)
+                  state
+
+                prev.button.a == false ->
+                  Controller.press_button(controller, :a)
+                  %{state | css_press_cooldown: @css_press_cooldown_frames}
+
+                true ->
+                  Controller.release_button(controller, :a)
+                  state
               end
 
             # In-band but the hover reads another portrait or nothing:
@@ -1521,6 +1593,7 @@ defmodule Melee.MenuHelper do
             true ->
               Controller.release_button(controller, :a)
               steer_toward(controller, ai_state.cursor, target_x, target_y, 0.4)
+              state
           end
         else
           # Move in — straight line to the portrait (steer_toward), not
@@ -1536,9 +1609,9 @@ defmodule Melee.MenuHelper do
             :arrived ->
               Controller.release_all(controller)
           end
-        end
 
-        state
+          state
+        end
     end
   end
 
@@ -1588,20 +1661,67 @@ defmodule Melee.MenuHelper do
     end
   end
 
+  # A cursor that stalls this many frames while steer_toward says
+  # :moving is frozen (fine tilt inside the deadzone just outside
+  # tolerance — the single-axis residue of the 2026-08-09 class; live
+  # wedge 2026-08-23: parked just below BF, i.e. in FD's fine zone,
+  # forever). The unstick is a short FULL-tilt burst, definitely past
+  # any deadzone; worst case it overshoots and normal steering walks
+  # back — strictly better than frozen.
+  @sss_stall_frames 45
+  @sss_burst_frames 12
+
   defp navigate_stage_select(state, gamestate, controller, stage_id, frozen_stadium, port) do
     {target_x, target_y} = Map.get(@stage_targets, Stage.from_id(stage_id), {0, 0})
     # Wiggle room in positioning cursor
     wiggleroom = 1.5
     cursor = Map.fetch!(gamestate.players, port).cursor
 
-    case steer_toward(controller, cursor, target_x, target_y, wiggleroom) do
+    {min_tilt, state} =
+      if state.sss_burst_frames > 0 do
+        {0.5, %{state | sss_burst_frames: state.sss_burst_frames - 1}}
+      else
+        {0.0, state}
+      end
+
+    case steer_toward(controller, cursor, target_x, target_y, wiggleroom, min_tilt: min_tilt) do
       :moving ->
         Controller.release_button(controller, :a)
-        state
+        %{x: cx, y: cy} = cursor
+
+        moved? =
+          case state.sss_prev_cursor do
+            nil -> true
+            {px, py} -> abs(cx - px) + abs(cy - py) > 0.02
+          end
+
+        state = %{state | sss_prev_cursor: {cx, cy}}
+
+        cond do
+          moved? ->
+            %{state | sss_stall_frames: 0}
+
+          state.sss_stall_frames >= @sss_stall_frames and state.sss_burst_frames == 0 ->
+            Logger.warning(
+              "[MenuHelper] stage-select cursor frozen #{@sss_stall_frames} frames at " <>
+                "(#{Float.round(cx * 1.0, 2)}, #{Float.round(cy * 1.0, 2)}) — full-tilt unstick burst"
+            )
+
+            %{state | sss_stall_frames: 0, sss_burst_frames: @sss_burst_frames}
+
+          true ->
+            %{state | sss_stall_frames: state.sss_stall_frames + 1}
+        end
 
       :arrived ->
         # If we get in the right area, press A
-        state = %{state | frames_on_stage: state.frames_on_stage + 1}
+        state = %{
+          state
+          | frames_on_stage: state.frames_on_stage + 1,
+            sss_stall_frames: 0,
+            sss_burst_frames: 0
+        }
+
         stadium? = Stage.from_id(stage_id) == :pokemon_stadium
         maybe_toggle_frozen_stadium(state, controller, frozen_stadium, stadium?)
     end
