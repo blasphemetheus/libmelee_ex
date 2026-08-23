@@ -61,6 +61,24 @@ defmodule Melee.MemoryMapTest do
       end
     end
 
+    test "mainline cursor block: classic layout shifted +0x17200, stride 0xB80 intact" do
+      # The 2026-08-22 park-and-scan finding: the whole 4-port cursor
+      # block relocated together; P1 verified bit-exact live. This pins
+      # the structural facts so a future edit can't silently break the
+      # derivation chain for the unverified ports.
+      addrs =
+        for p <- 1..4 do
+          MemoryMap.menu()
+          |> Keyword.fetch!(:"css_p#{p}_cursor_x")
+          |> String.to_integer(16)
+        end
+
+      assert Enum.zip(addrs, tl(addrs)) |> Enum.map(fn {a, b} -> a - b end) ==
+               [0xB80, 0xB80, 0xB80]
+
+      assert hd(addrs) == 0x81118DEC + 0x17200
+    end
+
     test "canary is present in the standing set" do
       assert Keyword.has_key?(MemoryMap.menu_with_canary(), :rng_seed)
     end

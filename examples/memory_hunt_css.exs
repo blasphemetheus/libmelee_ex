@@ -67,16 +67,32 @@ pre_drive = MemoryWatcher.snapshot(w)
   Enum.reduce(path, {probe, []}, fn {x, y}, {p, acc} ->
     p = Probe.goto!(p, x, y)
     Process.sleep(300)
+    # Offline CSS streams REAL cursor state — free ground truth that
+    # the goto actually moved the cursor (and the correlation target
+    # for value-matching hunts).
+    IO.puts("[hunt] goto (#{x}, #{y}) -> stream cursor #{inspect(Probe.cursor(p, 1))}")
     {p, [{{x, y}, MemoryWatcher.snapshot(w)} | acc]}
   end)
 
 per_position = Enum.reverse(per_position)
 liveness.("post-drive")
 
+# Forensics at the boundary: raw frame sizes tell truncation/empty-step
+# stories; the RNG canary MUST differ pre->post if updates flow at all.
+%{socket: sinfo, raw_ring: ring} = MemoryWatcher.debug_info(w)
+IO.puts("[hunt] ring frame sizes: #{inspect(Enum.map(ring, &byte_size/1))}")
+IO.puts("[hunt] socket counters: #{inspect(sinfo[:counters])}")
+
 {_last_pos, post_drive} = List.last(per_position)
 driven_changed = MemoryHunt.changed(pre_drive, post_drive)
 survivors = MemoryHunt.correlated(driven_changed, idle_changed)
 IO.puts("[hunt] driven movers: #{length(driven_changed)}; SURVIVORS: #{length(survivors)}")
+
+IO.puts(
+  "[hunt] canary diff: rng pre=#{inspect(Map.get(pre_drive, :rng_seed))} " <>
+    "post=#{inspect(Map.get(post_drive, :rng_seed))} " <>
+    "(equal = value updates FROZE; changed = diff logic works and region is dry)"
+)
 
 get_f32 = fn snapshot, key ->
   case Map.get(snapshot, key) do

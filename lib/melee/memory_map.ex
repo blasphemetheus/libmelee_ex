@@ -32,11 +32,23 @@ defmodule Melee.MemoryMap do
   # mainline build's Memory::Read_U32 needs the full virtual form
   # (verified live 2026-08-22 — bare offsets produced ZERO traffic,
   # 80-prefixed streamed).
+  # RE-DERIVED for the mainline-beta build (2026-08-22 park-and-scan,
+  # examples/memory_scan_css.exs): the classic 4-port cursor block
+  # relocated INTACT by +0x17200 (Slippi allocations shifted the menu
+  # heap); the classic inter-port stride 0xB80 is preserved exactly.
+  # Verification: P1 tracks commanded cursor BIT-EXACTLY through the
+  # MemoryWatcher path across 3 positions (tmp/mw_confirm.exs); P2/P3
+  # delta-derived + read stable plausible parked coordinates
+  # (-16.0,-2.5 / -1.0,-2.5); P4 delta-derived, weakly checked (x=0.0,
+  # y unobserved). A second tracking copy of P1 lives at
+  # 8112F278/8112F27C (render/secondary object — not used here).
+  # Classic Ishiiruka-era block (stale on mainline): 81118DEC/81118DF0,
+  # 8111826C/70, 811176EC/F0, 81116B6C/70.
   @css_cursor %{
-    1 => {"81118DEC", "81118DF0"},
-    2 => {"8111826C", "81118270"},
-    3 => {"811176EC", "811176F0"},
-    4 => {"81116B6C", "81116B70"}
+    1 => {"8112FFEC", "8112FFF0"},
+    2 => {"8112F46C", "8112F470"},
+    3 => {"8112E8EC", "8112E8F0"},
+    4 => {"8112DD6C", "8112DD70"}
   }
 
   @css_block %{

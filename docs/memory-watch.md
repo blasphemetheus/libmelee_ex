@@ -92,10 +92,31 @@ classic libmelee `locations.csv` (altf4/libmelee `a086ea6~1`), itself
 from the community RAM sheet (Salvato, achilles et al.).
 
 Verified live on mainline (2026-08-22): `rng_seed` (804D5F90),
-`menu_frame` (80479D60), `menu_state` (80479D30). **Stale on this
-build**: all per-port CSS fields (cursor/character/coin) — the classic
-heap addresses read constants/denormals; re-derivation is the active
-thread in `exphil/docs/planning/MEMORY_WATCH_PROGRAM.md`.
+`menu_frame` (80479D60), `menu_state` (80479D30), and the **CSS
+cursor block, re-derived by park-and-scan** (see below): the classic
+4-port block relocated intact by +0x17200 (P1 bit-exact verified;
+P2-P4 delta-derived, stride 0xB80 preserved). Still stale/unverified:
+per-port character/status/coin — same park-and-scan treatment owed
+(park on distinct portraits, diff the bytes).
+
+**Two liveness caveats learned the hard way**: the RNG "canary" does
+NOT tick at a settled CSS (it advances per random call, not per
+frame) — use `traffic/1` deltas for liveness, never a value watch;
+and a batch watch's composite datagrams reach ~20KB after scene entry
+(the 64KB recv buffer exists because 2KB frames were silently
+truncated and dropped whole).
+
+### Park-and-scan (`examples/memory_scan_css.exs`)
+
+When a heap object relocates, differential region-guessing loses to
+reading the emulator's memory directly: the beam is dolphin's
+ancestor, so yama permits `/proc/<pid>/mem`. Find MEM1 among the
+descendants' >=24MB rw mappings — validate by demanding the KNOWN
+scene word at +0x479D30, never a permissive check (a zero-filled heap
+"validated" on the first attempt) — then park the cursor at a
+stream-reported coordinate, scan for the exact f32 bit pattern, move,
+rescan, intersect. Three passes nailed all five in-memory copies of
+the cursor and the adjacent x/y struct pairs in one run.
 
 ### The `menu_state` scene word
 
