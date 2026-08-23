@@ -229,6 +229,25 @@ defmodule Melee.MemoryMapTest do
       assert not_ready.ready_to_start == false
     end
 
+    test "direct_code/0 watch set + decode_direct_code/1 on live-observed bytes" do
+      watches = MemoryMap.direct_code()
+      assert length(watches) == 6
+      assert watches[:code_buf_0] == "804A0740"
+
+      # The exact bytes read live 2026-08-23 with "EXPH#288" autofilled
+      # (3 bytes/char: SJIS pair + NUL), first 16 bytes = 4 words.
+      # (16 of 24 bytes -> the 6th char is a partial chunk, discarded)
+      words = [0x82640082, 0x7700826F, 0x00826700, 0x81940082]
+      assert MemoryMap.decode_direct_code(words) == "EXPH#"
+
+      # After the replacing keystroke: "A" + NUL terminator.
+      assert MemoryMap.decode_direct_code([0x82600000, 0x0, 0x0, 0x0, 0x0, 0x0]) == "A"
+      # Empty field.
+      assert MemoryMap.decode_direct_code([0, 0, 0, 0, 0, 0]) == ""
+      # Unknown-value words halt the decode instead of raising.
+      assert MemoryMap.decode_direct_code([:unknown]) == ""
+    end
+
     test "percent/1 and stock/1 decode the verified raw encodings" do
       # Live samples from the quartet run: 3% read 0x30000, 4 stocks
       # read 0x04000000.

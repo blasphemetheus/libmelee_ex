@@ -171,6 +171,58 @@ defmodule Melee.MemoryMap do
 
   defp hex(addr), do: addr |> Integer.to_string(16) |> String.upcase()
 
+  # Direct-code typed buffer (2026-08-23 hunt, tmp/mw_codebuf4.exs):
+  # the online Name Entry keyboard's text lives at 0x804A0740 —
+  # STATIC (same address across boots; zeros only when the keyboard
+  # scene is absent). Layout: 3 bytes per character — an SJIS-fullwidth
+  # pair (A-Z 0x8260.., 0-9 0x824F.., '#' 0x8194) + a 0x00 pad —
+  # NUL-terminated. A connect code is at most 8 chars = 24 bytes =
+  # 6 u32 watch words. First keystroke REPLACES an autofilled field.
+  @direct_code_base 0x804A0740
+  @direct_code_words 6
+
+  @doc """
+  Watch set for the direct-code typed buffer: #{@direct_code_words}
+  u32 words at 0x804A0740 (`:code_buf_0`..). Feed the read words to
+  `decode_direct_code/1` to recover the typed string — the readback
+  that lets a session VERIFY the entered connect code before
+  confirming (the last blind menu, closed 2026-08-23).
+  """
+  def direct_code do
+    for i <- 0..(@direct_code_words - 1) do
+      {:"code_buf_#{i}", hex(@direct_code_base + i * 4)}
+    end
+  end
+
+  @doc """
+  Decode the `direct_code/0` watch words (in order) to the typed
+  string. Total: unknown/unread words halt the decode at that point;
+  unmappable pairs decode as `"?"`.
+
+      iex> Melee.MemoryMap.decode_direct_code([0x82600000])
+      "A"
+
+      iex> Melee.MemoryMap.decode_direct_code([0x82640082, 0x77000000])
+      "EX"
+  """
+  @spec decode_direct_code([non_neg_integer() | term()]) :: String.t()
+  def decode_direct_code(words) do
+    words
+    |> Enum.take_while(&is_integer/1)
+    |> Enum.flat_map(fn u32 ->
+      bin = <<u32::32>>
+      for <<b <- bin>>, do: b
+    end)
+    |> Enum.chunk_every(3, 3, :discard)
+    |> Enum.reduce_while("", fn
+      [0x82, lo | _], acc when lo >= 0x60 and lo <= 0x79 -> {:cont, acc <> <<?A + (lo - 0x60)>>}
+      [0x82, lo | _], acc when lo >= 0x4F and lo <= 0x58 -> {:cont, acc <> <<?0 + (lo - 0x4F)>>}
+      [0x81, 0x94 | _], acc -> {:cont, acc <> "#"}
+      [0x00 | _], acc -> {:halt, acc}
+      _partial_or_unknown, acc -> {:cont, acc <> "?"}
+    end)
+  end
+
   @doc "Decode a `:pN_percent` u32 read: the damage value."
   @spec percent(non_neg_integer()) :: non_neg_integer()
   def percent(raw), do: Bitwise.bsr(raw, 16)
