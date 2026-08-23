@@ -427,6 +427,39 @@ defmodule Melee.MemoryWatcherTest do
       assert List.last(received) == 50
     end
 
+    test "hunt-scale composite (100 entries, >2KB) survives the socket path intact", %{
+      home: home
+    } do
+      # The 2026-08-22 hunt bug: a 100-line batch under churn composites
+      # to ~2KB per step; the old 2048-byte recv buffer truncated the
+      # datagram, the parser rejected the mangled frame, and every
+      # update silently dropped while empty-step traffic kept liveness
+      # healthy. This pins the socket path end-to-end at hunt scale.
+      lines = for i <- 1..150, do: "81118#{String.pad_leading(Integer.to_string(0xD00 + i * 4, 16), 3, "0")}"
+      {:ok, w} = MemoryWatcher.start_link(home: home, watches: lines)
+      path = Path.join(home, "MemoryWatcher/MemoryWatcher")
+
+      frame =
+        Enum.with_index(lines, 1)
+        |> Enum.map_join("", fn {l, i} -> "#{l}\nc1b8#{Integer.to_string(0x1000 + i, 16)}\n" end)
+        |> Kernel.<>(<<0>>)
+
+      assert byte_size(frame) > 2048
+
+      external_stream(path, """
+      frame = Base.decode64!("#{Base.encode64(frame)}")
+      :ok = :socket.sendto(s, frame, dest)
+      """)
+
+      Process.sleep(300)
+      # Every one of the 150 entries must have landed.
+      values = MemoryWatcher.snapshot(w)
+      assert map_size(values) == 150
+      assert MemoryWatcher.get(w, List.first(lines)) == {:ok, 0xC1B81001}
+      assert MemoryWatcher.get(w, List.last(lines)) == {:ok, 0xC1B81096}
+      MemoryWatcher.stop(w)
+    end
+
     test "frame sizes survive verbatim (no truncation) across sizes 1..64", %{home: home} do
       {:ok, w} = MemoryWatcher.start_link(home: home, watches: [rng: "804D5F90"])
       path = Path.join(home, "MemoryWatcher/MemoryWatcher")

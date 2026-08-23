@@ -36,24 +36,42 @@ w = probe.dolphin.memory_watcher
 probe = Probe.navigate!(probe, character: 0x02, stage: nil)
 IO.puts("[hunt] at CSS; canary rng=#{inspect(MemoryWatcher.get(w, :rng_seed))}")
 
+# Liveness probe between phases: traffic must keep climbing or the
+# watcher/pacing died and every later snapshot is a frozen lie
+# (2026-08-22 first run: 74 idle movers then "driven movers: 0" —
+# a stalled watcher, not a quiet region).
+liveness = fn label ->
+  t0 = MemoryWatcher.traffic(w)
+  Process.sleep(500)
+  t1 = MemoryWatcher.traffic(w)
+  IO.puts("[hunt] liveness @#{label}: traffic +#{t1 - t0}/500ms#{if t1 == t0, do: "  <-- STALLED", else: ""}")
+  t1 > t0
+end
+
 # IDLE phase: ambient movers (frame counters, RNG-adjacent, animation).
 idle_a = MemoryWatcher.snapshot(w)
 Process.sleep(3_000)
 idle_b = MemoryWatcher.snapshot(w)
 idle_changed = MemoryHunt.changed(idle_a, idle_b)
 IO.puts("[hunt] idle movers: #{length(idle_changed)}")
+liveness.("post-idle")
 
 # DRIVEN phase: command the cursor through known coordinates, snapshot
 # after each so survivors can be tracks?-verified per position.
+# NOTE: rebind probe through goto! (mw_verify pattern) — the struct
+# carries session state.
 path = [{-22.0, 11.5}, {10.0, -5.0}, {-5.0, -18.0}, {20.0, 15.0}]
 pre_drive = MemoryWatcher.snapshot(w)
 
-per_position =
-  for {x, y} <- path do
-    Probe.goto!(probe, x, y)
+{probe, per_position} =
+  Enum.reduce(path, {probe, []}, fn {x, y}, {p, acc} ->
+    p = Probe.goto!(p, x, y)
     Process.sleep(300)
-    {{x, y}, MemoryWatcher.snapshot(w)}
-  end
+    {p, [{{x, y}, MemoryWatcher.snapshot(w)} | acc]}
+  end)
+
+per_position = Enum.reverse(per_position)
+liveness.("post-drive")
 
 {_last_pos, post_drive} = List.last(per_position)
 driven_changed = MemoryHunt.changed(pre_drive, post_drive)

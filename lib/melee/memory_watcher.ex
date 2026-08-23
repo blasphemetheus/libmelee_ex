@@ -235,8 +235,17 @@ defmodule Melee.MemoryWatcher do
   # truncated datagrams to ~1 byte (NIF counters showed 323 pkgs / 388
   # bytes while dolphin streamed 18-byte messages — 2026-08-22 hunt).
   # The timeout-loop shape is the one the working spike used.
+  #
+  # Buffer sized for BATCH watching: dolphin composites every changed
+  # entry into ONE datagram per step (~18 bytes/entry), so a 100-line
+  # hunt batch under churn runs ~2KB — the original 2048 buffer
+  # TRUNCATED those, the parser rejected the mangled frame, and every
+  # update in it silently dropped while empty-step traffic kept the
+  # liveness counter climbing ("driven movers: 0" with healthy
+  # traffic, 2026-08-22 hunt run 2). 64KB covers any Locations.txt
+  # dolphin will realistically poll.
   defp recv_loop(sock, parent) do
-    case :socket.recvfrom(sock, 2048, 10_000) do
+    case :socket.recvfrom(sock, 65_536, 10_000) do
       {:ok, {_src, data}} ->
         send(parent, {:mw_datagram, data})
         recv_loop(sock, parent)
