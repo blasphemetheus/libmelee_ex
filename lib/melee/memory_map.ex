@@ -184,6 +184,29 @@ defmodule Melee.MemoryMap do
 
   defp hex(addr), do: addr |> Integer.to_string(16) |> String.upcase()
 
+  # FoD live platform heights (2026-08-24 hunt, tmp/mw_fod_height_hunt
+  # + tmp/mw_fod_verify): f32 words holding the side-platform heights,
+  # EXACTLY equal to the stream's fod_platforms values (max deviation
+  # 0.0 over 251 samples spanning the full -1.0..32.3 range; each
+  # address replicated across two boots — stage allocation is
+  # deterministic despite living above the classic statics). -1.0 =
+  # platform fully submerged.
+  @fod_platform_left 0x80C62F90
+  @fod_platform_right 0x80C63CF0
+
+  @doc """
+  FoD-only watch set: the two live side-platform-height f32s
+  (`:fod_platform_left` / `:fod_platform_right`, decode with
+  `MemoryWatcher.get_f32/2`). RAM value == the stream event value —
+  no jobj offset. Only meaningful in-game on Fountain of Dreams.
+  """
+  def fod do
+    [
+      fod_platform_left: hex(@fod_platform_left),
+      fod_platform_right: hex(@fod_platform_right)
+    ]
+  end
+
   # Direct-code typed buffer (2026-08-23 hunt, tmp/mw_codebuf4.exs):
   # the online Name Entry keyboard's text lives at 0x804A0740 —
   # STATIC (same address across boots; zeros only when the keyboard

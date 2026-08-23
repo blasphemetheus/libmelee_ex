@@ -129,6 +129,20 @@ defmodule Melee.MemoryMapTest do
       end
     end
 
+    test "fod set: the two verified platform-height f32 addresses" do
+      # 2026-08-24 hunt+verify (tmp/mw_fod_height_hunt, tmp/mw_fod_verify):
+      # RAM f32 == stream fod_platforms value exactly (max_dev 0.0 over
+      # 251 samples, range -1.0..32.3), each address replicated across
+      # two boots. Pin the addresses.
+      watches = MemoryMap.fod()
+      assert watches[:fod_platform_left] == "80C62F90"
+      assert watches[:fod_platform_right] == "80C63CF0"
+
+      for {name, line} <- watches do
+        assert [{^name, ^line}] = MemoryWatcher.normalize_watches([{name, line}])
+      end
+    end
+
     test "game set: classic player block layout (base 0x80453080, stride 0xE90)" do
       # Quartet run 2026-08-22c verified p1/p2 live (x/y/action
       # bit-exact vs the stream); p3/p4 stride-derived from the same
