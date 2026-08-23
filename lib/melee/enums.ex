@@ -463,6 +463,29 @@ defmodule Melee.Enums.Character do
       atom -> to_id(atom)
     end
   end
+
+  # Descending key order so :popo (0x0E Ice Climbers AND 0x20 solo
+  # Popo) inverts to the playable 0x0E.
+  @character_to_game_external @game_external_to_character
+                              |> Enum.sort_by(&elem(&1, 0), :desc)
+                              |> Map.new(fn {k, v} -> {v, k} end)
+
+  @doc """
+  Converts a character atom to its GAME-external id (fox -> 2,
+  falco -> 20), or `nil` for characters with no external id.
+
+  ## Examples
+
+      iex> Melee.Enums.Character.to_game_external(:fox)
+      0x02
+
+      iex> Melee.Enums.Character.to_game_external(:falco)
+      0x14
+  """
+  @spec to_game_external(atom()) :: integer() | nil
+  def to_game_external(character) when is_atom(character) do
+    Map.get(@character_to_game_external, character)
+  end
 end
 
 defmodule Melee.Enums.Button do
