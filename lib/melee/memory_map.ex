@@ -240,6 +240,59 @@ defmodule Melee.MemoryMap do
   def ps_transform(?4), do: :rock
   def ps_transform(_), do: :unknown
 
+  @doc "Slippi stadium-transformation type value for a `ps_transform/1` atom."
+  def slippi_transform_type(:fire), do: 3
+  def slippi_transform_type(:grass), do: 4
+  def slippi_transform_type(:normal), do: 5
+  def slippi_transform_type(:rock), do: 6
+  def slippi_transform_type(:water), do: 9
+
+  @doc """
+  In-game stage-internal RAM merge (2026-08-24 hunts). On Fountain of
+  Dreams: OVERWRITE `fod_platforms` from the live height f32s — RAM is
+  continuous per-frame truth, the stream only samples change events.
+  On Pokemon Stadium: FILL `stadium_transformation` from the transform
+  digit only while the stream has not reported one (the digit names
+  the last-LOADED transform and HOLDS through the following normal
+  period, so it must never overwrite the stream's live phase). Other
+  stages: no-op. Call only for in-game frames.
+  """
+  def merge_stage(%Melee.GameState{} = gamestate, snapshot) when is_map(snapshot) do
+    case Melee.Enums.Stage.from_id(gamestate.stage) do
+      :fountain_of_dreams -> merge_fod_platforms(gamestate, snapshot)
+      :pokemon_stadium -> merge_ps_transform(gamestate, snapshot)
+      _ -> gamestate
+    end
+  end
+
+  defp merge_fod_platforms(gamestate, snapshot) do
+    left = finite_f32(snapshot[:fod_platform_left])
+    right = finite_f32(snapshot[:fod_platform_right])
+
+    if is_float(left) and is_float(right) do
+      %{gamestate | fod_platforms: %Melee.FoDPlatforms{left: left, right: right}}
+    else
+      gamestate
+    end
+  end
+
+  defp merge_ps_transform(%{stadium_transformation: nil} = gamestate, snapshot) do
+    with digit when digit != nil <- top_byte(snapshot[:ps_transform_digit]),
+         kind when kind != :unknown <- ps_transform(digit) do
+      %{
+        gamestate
+        | stadium_transformation: %Melee.StadiumTransformation{
+            event: 0,
+            type: slippi_transform_type(kind)
+          }
+      }
+    else
+      _ -> gamestate
+    end
+  end
+
+  defp merge_ps_transform(gamestate, _snapshot), do: gamestate
+
   # Direct-code typed buffer (2026-08-23 hunt, tmp/mw_codebuf4.exs):
   # the online Name Entry keyboard's text lives at 0x804A0740 —
   # STATIC (same address across boots; zeros only when the keyboard

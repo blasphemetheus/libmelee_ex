@@ -418,6 +418,46 @@ defmodule Melee.MemoryMapTest do
   # merge_css/2 fixtures
   # ---------------------------------------------------------------
 
+  describe "merge_stage/2" do
+    test "FoD: overwrites fod_platforms when both heights decode" do
+      # gamestate.stage carries the INTERNAL id (events.ex converts
+      # GAME_START's external id via from_external |> to_id)
+      gs = %Melee.GameState{stage: 0x08, fod_platforms: %Melee.FoDPlatforms{}}
+      snap = %{fod_platform_left: f32(23.5), fod_platform_right: f32(-1.0)}
+      merged = MemoryMap.merge_stage(gs, snap)
+      assert merged.fod_platforms == %Melee.FoDPlatforms{left: 23.5, right: -1.0}
+
+      # One missing height -> identity (never half-update)
+      assert MemoryMap.merge_stage(gs, %{fod_platform_left: f32(23.5)}) == gs
+    end
+
+    test "PS: fills stadium_transformation only while the stream has none" do
+      gs = %Melee.GameState{stage: 0x12, stadium_transformation: nil}
+
+      merged = MemoryMap.merge_stage(gs, %{ps_transform_digit: u32_top(?3)})
+      assert merged.stadium_transformation == %Melee.StadiumTransformation{event: 0, type: 9}
+
+      # Base file digit '.' -> normal
+      merged = MemoryMap.merge_stage(gs, %{ps_transform_digit: u32_top(?.)})
+      assert merged.stadium_transformation.type == 5
+
+      # Stream already reported: RAM must NOT overwrite (the digit
+      # holds the LAST-LOADED transform through normal periods)
+      live = %{gs | stadium_transformation: %Melee.StadiumTransformation{event: 0, type: 5}}
+      assert MemoryMap.merge_stage(live, %{ps_transform_digit: u32_top(?4)}) == live
+
+      # Non-PS filename byte (menus load Mn...) -> identity
+      assert MemoryMap.merge_stage(gs, %{ps_transform_digit: u32_top(?M)}) == gs
+    end
+
+    test "other stages: identity" do
+      gs = %Melee.GameState{stage: 0x20}
+      assert MemoryMap.merge_stage(gs, %{fod_platform_left: f32(1.0), fod_platform_right: f32(2.0)}) == gs
+    end
+  end
+
+  defp u32_top(byte), do: Bitwise.bsl(byte, 24)
+
   defp css_gamestate do
     %Melee.GameState{
       menu_state: Melee.Enums.Menu.to_id(:character_select),
