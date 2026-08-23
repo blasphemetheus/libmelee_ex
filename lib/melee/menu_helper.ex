@@ -95,6 +95,10 @@ defmodule Melee.MenuHelper do
   @type t :: %__MODULE__{
           name_tag_index: non_neg_integer(),
           inputs_live: boolean(),
+          code_retypes: non_neg_integer(),
+          code_clearing: boolean(),
+          code_verify_failed: boolean(),
+          code_waits: non_neg_integer(),
           frames_on_stage: non_neg_integer(),
           frozen_stadium_selected: boolean(),
           stage_selected: boolean(),
@@ -113,6 +117,12 @@ defmodule Melee.MenuHelper do
 
   defstruct name_tag_index: 0,
             inputs_live: false,
+            # Verify-before-confirm (2026-08-23): typed-buffer readback
+            # retype counter / clear-in-progress / terminal refusal.
+            code_retypes: 0,
+            code_clearing: false,
+            code_verify_failed: false,
+            code_waits: 0,
             frames_on_stage: 0,
             frozen_stadium_selected: false,
             stage_selected: false,
@@ -258,6 +268,11 @@ defmodule Melee.MenuHelper do
     nametag = Keyword.get(opts, :nametag, nil)
     nametag_mode = Keyword.get(opts, :nametag_mode, :select)
     unknown_scene = Keyword.get(opts, :unknown_scene, :recover)
+    # RAM readback of the direct-code keyboard's typed text
+    # (Melee.MemoryMap.direct_code/0 + decode_direct_code/1), or
+    # :unknown when the caller has no watcher — exact legacy blind
+    # behavior then.
+    code_buffer = Keyword.get(opts, :code_buffer, :unknown)
 
     # Reaching any menu we recognize retires boot-dialog handling.
     state = note_known_menu(state, gamestate)
@@ -281,12 +296,20 @@ defmodule Melee.MenuHelper do
             # picked a character and never pressed START, leaving the match
             # sat on READY TO FIGHT forever.
             connect_code != nil and name_entry?(gamestate) ->
-              enter_direct_code(state, gamestate, controller, connect_code)
+              enter_direct_code(state, gamestate, controller, connect_code, code_buffer)
 
             true ->
               # We've exited the name entry screen, so reset the state in case
               # we go back
-              state = %{state | name_tag_index: 0, inputs_live: false}
+              state = %{
+                state
+                | name_tag_index: 0,
+                  inputs_live: false,
+                  code_retypes: 0,
+                  code_clearing: false,
+                  code_verify_failed: false,
+                  code_waits: 0
+              }
 
               choose_character(
                 state,
@@ -878,7 +901,27 @@ defmodule Melee.MenuHelper do
 
   # At the nametag entry screen, enter the given direct connect code and
   # exit. Port of MenuHelper.enter_direct_code.
-  defp enter_direct_code(state, gamestate, controller, connect_code) do
+  # Verify-before-confirm (2026-08-23, the code-buffer readback):
+  # `code_buffer` is the RAM decode of the keyboard's typed text
+  # (0x804A0740). With it, the confirm point becomes closed-loop:
+  #
+  #   * AUTOFILL SHORTCUT — the field opens pre-filled; if it already
+  #     reads the wanted code before we typed anything, confirm
+  #     immediately (skips the whole typing walk).
+  #   * END-VERIFY — where the blind flow pressed START on a counted
+  #     index, compare the buffer first. A proper PREFIX of the code
+  #     means the readback is still settling (watcher lag) — wait. A
+  #     divergent buffer means the blind typing missed (the stream's
+  #     menu_selection is FROZEN at the online keyboard) — clear with
+  #     B presses and retype, bounded.
+  #   * TERMINAL REFUSAL — retypes exhausted: hold neutral and log
+  #     loudly rather than search a wrong code (a wrong search wedges
+  #     the session invisibly; an idle keyboard at least trips the
+  #     menu watchdog).
+  #
+  # `code_buffer == :unknown` (no watcher) keeps every legacy clause
+  # bit-exactly.
+  defp enter_direct_code(state, gamestate, controller, connect_code, code_buffer) do
     # An empty connect code still drives the direct-code keyboard —
     # upstream v0.47 parity ("" is falsey in Python, so their guard skips
     # it, but any code that reaches here types it). In practice "" is
@@ -906,6 +949,11 @@ defmodule Melee.MenuHelper do
         Controller.tilt_analog(controller, :main, 1.0, 0.5)
         state
 
+      # Terminal refusal: never confirm a code the RAM says is wrong.
+      state.code_verify_failed ->
+        Controller.release_all(controller)
+        state
+
       # Release on even frames so every press-or-tilt below lands as a
       # fresh EDGE the next odd frame. Melee list menus and confirm
       # buttons act on the up->down edge (key-repeat only after a ~15f
@@ -917,9 +965,61 @@ defmodule Melee.MenuHelper do
         Controller.release_all(controller)
         state
 
-      String.length(connect_code) == state.name_tag_index ->
+      # Clearing after a failed verify: B per edge until the buffer
+      # reads empty, then restart the typing walk.
+      state.code_clearing ->
+        if code_buffer == "" do
+          %{state | code_clearing: false, name_tag_index: 0, code_retypes: state.code_retypes + 1}
+        else
+          Controller.press_button(controller, :b)
+          state
+        end
+
+      # AUTOFILL SHORTCUT: nothing typed yet and the field already
+      # reads the wanted code — confirm now.
+      state.name_tag_index == 0 and connect_code != "" and code_buffer == connect_code ->
         Controller.press_button(controller, :start)
-        state
+        %{state | name_tag_index: String.length(connect_code)}
+
+      String.length(connect_code) == state.name_tag_index ->
+        cond do
+          # No readback (or verified): the legacy confirm.
+          code_buffer == :unknown or code_buffer == connect_code ->
+            Controller.press_button(controller, :start)
+            state
+
+          # Proper prefix: either watcher lag (the last keystroke's
+          # bytes haven't landed) or a WHIFFED press. Wait briefly for
+          # lag; then RESUME TYPING from the buffer's true length —
+          # the readback says exactly how many chars landed. A resume
+          # that double-types (pure lag after all) is caught by the
+          # next end-verify and cleared, bounded as usual.
+          is_binary(code_buffer) and String.starts_with?(connect_code, code_buffer) ->
+            if state.code_waits >= 30 do
+              %{state | name_tag_index: String.length(code_buffer), code_waits: 0}
+            else
+              Controller.release_all(controller)
+              %{state | code_waits: state.code_waits + 1}
+            end
+
+          state.code_retypes >= 2 ->
+            Logger.error(
+              "[MenuHelper] direct-code verify FAILED after #{state.code_retypes} retypes " <>
+                "(buffer reads #{inspect(code_buffer)}, wanted #{connect_code}) — " <>
+                "refusing to confirm a wrong code; keyboard held idle"
+            )
+
+            %{state | code_verify_failed: true}
+
+          true ->
+            Logger.warning(
+              "[MenuHelper] direct-code verify mismatch (buffer #{inspect(code_buffer)}, " <>
+                "wanted #{connect_code}) — clearing and retyping (#{state.code_retypes + 1})"
+            )
+
+            Controller.press_button(controller, :b)
+            %{state | code_clearing: true}
+        end
 
       true ->
         target_code =

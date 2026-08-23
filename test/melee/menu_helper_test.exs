@@ -624,6 +624,94 @@ defmodule Melee.MenuHelperTest do
       assert wrote == "PRESS START\n"
     end
 
+    test "verify-before-confirm: autofill shortcut confirms without typing", ctx do
+      {pid, path} = file_controller(ctx)
+      state = %{MenuHelper.new() | inputs_live: true}
+      gamestate = name_entry_gs(frame: 1, menu_selection: 20)
+
+      {state, wrote} =
+        step_frame(state, gamestate, pid, path,
+          base_opts(connect_code: "FOX#123", code_buffer: "FOX#123")
+        )
+
+      assert wrote == "PRESS START\n"
+      assert state.name_tag_index == 7
+    end
+
+    test "verify-before-confirm: matching buffer confirms at the end of typing", ctx do
+      {pid, path} = file_controller(ctx)
+      state = %{MenuHelper.new() | name_tag_index: 7, inputs_live: true}
+      gamestate = name_entry_gs(frame: 1, menu_selection: 20)
+
+      {_state, wrote} =
+        step_frame(state, gamestate, pid, path,
+          base_opts(connect_code: "FOX#123", code_buffer: "FOX#123")
+        )
+
+      assert wrote == "PRESS START\n"
+    end
+
+    test "verify-before-confirm: a proper prefix waits (readback lag), then resumes typing", ctx do
+      {pid, path} = file_controller(ctx)
+      state = %{MenuHelper.new() | name_tag_index: 7, inputs_live: true}
+      gamestate = name_entry_gs(frame: 1, menu_selection: 20)
+      opts = base_opts(connect_code: "FOX#123", code_buffer: "FOX#12")
+
+      {state, wrote} = step_frame(state, gamestate, pid, path, opts)
+      assert wrote == @release_all
+      assert state.code_waits == 1
+
+      # Wait budget exhausted: resume from the buffer's true length.
+      state = %{state | code_waits: 30}
+      {state, _} = step_frame(state, gamestate, pid, path, opts)
+      assert state.name_tag_index == 6
+      assert state.code_waits == 0
+    end
+
+    test "verify-before-confirm: divergent buffer clears and retypes, bounded", ctx do
+      {pid, path} = file_controller(ctx)
+      state = %{MenuHelper.new() | name_tag_index: 7, inputs_live: true}
+      gamestate = name_entry_gs(frame: 1, menu_selection: 20)
+
+      {state, wrote} =
+        step_frame(state, gamestate, pid, path,
+          base_opts(connect_code: "FOX#123", code_buffer: "AOX#123")
+        )
+
+      assert wrote == "PRESS B\n"
+      assert state.code_clearing
+
+      {state, wrote} =
+        step_frame(state, gamestate, pid, path,
+          base_opts(connect_code: "FOX#123", code_buffer: "AO")
+        )
+
+      assert wrote == "PRESS B\n"
+
+      {state, _} =
+        step_frame(state, gamestate, pid, path,
+          base_opts(connect_code: "FOX#123", code_buffer: "")
+        )
+
+      refute state.code_clearing
+      assert state.name_tag_index == 0
+      assert state.code_retypes == 1
+    end
+
+    test "verify-before-confirm: retypes exhausted refuses to confirm a wrong code", ctx do
+      {pid, path} = file_controller(ctx)
+      state = %{MenuHelper.new() | name_tag_index: 7, inputs_live: true, code_retypes: 2}
+      gamestate = name_entry_gs(frame: 1, menu_selection: 20)
+      opts = base_opts(connect_code: "FOX#123", code_buffer: "AOX#123")
+
+      {state, wrote} = step_frame(state, gamestate, pid, path, opts)
+      assert state.code_verify_failed
+      refute wrote =~ "PRESS START"
+
+      {_state, wrote} = step_frame(state, gamestate, pid, path, opts)
+      assert wrote == @release_all
+    end
+
     test "without a connect code, gets on with picking a character", ctx do
       {pid, path} = file_controller(ctx)
 
