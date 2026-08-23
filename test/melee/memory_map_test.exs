@@ -191,6 +191,23 @@ defmodule Melee.MemoryMapTest do
       assert MemoryMap.merge_css(gs, %{css_p1_selected: 0x12345678}) == gs
     end
 
+    test "merge_css/3 fields: :static skips the heap-block cursor, keeps static fields" do
+      gs = css_gamestate()
+
+      snapshot = %{
+        css_p1_cursor_x: f32(-22.0),
+        css_p1_cursor_y: f32(11.5),
+        css_p1_selected: 0x02
+      }
+
+      merged = MemoryMap.merge_css(gs, snapshot, fields: :static)
+      # cursor untouched (heap address unproven at this scene)...
+      assert merged.players[1].cursor == gs.players[1].cursor
+      # ...but the static-region selection still overlays.
+      assert merged.players[1].coin_down == true
+      assert merged.players[1].character_selected == 0x01
+    end
+
     test "merge_css/2: status byte, ready banner, and port independence" do
       gs = css_gamestate()
 

@@ -210,12 +210,23 @@ defmodule Melee.MemoryMap do
   coin is placed — RAM distinguishes hover from lock, which the stream
   wire byte never did. Top-level: `ready_to_start` (byte 0 = banner
   up, mirroring the stream's semantics).
+
+  `fields: :static` (default `:all`) skips the CURSOR overlay: the
+  cursor block lives on the menu HEAP (relocatable per scene family —
+  the 08-22 park-and-scan derived it at the offline CSS only), while
+  every other field is in the verified STATIC region (validated at
+  the online CSS live 2026-08-23). Use `:static` at scenes where the
+  cursor addresses are unproven; a stale heap address would overlay
+  garbage coordinates.
   """
-  @spec merge_css(Melee.GameState.t(), %{atom() => non_neg_integer()}) :: Melee.GameState.t()
-  def merge_css(%Melee.GameState{} = gamestate, snapshot) when is_map(snapshot) do
+  @spec merge_css(Melee.GameState.t(), %{atom() => non_neg_integer()}, keyword()) ::
+          Melee.GameState.t()
+  def merge_css(%Melee.GameState{} = gamestate, snapshot, opts \\ []) when is_map(snapshot) do
+    fields = Keyword.get(opts, :fields, :all)
+
     players =
       Map.new(gamestate.players, fn {port, player} ->
-        {port, merge_css_player(player, port, snapshot)}
+        {port, merge_css_player(player, port, snapshot, fields)}
       end)
 
     ready =
@@ -227,12 +238,13 @@ defmodule Melee.MemoryMap do
     %{gamestate | players: players, ready_to_start: ready}
   end
 
-  defp merge_css_player(player, port, snapshot) do
+  defp merge_css_player(player, port, snapshot, fields) do
     hover = top_byte(snapshot[:"css_p#{port}_character"])
     hover_internal = hover && Melee.Enums.Character.from_css(hover)
 
     player
     |> merge_cursor(
+      fields,
       finite_f32(snapshot[:"css_p#{port}_cursor_x"]),
       finite_f32(snapshot[:"css_p#{port}_cursor_y"])
     )
@@ -241,10 +253,10 @@ defmodule Melee.MemoryMap do
     |> merge_selected(snapshot[:"css_p#{port}_selected"])
   end
 
-  defp merge_cursor(player, x, y) when is_float(x) and is_float(y),
+  defp merge_cursor(player, :all, x, y) when is_float(x) and is_float(y),
     do: %{player | cursor: %Melee.Position{x: x, y: y}}
 
-  defp merge_cursor(player, _x, _y), do: player
+  defp merge_cursor(player, _fields, _x, _y), do: player
 
   defp merge_field(player, _key, nil), do: player
   defp merge_field(player, key, value), do: Map.put(player, key, value)
