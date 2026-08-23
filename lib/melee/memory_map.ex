@@ -112,6 +112,17 @@ defmodule Melee.MemoryMap do
       menu_frame: "80479D60",
       stage: "804D6CAD",
       ready_to_start: "804D6CF2",
+      # Online Play list selection index (hunted 2026-08-24, dump-diff
+      # + screenshot ground truth: Ranked 0, Unranked 1, Direct 2,
+      # Teams 3, Party 4) — the stream's menu_selection lags seconds
+      # at this screen; this word steps instantly per move.
+      online_menu_selection: "804D7788",
+      # Online menu screen-depth word (hunted+verified 2026-08-24,
+      # 2 full CSS<->keyboard cycles): online CSS = 2, Name Entry
+      # keyboard = 3 — the CSS->keyboard transition the scene word
+      # cannot see. Other online screens unmapped; consumers test
+      # equality on 2/3 only.
+      online_menu_depth: "804060E0",
       sss_cursor_x: "80BDA810 28 38",
       sss_cursor_y: "80BDA810 28 3C"
     ] ++ per_port
@@ -221,6 +232,21 @@ defmodule Melee.MemoryMap do
       [0x00 | _], acc -> {:halt, acc}
       _partial_or_unknown, acc -> {:cont, acc <> "?"}
     end)
+  end
+
+  @doc """
+  Overlay the RAM Online-Play selection index onto a main-menu
+  gamestate: the stream's `menu_selection` lags SECONDS at that
+  screen (the "Unranked hover" wait), while `:online_menu_selection`
+  steps instantly. Pure and additive — no observation, no change.
+  """
+  @spec merge_online_menu(Melee.GameState.t(), %{atom() => non_neg_integer()}) ::
+          Melee.GameState.t()
+  def merge_online_menu(%Melee.GameState{} = gamestate, snapshot) when is_map(snapshot) do
+    case Map.get(snapshot, :online_menu_selection) do
+      sel when is_integer(sel) and sel <= 0xFF -> %{gamestate | menu_selection: sel}
+      _ -> gamestate
+    end
   end
 
   @doc "Decode a `:pN_percent` u32 read: the damage value."

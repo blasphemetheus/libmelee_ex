@@ -25,8 +25,8 @@ defmodule Melee.MemoryMapTest do
       watches = MemoryMap.menu()
       names = Keyword.keys(watches)
       assert length(names) == length(Enum.uniq(names))
-      # 6 globals + 5 fields x 4 ports
-      assert length(watches) == 26
+      # 8 globals + 5 fields x 4 ports
+      assert length(watches) == 28
 
       for {_name, line} <- watches do
         # Every space-separated token must parse as hex (Dolphin's
