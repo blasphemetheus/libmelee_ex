@@ -11,8 +11,9 @@ defmodule Melee.MemoryMap do
   (`004A0BC0 2` = Read_U32(Read_U32(0x804A0BC0) + 2)).
 
   Every read is a u32; float fields (cursors) decode via
-  `MemoryWatcher.get_f32/2`. `coin_down` reads 2 when the coin is
-  placed (classic semantics, matching `Melee.Events.Menu`).
+  `MemoryWatcher.get_f32/2`. `css_pN_selected` reads the port's
+  locked-in EXTERNAL character id, or `0x21` (33) when no character is
+  selected — decode with `css_selected/1`.
 
   Usage:
 
@@ -59,7 +60,28 @@ defmodule Melee.MemoryMap do
     4 => {"803F0E74", "803F0E76"}
   }
 
-  @coin %{1 => "804A0BC0 2", 2 => "804A0BC4 2", 3 => "804A0BC8 2", 4 => "804A0BCC 2"}
+  # SELECTED character per port (2026-08-22c toggle experiment,
+  # tmp/mw_select_toggle.exs + tmp/mw_stride.exs): u32 = the port's
+  # locked-in EXTERNAL character id, 0x21 = none. Flips on A-select and
+  # back on B-deselect (visually verified: coin placed/lifted on
+  # screenshots); hovering does NOT touch it, so it is the true
+  # coin-down signal the stream lost on mainline (GOTCHA #101 + its
+  # offline sibling). P1 verified with fox (0x21->0x02), P2 with falco
+  # (0x21->0x14), both also read through the live MemoryWatcher path;
+  # P3/P4 stride-derived (stride 8). A second parallel copy lives at
+  # +0x54 (804320E0/E8/F0/F8) — same values, unused here. Classic
+  # provenance: the 0x8043208F byte family (this u32's low byte);
+  # static region, survived mainline intact like 803F0Exx. The classic
+  # coin pointer chain (804A0BC0 2) is DEAD on mainline — stale
+  # pointer.
+  @css_selected %{
+    1 => "8043208C",
+    2 => "80432094",
+    3 => "8043209C",
+    4 => "804320A4"
+  }
+
+  @css_selected_none 0x21
 
   @doc """
   The menu/CSS watch set: scene state, menu frame counter, per-port CSS
@@ -81,7 +103,7 @@ defmodule Melee.MemoryMap do
           {:"css_p#{p}_cursor_y", cy},
           {:"css_p#{p}_status", status},
           {:"css_p#{p}_character", char},
-          {:"css_p#{p}_coin", @coin[p]}
+          {:"css_p#{p}_selected", @css_selected[p]}
         ]
       end)
 
@@ -100,6 +122,16 @@ defmodule Melee.MemoryMap do
   watch proves frames are advancing — a free liveness signal.
   """
   def canary, do: [rng_seed: "804D5F90"]
+
+  @doc """
+  Decode a `:css_pN_selected` u32: `:none` while the port's coin is in
+  hand (or the port is empty), `{:character, external_id}` once it is
+  placed. The RAM replacement for the stream's dead `coin_down`
+  (GOTCHA #101): selection is exactly `value != 0x21`.
+  """
+  @spec css_selected(non_neg_integer()) :: :none | {:character, byte()}
+  def css_selected(@css_selected_none), do: :none
+  def css_selected(id) when is_integer(id) and id >= 0 and id <= 0xFF, do: {:character, id}
 
   @doc """
   Decode the packed `:menu_state` u32 (address 0x80479D30) — the

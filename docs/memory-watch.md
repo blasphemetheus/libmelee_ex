@@ -95,9 +95,27 @@ Verified live on mainline (2026-08-22): `rng_seed` (804D5F90),
 `menu_frame` (80479D60), `menu_state` (80479D30), and the **CSS
 cursor block, re-derived by park-and-scan** (see below): the classic
 4-port block relocated intact by +0x17200 (P1 bit-exact verified;
-P2-P4 delta-derived, stride 0xB80 preserved). Still stale/unverified:
-per-port character/status/coin — same park-and-scan treatment owed
-(park on distinct portraits, diff the bytes).
+P2-P4 delta-derived, stride 0xB80 preserved).
+
+Also verified live (2026-08-22c, the A/B toggle experiment with
+screenshot ground truth): **`css_pN_selected`** (8043208C + 8·(N−1)) —
+u32 = the port's locked-in EXTERNAL character id, `0x21` = none;
+flips on A-select, back on B-deselect, untouched by hovering. P1
+verified with fox (0x21→0x02), P2 with falco (0x21→0x14); a parallel
+copy sits at +0x54. Decode with `MemoryMap.css_selected/1`. This is
+the RAM replacement for the stream's dead `coin_down` (GOTCHA #101
+and its offline sibling); the classic coin pointer chain
+(`804A0BC0 2`) is DEAD on mainline. The hover byte `803F0E0A`
+(per-portrait id) and status byte `803F0E08` live in the same
+surviving static region.
+
+**Two probe lessons from the same experiment** (they cost three
+runs): `Probe.navigate!`'s default `until` is *arrival at the CSS* —
+it does NOT pick the character; and against a free-running windowed
+dolphin, button holds must be WALL-CLOCK (`press → sleep(250ms) →
+release`), because `tap!`'s step-counted hold can complete in
+sub-frame wall time when the console is merely polling — presses then
+land nondeterministically, which mimics "buttons are dead".
 
 **Two liveness caveats learned the hard way**: the RNG "canary" does
 NOT tick at a settled CSS (it advances per random call, not per

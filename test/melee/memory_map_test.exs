@@ -79,6 +79,31 @@ defmodule Melee.MemoryMapTest do
       assert hd(addrs) == 0x81118DEC + 0x17200
     end
 
+    test "selected-character array: base 0x8043208C, stride 8 (2026-08-22c toggle experiment)" do
+      # P1 verified with fox (0x21 -> 0x02), P2 with falco (0x21 ->
+      # 0x14), flips back on B-deselect; P3/P4 stride-derived. Pins the
+      # structure so an edit can't silently break the derivation chain.
+      addrs =
+        for p <- 1..4 do
+          MemoryMap.menu()
+          |> Keyword.fetch!(:"css_p#{p}_selected")
+          |> String.to_integer(16)
+        end
+
+      assert Enum.zip(addrs, tl(addrs)) |> Enum.map(fn {a, b} -> b - a end) == [8, 8, 8]
+      assert hd(addrs) == 0x8043208C
+    end
+
+    test "css_selected/1 decode: :none sentinel, every other byte an external id" do
+      assert MemoryMap.css_selected(0x21) == :none
+      assert MemoryMap.css_selected(0x02) == {:character, 0x02}
+      assert MemoryMap.css_selected(0x14) == {:character, 0x14}
+
+      for id <- 0..0xFF, id != 0x21 do
+        assert MemoryMap.css_selected(id) == {:character, id}
+      end
+    end
+
     test "canary is present in the standing set" do
       assert Keyword.has_key?(MemoryMap.menu_with_canary(), :rng_seed)
     end
