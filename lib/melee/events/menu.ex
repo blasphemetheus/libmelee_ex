@@ -148,6 +148,19 @@ defmodule Melee.Events.Menu do
   # falls back to the blind A-pulse (prompt case).
   def scene_name(0x28), do: :boot
 
+  # Major-8 (Slippi online) minors, pinned by the 2026-08-22 bot14 RAM
+  # scene-word capture correlated against replay timestamps: 0 = online
+  # CSS AND the Direct code-entry screen (they share the minor — the
+  # bot searched for minutes with the word unchanged), 1 = online stage
+  # select (0x0108 above; flashes in the post-game return), 4 = ONLINE
+  # IN-GAME (flips ~2-3s before each replay's first frame, holds
+  # through the game, returns to minor 0 ~2s after game end). The
+  # stream never emits 0x0408 — the whole online flow reports
+  # menu_state 6 — so this id only arrives via
+  # Melee.MemoryMap.scene_view/1; it is the RAM-only "match started"
+  # departure signal.
+  def scene_name(0x0408), do: :slippi_online_game
+
   def scene_name(s) when is_integer(s) do
     if Integer.mod(s, 256) in @special_melee_majors do
       mode = @special_melee_names[Integer.mod(s, 256)]

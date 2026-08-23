@@ -172,6 +172,13 @@ defmodule Melee.MemoryMapTest do
       assert MemoryMap.scene_view(0x42424200) == {:settled, {:unknown, 0x42}}
     end
 
+    test "scene_view: the online in-game word (bot14 capture, replay-correlated)" do
+      # Word held through both live games; flips ~2-3s before the
+      # replay's first frame and back ~2s after game end. RAM-only:
+      # the stream reports menu_state 6 for the whole online flow.
+      assert MemoryMap.scene_view(0x08080104) == {:settled, :slippi_online_game}
+    end
+
     test "scene_view: leaving — pending family labeled at entry" do
       # Online CSS -> VS-family transition committed, not yet landed.
       assert MemoryMap.scene_view(0x08020800) ==
