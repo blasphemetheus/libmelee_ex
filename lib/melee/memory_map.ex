@@ -118,10 +118,12 @@ defmodule Melee.MemoryMap do
       # at this screen; this word steps instantly per move.
       online_menu_selection: "804D7788",
       # Online menu screen-depth word (hunted+verified 2026-08-24,
-      # 2 full CSS<->keyboard cycles): online CSS = 2, Name Entry
-      # keyboard = 3 — the CSS->keyboard transition the scene word
-      # cannot see. Other online screens unmapped; consumers test
-      # equality on 2/3 only.
+      # 2 full CSS<->keyboard cycles + a searching probe): online
+      # CSS = 2, Name Entry keyboard = 3, and SEARCHING = 2 — the
+      # searching screen IS the CSS with a status checklist
+      # (screenshot-verified), so the 3->2 edge fires at every search
+      # start: NEVER re-arm on it. Z (not B) cancels a search.
+      # Consumers test equality on 2/3 only.
       online_menu_depth: "804060E0",
       sss_cursor_x: "80BDA810 28 38",
       sss_cursor_y: "80BDA810 28 3C"
