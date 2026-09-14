@@ -14,7 +14,7 @@ defmodule Melee.Controller do
 
   By default analog inputs are quantized (`fix_analog_inputs`) so that
   the values you send match what `Melee.Console` reports back on the
-  next frame, modulo deadzones.
+  next frame, modulo stick deadzones, circular clamping, and digital trigger clicks.
 
   ## When Dolphin stops reading
 
@@ -80,6 +80,14 @@ defmodule Melee.Controller do
     raw = round_half_even(x * 140)
     (raw + 0.1) / 255
   end
+
+  @doc """
+  Quantize a trigger for the bipolar Pipe Axis + binding, not a raw Slippi pad byte.
+  Dolphin maps Axis + as `max(value - 0.5, 0) * 2`; sending the raw pad-byte
+  fraction here would erase most analog trigger values. Raw Slippi pad encoding
+  continues to use `fix_analog_trigger/1` unchanged.
+  """
+  def fix_pipe_analog_trigger(amount), do: 0.5 + fix_analog_trigger(amount) / 2
 
   # Python's round() is banker's rounding (half to even); Elixir's rounds
   # half away from zero. Faithful port so quantized values match exactly.
@@ -242,7 +250,7 @@ defmodule Melee.Controller do
   end
 
   def handle_cast({:shoulder, button, amount}, state) do
-    wire = if state.fix_analog_inputs, do: fix_analog_trigger(amount), else: amount
+    wire = if state.fix_analog_inputs, do: fix_pipe_analog_trigger(amount), else: amount
     state = write(state, "SET #{Button.to_command_string(button)} #{fmt(wire)}\n")
 
     current =

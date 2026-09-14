@@ -274,6 +274,7 @@ defmodule Melee.SessionTest do
       def init(script), do: {:ok, script}
 
       @impl true
+      def handle_call({:step, true}, from, script), do: handle_call(:step, from, script)
       def handle_call(:step, _from, [head | rest]), do: {:reply, head, rest}
       def handle_call(:step, _from, []), do: {:reply, {:error, :script_over}, []}
     end

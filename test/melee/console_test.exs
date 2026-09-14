@@ -357,6 +357,27 @@ defmodule Melee.ConsoleTest do
       {pid, path}
     end
 
+    test "draining completed frames does not advance controller input", ctx do
+      {console, owner} = connected_console(ctx, direct_inputs: true)
+      {controller, path} = file_controller(ctx)
+      :ok = Console.register_controller(console, controller, 1)
+
+      inject(owner, game_event_packet(payloads() <> game_start() <> frame(1) <> frame(2)))
+      Console.info(console)
+      before_drain = File.read!(path)
+
+      assert {:ok, %{frame: 1}} = Console.step(console, 5_000)
+      assert {:ok, %{frame: 2}} = Console.step(console, 5_000)
+      assert File.read!(path) == before_drain
+      refute_receive {:transport_send, _, _}
+
+      task = Task.async(fn -> Console.step(console, 5_000) end)
+      assert_receive {:transport_send, _, _}
+      assert File.read!(path) == before_drain <> "FLUSH\n"
+      inject(owner, game_event_packet(frame(3)))
+      assert {:ok, %{frame: 3}} = Task.await(task, 5_000)
+    end
+
     test "step flushes registered controllers first", ctx do
       {console, owner} = connected_console(ctx)
       {controller, path} = file_controller(ctx)
@@ -370,6 +391,66 @@ defmodule Melee.ConsoleTest do
       # game_start also releases all inputs so frame one has neutral input.
       assert content =~ "RELEASE A\n"
       assert content =~ "SET MAIN .5 .5\n"
+    end
+
+    test "a timed-out step followed by a late frame does not flush twice", ctx do
+      {console, owner} = connected_console(ctx, polling_mode: true, polling_timeout: 1)
+      {controller, path} = file_controller(ctx)
+      :ok = Console.register_controller(console, controller)
+      inject(owner, game_event_packet(payloads() <> game_start() <> frame(1)))
+      assert {:ok, %{frame: 1}} = Console.step(console, 5_000)
+
+      for number <- 2..25 do
+        before_step = File.read!(path)
+        assert Console.step(console, 5_000) == nil
+        assert File.read!(path) == before_step <> "FLUSH\n"
+        inject(owner, game_event_packet(frame(number)))
+        Console.info(console)
+        assert {:ok, %{frame: ^number}} = Console.step(console, 5_000)
+        assert File.read!(path) == before_step <> "FLUSH\n"
+      end
+    end
+
+    test "wait-only polling retries do not advance either input transport", ctx do
+      {console, owner} =
+        connected_console(ctx, polling_mode: true, polling_timeout: 1, direct_inputs: true)
+
+      {controller, path} = file_controller(ctx)
+      :ok = Console.register_controller(console, controller, 1)
+      inject(owner, game_event_packet(payloads() <> game_start() <> frame(1)))
+      assert {:ok, %{frame: 1}} = Console.step(console, 5_000)
+      assert Console.step(console, 5_000) == nil
+      assert_receive {:transport_send, _, _}
+      committed = File.read!(path)
+
+      for _ <- 1..25 do
+        assert Console.step(console, 5_000, flush: false) == nil
+        assert File.read!(path) == committed
+      end
+
+      refute_receive {:transport_send, _, _}
+      inject(owner, game_event_packet(frame(2)))
+      assert {:ok, %{frame: 2}} = Console.step(console, 5_000, flush: false)
+      assert Console.step(console, 5_000) == nil
+      assert_receive {:transport_send, _, _}
+      assert File.read!(path) == committed <> "FLUSH\n"
+    end
+
+    test "repeated games reset input once per start while queued frames drain", ctx do
+      {console, owner} = connected_console(ctx)
+      {controller, path} = file_controller(ctx)
+      :ok = Console.register_controller(console, controller)
+
+      for game <- 1..20 do
+        Melee.Controller.press_button(controller, :b)
+        assert Melee.Controller.current(controller).button.b
+        inject(owner, game_event_packet(payloads() <> game_start() <> frame(1) <> frame(2)))
+        assert {:ok, %{frame: 1}} = Console.step(console, 5_000)
+        assert {:ok, %{frame: 2}} = Console.step(console, 5_000)
+        refute Melee.Controller.current(controller).button.b
+        assert length(String.split(File.read!(path), "FLUSH\n")) - 1 == game
+        inject(owner, game_event_packet(event(0x39, @sizes[0x39], [])))
+      end
     end
 
     test "unregister_controller/2 stops flushing it", ctx do

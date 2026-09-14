@@ -4,8 +4,9 @@ defmodule Melee.Console do
 
   Mirrors libmelee's `Console`: `connect/2` establishes the ENet +
   Slippstream handshake, then `step/2` yields one `Melee.GameState` per
-  frame (flushing any registered controllers first, preserving libmelee's
-  flush-at-top-of-step ordering that blocking-input mode depends on).
+  frame. Already completed frames are drained without flushing controllers;
+  when no frame is queued, controllers are flushed before waiting for the
+  next frame, as blocking-input mode requires.
 
   ## Options (`start_link/1`)
 
@@ -93,14 +94,19 @@ defmodule Melee.Console do
   @doc """
   Advance to the next frame.
 
-  Flushes registered controllers, then blocks until a frame completes
+  Returns an already queued frame without flushing registered controllers.
+  Otherwise flushes controllers, then blocks until a frame completes
   (or, in polling mode, returns `nil` after `:polling_timeout` with no
   frame). Returns `{:error, :enet_disconnected}` once the connection
   drops — the same signal libmelee raises as `EnetDisconnected`.
+
+  Pass `flush: false` when retrying a timed-out step without a new input
+  commitment. This only waits for the outstanding frame; another flush would
+  advance the controller stream again. The default remains `flush: true`.
   """
-  @spec step(GenServer.server(), timeout()) :: step_result()
-  def step(console, timeout \\ :infinity),
-    do: GenServer.call(console, :step, timeout_plus(timeout))
+  @spec step(GenServer.server(), timeout(), keyword()) :: step_result()
+  def step(console, timeout \\ :infinity, opts \\ []),
+    do: GenServer.call(console, {:step, Keyword.get(opts, :flush, true)}, timeout_plus(timeout))
 
   @doc """
   Register a `Melee.Controller` to be flushed by `step/2`.
@@ -229,7 +235,11 @@ defmodule Melee.Console do
   end
 
   def handle_call(:step, from, state) do
-    state = flush_controllers(state)
+    handle_call({:step, true}, from, state)
+  end
+
+  def handle_call({:step, flush?}, from, state) when is_boolean(flush?) do
+    state = if flush? and :queue.is_empty(state.frames), do: flush_controllers(state), else: state
 
     case pop_frame(state) do
       {frame, state} ->

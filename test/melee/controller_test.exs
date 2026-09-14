@@ -97,7 +97,15 @@ defmodule Melee.ControllerTest do
       {pid, path} = file_controller(ctx)
       Controller.press_shoulder(pid, :l, 1.0)
 
-      assert written(pid, path) == "SET L 0.5494117647058824\nFLUSH\n"
+      assert written(pid, path) == "SET L 0.7747058823529411\nFLUSH\n"
+    end
+
+    test "pipe trigger mapping inverts Axis + for every policy shoulder bucket" do
+      for amount <- [0.0, 0.25, 0.5, 0.75, 1.0] do
+        wire = Controller.fix_pipe_analog_trigger(amount)
+        raw = trunc(max(wire - 0.5, 0.0) * 2 * 255)
+        assert raw == round(amount * 140)
+      end
     end
 
     test "release_all writes the full reset block", ctx do
