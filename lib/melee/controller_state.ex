@@ -24,7 +24,8 @@ defmodule Melee.ControllerState do
           r_shoulder: float()
         }
 
-  defstruct button: Map.from_keys(@buttons, false),
+  defstruct processed_input: nil,
+            button: Map.from_keys(@buttons, false),
             processed_button: Map.from_keys(@buttons, false),
             main_stick: {0.5, 0.5},
             c_stick: {0.5, 0.5},

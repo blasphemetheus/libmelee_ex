@@ -183,9 +183,19 @@ defmodule Melee.Controller do
   @spec prev(GenServer.server()) :: ControllerState.t()
   def prev(controller), do: GenServer.call(controller, :prev)
 
+  @doc "Set original game-unit pre-frame inputs for the next direct-channel commit."
+  def set_processed(controller, input) do
+    # Validate synchronously, before changing controller state.
+    Melee.SlippiPad.pack_processed(input)
+    GenServer.call(controller, {:set_processed, input})
+  end
+
   @doc "The controller state including presses since the last `flush/1`."
   @spec current(GenServer.server()) :: ControllerState.t()
   def current(controller), do: GenServer.call(controller, :current)
+
+  @doc false
+  def take_direct(controller), do: GenServer.call(controller, :take_direct)
 
   @doc "Close the pipe and stop the controller."
   @spec disconnect(GenServer.server()) :: :ok
@@ -235,8 +245,16 @@ defmodule Melee.Controller do
     {:reply, reply, %{state | prev: state.current}}
   end
 
+  def handle_call({:set_processed, input}, _from, state) do
+    {:reply, :ok, %{state | current: %{state.current | processed_input: input}}}
+  end
+
   def handle_call(:prev, _from, state), do: {:reply, state.prev, state}
   def handle_call(:current, _from, state), do: {:reply, state.current, state}
+
+  def handle_call(:take_direct, _from, state) do
+    {:reply, state.current, %{state | current: %{state.current | processed_input: nil}}}
+  end
 
   @impl true
   def handle_cast({:press, button}, state) do

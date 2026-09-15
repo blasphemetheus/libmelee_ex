@@ -357,6 +357,44 @@ defmodule Melee.ConsoleTest do
       {pid, path}
     end
 
+    test "mixed commits are atomic, expire once and do not add a game-start batch", ctx do
+      {console, owner} = connected_console(ctx, direct_inputs: true, processed_inputs: true)
+      {controller, _path} = file_controller(ctx)
+      :ok = Console.register_controller(console, controller, 1)
+      inject(owner, game_event_packet(payloads() <> game_start() <> frame(1)))
+      assert {:ok, %{frame: 1}} = Console.step(console, 5_000)
+      refute_receive {:transport_send, _, _}
+
+      input = %{
+        rng_seed: 123,
+        main_x: -0.9921875,
+        main_y: 0.0,
+        c_x: 0.0,
+        c_y: 0.0,
+        trigger: 0.0,
+        buttons: 0,
+        physical_buttons: 0,
+        l_trigger: 0.0,
+        r_trigger: 0.0,
+        raw_main_x: 0,
+        raw_main_y: 0,
+        raw_c_x: 0,
+        raw_c_y: 0
+      }
+
+      Melee.Controller.set_processed(controller, input)
+      task = Task.async(fn -> Console.step(console, 5_000) end)
+      assert_receive {:transport_send, 0, <<3, 1, 1, 1, _::binary-size(44)>>}
+      inject(owner, game_event_packet(frame(2)))
+      assert {:ok, %{frame: 2}} = Task.await(task)
+      task = Task.async(fn -> Console.step(console, 5_000) end)
+      assert_receive {:transport_send, 0, <<3, 1, 1, 0, _::binary-size(8)>>}
+      inject(owner, game_event_packet(frame(3)))
+      assert {:ok, %{frame: 3}} = Task.await(task)
+      inject(owner, game_event_packet(event(0x39, @sizes[0x39], [])))
+      assert_receive {:transport_send, 0, <<3, 1, 1, 0, _::binary-size(8)>>}
+    end
+
     test "draining completed frames does not advance controller input", ctx do
       {console, owner} = connected_console(ctx, direct_inputs: true)
       {controller, path} = file_controller(ctx)

@@ -75,6 +75,66 @@ defmodule Melee.SlippiPad do
     <<@batch_cmd, length(pads), entries::binary>>
   end
 
+  @doc "One atomic mixed batch: 0x03, count, then port/mode and 8 raw or 44 processed/RNG bytes."
+  def mixed_batch(pads) do
+    ports = Enum.map(pads, &elem(&1, 0))
+
+    unless length(ports) in 1..4 and Enum.uniq(ports) == ports and
+             Enum.all?(ports, &(&1 in 1..4)),
+           do: raise(ArgumentError, "expected unique controller ports in 1..4")
+
+    entries =
+      for {port, state} <- pads, into: <<>> do
+        case state.processed_input do
+          nil -> <<port, 0, pack(state)::binary>>
+          input -> <<port, 1, pack_processed(input)::binary>>
+        end
+      end
+
+    <<3, length(pads), entries::binary>>
+  end
+
+  @doc "Encode original game-unit floats and physical inputs as a 44-byte big-endian record."
+  def pack_processed(p) do
+    for key <- [:main_x, :main_y, :c_x, :c_y] do
+      v = Map.fetch!(p, key)
+
+      unless is_number(v) and v >= -1 and v <= 1,
+        do: raise(ArgumentError, "#{key} must be in -1..1")
+    end
+
+    for key <- [:trigger, :l_trigger, :r_trigger] do
+      v = Map.fetch!(p, key)
+
+      unless is_number(v) and v >= 0 and v <= 1,
+        do: raise(ArgumentError, "#{key} must be in 0..1")
+    end
+
+    for {key, max} <- [buttons: 0xFFFFFFFF, physical_buttons: 0xFFFF, rng_seed: 0xFFFFFFFF] do
+      v = Map.fetch!(p, key)
+
+      unless is_integer(v) and v >= 0 and v <= max,
+        do: raise(ArgumentError, "invalid #{key}")
+    end
+
+    for key <- [:raw_main_x, :raw_main_y, :raw_c_x, :raw_c_y] do
+      v = Map.fetch!(p, key)
+
+      unless is_integer(v) and v in -128..127,
+        do:
+          raise(
+            ArgumentError,
+            "#{key} is missing or not a signed byte; this replay cannot use exact injection"
+          )
+    end
+
+    <<p.main_x::float-big-32, p.main_y::float-big-32, p.c_x::float-big-32, p.c_y::float-big-32,
+      p.trigger::float-big-32, p.buttons::unsigned-big-32, p.physical_buttons::unsigned-big-16,
+      0::16, p.l_trigger::float-big-32, p.r_trigger::float-big-32, p.raw_main_x::signed-8,
+      p.raw_main_y::signed-8, p.raw_c_x::signed-8, p.raw_c_y::signed-8,
+      p.rng_seed::unsigned-big-32>>
+  end
+
   defp bit(true, mask), do: mask
   defp bit(_, _mask), do: 0
 

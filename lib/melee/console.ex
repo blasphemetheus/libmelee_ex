@@ -193,6 +193,7 @@ defmodule Melee.Console do
               # Send each frame's controller states over the direct
               # channel as a pad batch (the lockstep input path).
               direct_inputs: false,
+              processed_inputs: false,
               controller_ports: %{}
 
     @type t :: %__MODULE__{}
@@ -214,7 +215,8 @@ defmodule Melee.Console do
       polling_timeout: Keyword.get(opts, :polling_timeout, 0),
       reconnect: normalize_reconnect(Keyword.get(opts, :reconnect, false)),
       protocol: Keyword.get(opts, :protocol, :slippstream),
-      direct_inputs: Keyword.get(opts, :direct_inputs, false)
+      direct_inputs: Keyword.get(opts, :direct_inputs, false),
+      processed_inputs: Keyword.get(opts, :processed_inputs, false)
     }
 
     {:ok, state}
@@ -473,7 +475,15 @@ defmodule Melee.Console do
   defp handle_raw(<<@menu_event_cmd, _::binary>> = payload, state),
     do: handle_message({:menu_event, payload}, state)
 
-  defp handle_raw(payload, state), do: handle_message({:game_event, payload}, state)
+  defp handle_raw(payload, state) do
+    trace_direct({:event, binary_part(payload, 0, min(byte_size(payload), 8))})
+    handle_message({:game_event, payload}, state)
+  end
+
+  defp trace_direct(event) do
+    if path = System.get_env("MELEE_DIRECT_TRACE"),
+      do: File.write!(path, inspect(event) <> "\n", [:append])
+  end
 
   # Run the event parser to exhaustion over new data + buffered pending.
   defp drain_events(state, payload) do
@@ -495,7 +505,8 @@ defmodule Melee.Console do
       {:game_end, parser} ->
         # Not terminal: menu events follow. Remaining bytes were dropped
         # (post-game data), matching libmelee.
-        after_parse(%{state | parser: parser})
+        state = after_parse(%{state | parser: parser})
+        if state.direct_inputs, do: flush_controllers(state), else: state
 
       {:error, _reason, parser} ->
         after_parse(%{state | parser: parser})
@@ -558,11 +569,17 @@ defmodule Melee.Console do
       for controller <- state.controllers,
           port = Map.get(state.controller_ports, controller),
           port != nil do
-        {port, Controller.current(controller)}
+        {port, Controller.take_direct(controller)}
       end
 
     if pads != [] do
-      state.transport.send(conn, 0, Melee.SlippiPad.batch(pads), :reliable)
+      batch =
+        if state.processed_inputs,
+          do: Melee.SlippiPad.mixed_batch(pads),
+          else: Melee.SlippiPad.batch(pads)
+
+      trace_direct({:batch, binary_part(batch, 0, min(byte_size(batch), 16))})
+      state.transport.send(conn, 0, batch, :reliable)
     end
 
     state
