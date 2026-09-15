@@ -70,6 +70,16 @@ defmodule Melee.DolphinTest do
   end
 
   describe "prepare_home/1 — ishiiruka" do
+    test "accurate negative-zero arithmetic is explicit and resets between sessions", %{tmp_dir: tmp} do
+      exe = fake_exe(tmp)
+      home = Path.join(tmp, "arithmetic-home")
+
+      for {opts, value} <- [{[accurate_nmsub: true], "True"}, {[], "False"}] do
+        assert {:ok, _} = Dolphin.prepare_home([path: exe, iso_path: "/isos/melee.iso", home: home] ++ opts)
+        assert read_ini(home) =~ "AccurateNmsub = #{value}"
+      end
+    end
+
     test "writes headless spectator config under [Core]", %{tmp_dir: tmp} do
       exe = fake_exe(tmp)
       home = Path.join(tmp, "home")
@@ -97,6 +107,7 @@ defmodule Melee.DolphinTest do
       assert ini =~ "BlockingPipes = True"
       assert ini =~ "SlippiSaveReplays = False"
       assert ini =~ "GFXBackend = Null"
+      assert ini =~ "AccurateNmsub = False"
       assert ini =~ "EmulationSpeed = 1.0"
       assert ini =~ "backgroundinput = True"
       assert ini =~ "Fullscreen = False"

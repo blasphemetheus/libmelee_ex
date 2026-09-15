@@ -153,6 +153,7 @@ defmodule Melee.Dolphin do
           | {:ffw, boolean()}
           | {:direct_channel, boolean()}
           | {:direct_inputs, boolean()}
+          | {:accurate_nmsub, boolean()}
           | {:rng_seed, pos_integer()}
           | {:single_core, boolean()}
           | {:custom_rtc, pos_integer()}
@@ -975,6 +976,7 @@ defmodule Melee.Dolphin do
     core_kvs =
       [
         {"GFXBackend", gfx_backend},
+        {"AccurateNmsub", bool_str(Keyword.get(opts, :accurate_nmsub, false))},
         {"EmulationSpeed", to_string(emulation_speed)}
       ] ++ memory_card_kvs ++ determinism_kvs(opts)
 
